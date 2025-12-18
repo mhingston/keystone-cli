@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { type Interface, createInterface } from 'node:readline';
+import pkg from '../../package.json' with { type: 'json' };
 
 interface MCPTool {
   name: string;
@@ -229,7 +230,7 @@ export class MCPClient {
       capabilities: {},
       clientInfo: {
         name: 'keystone-cli',
-        version: '0.1.0',
+        version: pkg.version,
       },
     });
   }

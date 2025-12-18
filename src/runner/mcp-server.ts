@@ -1,4 +1,5 @@
 import * as readline from 'node:readline';
+import pkg from '../../package.json' with { type: 'json' };
 import { WorkflowDb } from '../db/workflow-db';
 import { WorkflowParser } from '../parser/workflow-parser';
 import { generateMermaidGraph } from '../utils/mermaid';
@@ -26,19 +27,30 @@ export class MCPServer {
       terminal: false,
     });
 
-    rl.on('line', async (line) => {
-      if (!line.trim()) return;
+    return new Promise<void>((resolve) => {
+      rl.on('line', async (line) => {
+        if (!line.trim()) return;
 
-      try {
-        const message = JSON.parse(line) as MCPMessage;
-        const response = await this.handleMessage(message);
-        if (response) {
-          process.stdout.write(`${JSON.stringify(response)}\n`);
+        try {
+          const message = JSON.parse(line) as MCPMessage;
+          const response = await this.handleMessage(message);
+          if (response) {
+            process.stdout.write(`${JSON.stringify(response)}\n`);
+          }
+        } catch (error) {
+          console.error('Error handling MCP message:', error);
         }
-      } catch (error) {
-        console.error('Error handling MCP message:', error);
-      }
+      });
+
+      rl.on('close', () => {
+        this.stop();
+        resolve();
+      });
     });
+  }
+
+  stop() {
+    this.db.close();
   }
 
   private async handleMessage(message: MCPMessage) {
@@ -56,7 +68,7 @@ export class MCPServer {
             },
             serverInfo: {
               name: 'keystone-mcp',
-              version: '0.1.0',
+              version: pkg.version,
             },
           },
         };

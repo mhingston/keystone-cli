@@ -256,6 +256,21 @@ Keystone supports several specialized step types:
 
 All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), and `transform` (post-process output using expressions).
 
+#### Example: Transform & Foreach Concurrency
+```yaml
+- id: list_files
+  type: shell
+  run: ls *.txt
+  # Post-process stdout into an array of filenames
+  transform: ${{ stdout.trim().split('\n') }}
+
+- id: process_files
+  type: shell
+  foreach: ${{ steps.list_files.output }}
+  concurrency: 5 # Process 5 files at a time
+  run: echo "Processing ${{ item }}"
+```
+
 ---
 
 ## 🤖 Agent Definitions
@@ -378,6 +393,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 - `src/parser/`: Zod-powered validation for workflows and agents.
 - `src/expression/`: `${{ }}` expression evaluator.
 - `src/ui/`: Ink-powered TUI dashboard.
+- `src/utils/`: Shared utilities (auth, redaction, config loading).
 - `.keystone/workflows/`: Your YAML workflow definitions.
 
 ---

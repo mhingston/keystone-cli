@@ -15,12 +15,14 @@ import { ConfigLoader } from './utils/config-loader.ts';
 import { generateMermaidGraph, renderMermaidAsAscii } from './utils/mermaid.ts';
 import { WorkflowRegistry } from './utils/workflow-registry.ts';
 
+import pkg from '../package.json' with { type: 'json' };
+
 const program = new Command();
 
 program
   .name('keystone')
   .description('A local-first, declarative, agentic workflow orchestrator')
-  .version('0.1.1');
+  .version(pkg.version);
 
 // ===== keystone init =====
 program

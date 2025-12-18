@@ -14,6 +14,7 @@ export interface MCPServerConfig {
 
 export class MCPManager {
   private clients: Map<string, MCPClient> = new Map();
+  private connectionPromises: Map<string, Promise<MCPClient | undefined>> = new Map();
   private sharedServers: Map<string, MCPServerConfig> = new Map();
 
   constructor() {
@@ -50,31 +51,47 @@ export class MCPManager {
     }
 
     const key = this.getServerKey(config);
+
+    // Check if we already have a client
     if (this.clients.has(key)) {
       return this.clients.get(key);
     }
 
-    logger.log(`  🔌 Connecting to MCP server: ${config.name} (${config.type || 'local'})`);
-
-    let client: MCPClient;
-    try {
-      if (config.type === 'remote') {
-        if (!config.url) throw new Error('Remote MCP server missing URL');
-        client = await MCPClient.createRemote(config.url, config.headers || {});
-      } else {
-        if (!config.command) throw new Error('Local MCP server missing command');
-        client = await MCPClient.createLocal(config.command, config.args || [], config.env || {});
-      }
-
-      await client.initialize();
-      this.clients.set(key, client);
-      return client;
-    } catch (error) {
-      logger.error(
-        `  ✗ Failed to connect to MCP server ${config.name}: ${error instanceof Error ? error.message : String(error)}`
-      );
-      return undefined;
+    // Check if we are already connecting
+    if (this.connectionPromises.has(key)) {
+      return this.connectionPromises.get(key);
     }
+
+    // Start a new connection and cache the promise
+    const connectionPromise = (async () => {
+      logger.log(`  🔌 Connecting to MCP server: ${config.name} (${config.type || 'local'})`);
+
+      let client: MCPClient;
+      try {
+        if (config.type === 'remote') {
+          if (!config.url) throw new Error('Remote MCP server missing URL');
+          client = await MCPClient.createRemote(config.url, config.headers || {});
+        } else {
+          if (!config.command) throw new Error('Local MCP server missing command');
+          client = await MCPClient.createLocal(config.command, config.args || [], config.env || {});
+        }
+
+        await client.initialize();
+        this.clients.set(key, client);
+        return client;
+      } catch (error) {
+        logger.error(
+          `  ✗ Failed to connect to MCP server ${config.name}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        return undefined;
+      } finally {
+        // Remove promise from cache once settled
+        this.connectionPromises.delete(key);
+      }
+    })();
+
+    this.connectionPromises.set(key, connectionPromise);
+    return connectionPromise;
   }
 
   private getServerKey(config: MCPServerConfig): string {

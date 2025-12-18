@@ -3,8 +3,10 @@ import * as child_process from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 import { ConfigLoader } from '../utils/config-loader';
-import { MCPClient } from './mcp-client';
+import { MCPClient, type MCPResponse } from './mcp-client';
 import { MCPManager } from './mcp-manager';
+
+import type { Config } from '../parser/config-schema';
 
 describe('MCPManager', () => {
   let spawnSpy: ReturnType<typeof spyOn>;
@@ -15,7 +17,7 @@ describe('MCPManager', () => {
     const mockProcess = Object.assign(new EventEmitter(), {
       stdout: new Readable({ read() {} }),
       stdin: new Writable({
-        write(_chunk, _encoding, cb) {
+        write(_chunk, _encoding, cb: (error?: Error | null) => void) {
           cb();
         },
       }),
@@ -40,11 +42,13 @@ describe('MCPManager', () => {
           args: ['test.js'],
           env: { FOO: 'bar' },
         },
-      } as any,
+      },
       providers: {},
       model_mappings: {},
       default_provider: 'openai',
-    });
+      storage: { retention_days: 30 },
+      workflows_directory: 'workflows',
+    } as unknown as Config);
 
     const manager = new MCPManager();
     const servers = manager.getGlobalServers();
@@ -60,11 +64,13 @@ describe('MCPManager', () => {
           type: 'local',
           command: 'node',
         },
-      } as any,
+      },
       providers: {},
       model_mappings: {},
       default_provider: 'openai',
-    });
+      storage: { retention_days: 30 },
+      workflows_directory: 'workflows',
+    } as unknown as Config);
 
     const initSpy = spyOn(MCPClient.prototype, 'initialize').mockResolvedValue({
       result: { protocolVersion: '1.0' },
@@ -117,6 +123,50 @@ describe('MCPManager', () => {
     expect(client).toBeUndefined();
   });
 
+  it('should handle concurrent connection requests without double-spawning', async () => {
+    ConfigLoader.setConfig({
+      mcp_servers: {
+        'concurrent-server': {
+          type: 'local',
+          command: 'node',
+        },
+      },
+      providers: {},
+      model_mappings: {},
+      default_provider: 'openai',
+      storage: { retention_days: 30 },
+      workflows_directory: 'workflows',
+    } as unknown as Config);
+
+    // Mock initialize to take some time
+    let initCalls = 0;
+    const initSpy = spyOn(MCPClient.prototype, 'initialize').mockImplementation(async () => {
+      initCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return {
+        result: { protocolVersion: '1.0' },
+        jsonrpc: '2.0',
+        id: 0,
+      } as MCPResponse;
+    });
+
+    const manager = new MCPManager();
+
+    // Fire off multiple requests concurrently
+    const p1 = manager.getClient('concurrent-server');
+    const p2 = manager.getClient('concurrent-server');
+    const p3 = manager.getClient('concurrent-server');
+
+    const [c1, c2, c3] = await Promise.all([p1, p2, p3]);
+
+    expect(c1).toBeDefined();
+    expect(c1).toBe(c2);
+    expect(c1).toBe(c3);
+    expect(initCalls).toBe(1); // Crucial: only one initialization
+
+    initSpy.mockRestore();
+  });
+
   it('should handle connection failure', async () => {
     ConfigLoader.setConfig({
       mcp_servers: {
@@ -124,19 +174,17 @@ describe('MCPManager', () => {
           type: 'local',
           command: 'fail',
         },
-      } as any,
+      },
       providers: {},
       model_mappings: {},
       default_provider: 'openai',
-    });
+      storage: { retention_days: 30 },
+      workflows_directory: 'workflows',
+    } as unknown as Config);
 
     const createLocalSpy = spyOn(MCPClient, 'createLocal').mockImplementation(
-      async (cmd: string) => {
-        const client = new (MCPClient as any)({
-          send: async () => {},
-          onMessage: () => {},
-          close: () => {},
-        });
+      async (_cmd: string) => {
+        const client = Object.create(MCPClient.prototype);
         spyOn(client, 'initialize').mockRejectedValue(new Error('Connection failed'));
         spyOn(client, 'stop').mockReturnValue(undefined);
         return client;

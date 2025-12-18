@@ -219,7 +219,7 @@ describe('MCPServer', () => {
     const writeSpy = spyOn(process.stdout, 'write').mockImplementation(() => true);
     const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
 
-    await server.start();
+    const startPromise = server.start();
 
     // Simulate stdin data
     const message = {
@@ -235,6 +235,9 @@ describe('MCPServer', () => {
     expect(writeSpy).toHaveBeenCalled();
     const output = JSON.parse(writeSpy.mock.calls[0][0] as string);
     expect(output.id).toBe(9);
+
+    process.stdin.emit('close');
+    await startPromise;
 
     writeSpy.mockRestore();
     consoleSpy.mockRestore();

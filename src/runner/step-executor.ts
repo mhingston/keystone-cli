@@ -84,11 +84,12 @@ export async function executeStep(
     // Apply transformation if specified and step succeeded
     if (step.transform && result.status === 'success') {
       const transformContext = {
-        // Provide raw output properties (like stdout, data) directly in context
-        // Fix: Spread output FIRST, then context to prevent shadowing
+        // 1. Provide raw output properties (like stdout, data) directly in context for convenience
         ...(typeof result.output === 'object' && result.output !== null ? result.output : {}),
-        output: result.output,
+        // 2. Add core context (inputs, secrets, etc.). This takes priority over output properties for security.
         ...context,
+        // 3. Explicitly add 'output' so it refers to the current step's result even if context or output properties have a collision.
+        output: result.output,
       };
 
       try {
