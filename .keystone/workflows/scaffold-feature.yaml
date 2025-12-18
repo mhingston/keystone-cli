@@ -13,8 +13,9 @@ steps:
     needs: [get_requirements]
     prompt: |
       The user wants to build the following:
-      ${{ steps.get_requirements.output }}
-
+      <user_requirements>
+        ${{ steps.get_requirements.output }}
+      </user_requirements>
       Generate the necessary Keystone workflow and optionally create an agent where appropriate.
     schema:
       type: object
@@ -42,4 +43,6 @@ steps:
   - id: summary
     type: shell
     needs: [write_files]
-    run: echo "Scaffolding complete. Files created."
+    run: |
+      echo "Scaffolding complete. Files created:"
+      echo "${{ steps.design.output.files.map(f => f.path).join('\n') }}"

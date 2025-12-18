@@ -2,6 +2,15 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
+
+// Default templates
+import scaffoldWorkflow from '../.keystone/workflows/scaffold-feature.yaml' with { type: 'text' };
+import architectAgent from '../.keystone/workflows/agents/keystone-architect.md' with {
+  type: 'text',
+};
+import generalAgent from '../.keystone/workflows/agents/general.md' with { type: 'text' };
+import exploreAgent from '../.keystone/workflows/agents/explore.md' with { type: 'text' };
+
 import { WorkflowDb } from './db/workflow-db.ts';
 import { WorkflowParser } from './parser/workflow-parser.ts';
 import { ConfigLoader } from './utils/config-loader.ts';
@@ -83,6 +92,35 @@ workflows_directory: workflows
       console.log(`✓ Created ${envPath}`);
     } else {
       console.log(`⊘ ${envPath} already exists`);
+    }
+
+    // Seed default workflows and agents
+    const seeds = [
+      {
+        path: '.keystone/workflows/scaffold-feature.yaml',
+        content: scaffoldWorkflow,
+      },
+      {
+        path: '.keystone/workflows/agents/keystone-architect.md',
+        content: architectAgent,
+      },
+      {
+        path: '.keystone/workflows/agents/general.md',
+        content: generalAgent,
+      },
+      {
+        path: '.keystone/workflows/agents/explore.md',
+        content: exploreAgent,
+      },
+    ];
+
+    for (const seed of seeds) {
+      if (!existsSync(seed.path)) {
+        writeFileSync(seed.path, seed.content);
+        console.log(`✓ Seeded ${seed.path}`);
+      } else {
+        console.log(`⊘ ${seed.path} already exists`);
+      }
     }
 
     console.log('\n✨ Keystone project initialized!');
@@ -496,12 +534,13 @@ program
 const auth = program.command('auth').description('Authentication management');
 
 auth
-  .command('logout')
-  .description('Logout and clear authentication tokens')
+  .command('status')
+  .description('Show authentication status')
   .argument('[provider]', 'Authentication provider')
   .option('-p, --provider <provider>', 'Authentication provider')
   .action(async (providerArg, options) => {
     const { AuthManager } = await import('./utils/auth-manager.ts');
+    const auth = AuthManager.load();
     const provider = (options.provider || providerArg)?.toLowerCase();
 
     console.log('\n🏛️  Authentication Status:');

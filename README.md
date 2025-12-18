@@ -72,7 +72,7 @@ source <(keystone completion bash)
 ```bash
 keystone init
 ```
-This creates the `.keystone/` directory for configuration and `.keystone/workflows/` for your automation files.
+This creates the `.keystone/` directory for configuration and seeds `.keystone/workflows/` with default automation files and agents (like `scaffold-feature` and `keystone-architect`).
 
 ### 2. Configure your Environment
 Add your API keys to the generated `.env` file:
@@ -355,7 +355,9 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | `logs <run_id>` | View logs and step status for a specific run |
 | `graph <workflow>` | Generate a Mermaid diagram of the workflow |
 | `config` | Show current configuration and providers |
-| `auth <login/status/logout>` | Manage GitHub and Copilot authentication |
+| `auth status` | Show authentication status |
+| `auth login` | Login to an authentication provider (GitHub) |
+| `auth logout` | Logout and clear authentication tokens |
 | `ui` | Open the interactive TUI dashboard |
 | `mcp` | Start the Keystone MCP server |
 | `completion [shell]` | Generate shell completion script (zsh, bash) |
