@@ -238,6 +238,23 @@ describe('ExpressionEvaluator', () => {
     expect(ExpressionEvaluator.evaluate('${{ runFn(x => x + 5) }}', contextWithFunc)).toBe(15);
   });
 
+  test('should handle multiple expressions and fallback values', () => {
+    // line 83: multiple expressions returning null/undefined
+    const contextWithNull = { ...context, nullVal: null };
+    expect(ExpressionEvaluator.evaluate('Val: ${{ nullVal }}', contextWithNull)).toBe('Val: ');
+
+    // line 87: multiple expressions returning objects
+    expect(ExpressionEvaluator.evaluate('Data: ${{ steps.step1.outputs.data }}', context)).toBe(
+      'Data: {\n  "id": 1\n}'
+    );
+  });
+
+  test('should handle evaluateString fallback for null/undefined', () => {
+    // line 103: evaluateString returning null/undefined
+    const contextWithNull = { ...context, nullVal: null };
+    expect(ExpressionEvaluator.evaluateString('${{ nullVal }}', contextWithNull)).toBe('');
+  });
+
   test('should throw error for unsupported unary operator', () => {
     // '~' is a unary operator jsep supports but we don't
     expect(() => ExpressionEvaluator.evaluate('${{ ~1 }}', context)).toThrow(

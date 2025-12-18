@@ -20,7 +20,7 @@ const program = new Command();
 program
   .name('keystone')
   .description('A local-first, declarative, agentic workflow orchestrator')
-  .version('0.1.0');
+  .version('0.1.1');
 
 // ===== keystone init =====
 program
