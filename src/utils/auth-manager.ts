@@ -6,6 +6,14 @@ export interface AuthData {
   github_token?: string;
   copilot_token?: string;
   copilot_expires_at?: number;
+  mcp_tokens?: Record<
+    string,
+    {
+      access_token: string;
+      expires_at?: number;
+      refresh_token?: string;
+    }
+  >;
 }
 
 export const COPILOT_HEADERS = {
@@ -13,6 +21,8 @@ export const COPILOT_HEADERS = {
   'Editor-Plugin-Version': 'copilot-chat/0.23.1',
   'User-Agent': 'GithubCopilot/1.255.0',
 };
+
+const GITHUB_CLIENT_ID = '013444988716b5155f4c'; // GitHub CLI Client ID
 
 export class AuthManager {
   private static getAuthPath(): string {
@@ -42,6 +52,83 @@ export class AuthManager {
     const path = AuthManager.getAuthPath();
     const current = AuthManager.load();
     writeFileSync(path, JSON.stringify({ ...current, ...data }, null, 2));
+  }
+
+  static async initGitHubDeviceLogin(): Promise<{
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    expires_in: number;
+    interval: number;
+  }> {
+    const response = await fetch('https://github.com/login/device/code', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: GITHUB_CLIENT_ID,
+        scope: 'read:user workflow repo',
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to initialize device login: ${response.statusText}`);
+    }
+
+    return response.json() as Promise<{
+      device_code: string;
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+      interval: number;
+    }>;
+  }
+
+  static async pollGitHubDeviceLogin(deviceCode: string): Promise<string> {
+    const poll = async (): Promise<string> => {
+      const response = await fetch('https://github.com/login/oauth/access_token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          client_id: GITHUB_CLIENT_ID,
+          device_code: deviceCode,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to poll device login: ${response.statusText}`);
+      }
+
+      const data = (await response.json()) as {
+        access_token?: string;
+        error?: string;
+        error_description?: string;
+      };
+
+      if (data.access_token) {
+        return data.access_token;
+      }
+
+      if (data.error === 'authorization_pending') {
+        return ''; // Continue polling
+      }
+
+      throw new Error(data.error_description || data.error || 'Failed to get access token');
+    };
+
+    // Poll every 5 seconds (GitHub's default interval is usually 5)
+    // In a real implementation, we should use the interval from initGitHubDeviceLogin
+    while (true) {
+      const token = await poll();
+      if (token) return token;
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
   }
 
   static async getCopilotToken(): Promise<string | undefined> {

@@ -10,6 +10,9 @@ export interface MCPServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  oauth?: {
+    scope?: string;
+  };
 }
 
 export class MCPManager {
@@ -70,7 +73,24 @@ export class MCPManager {
       try {
         if (config.type === 'remote') {
           if (!config.url) throw new Error('Remote MCP server missing URL');
-          client = await MCPClient.createRemote(config.url, config.headers || {});
+
+          const headers = { ...(config.headers || {}) };
+
+          if (config.oauth) {
+            const { AuthManager } = await import('../utils/auth-manager');
+            const auth = AuthManager.load();
+            const token = auth.mcp_tokens?.[config.name]?.access_token;
+
+            if (!token) {
+              throw new Error(
+                `MCP server ${config.name} requires OAuth. Please run "keystone mcp login ${config.name}" first.`
+              );
+            }
+
+            headers.Authorization = `Bearer ${token}`;
+          }
+
+          client = await MCPClient.createRemote(config.url, headers);
         } else {
           if (!config.command) throw new Error('Local MCP server missing command');
           client = await MCPClient.createLocal(config.command, config.args || [], config.env || {});

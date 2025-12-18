@@ -70,9 +70,9 @@ class StdConfigTransport implements MCPTransport {
 class SSETransport implements MCPTransport {
   private url: string;
   private headers: Record<string, string>;
-  private eventSource: EventSource | null = null;
   private endpoint?: string;
   private onMessageCallback?: (message: MCPResponse) => void;
+  private abortController: AbortController | null = null;
 
   constructor(url: string, headers: Record<string, string> = {}) {
     this.url = url;
@@ -80,39 +80,90 @@ class SSETransport implements MCPTransport {
   }
 
   async connect(): Promise<void> {
+    this.abortController = new AbortController();
+
     return new Promise((resolve, reject) => {
-      // @ts-ignore - Bun supports EventSource
-      this.eventSource = new EventSource(this.url, { headers: this.headers });
+      (async () => {
+        try {
+          const response = await fetch(this.url, {
+            headers: {
+              Accept: 'text/event-stream',
+              ...this.headers,
+            },
+            signal: this.abortController?.signal,
+          });
 
-      if (!this.eventSource) {
-        reject(new Error('Failed to create EventSource'));
-        return;
-      }
-
-      this.eventSource.addEventListener('endpoint', (event: MessageEvent) => {
-        this.endpoint = event.data;
-        if (this.endpoint?.startsWith('/')) {
-          const urlObj = new URL(this.url);
-          this.endpoint = `${urlObj.origin}${this.endpoint}`;
-        }
-        resolve();
-      });
-
-      this.eventSource.addEventListener('message', (event: MessageEvent) => {
-        if (this.onMessageCallback) {
-          try {
-            const response = JSON.parse(event.data) as MCPResponse;
-            this.onMessageCallback(response);
-          } catch (e) {
-            // Ignore
+          if (!response.ok) {
+            reject(new Error(`SSE connection failed: ${response.status} ${response.statusText}`));
+            return;
           }
-        }
-      });
 
-      this.eventSource.onerror = (err) => {
-        const error = err as ErrorEvent;
-        reject(new Error(`SSE connection failed: ${error?.message || 'Unknown error'}`));
-      };
+          const reader = response.body?.getReader();
+          if (!reader) {
+            reject(new Error('Failed to get response body reader'));
+            return;
+          }
+
+          // Process the stream in the background
+          (async () => {
+            let buffer = '';
+            const decoder = new TextDecoder();
+            let currentEvent: { event?: string; data?: string } = {};
+
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split(/\r\n|\r|\n/);
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                  if (line.trim() === '') {
+                    // End of event - dispatch
+                    if (currentEvent.data) {
+                      if (currentEvent.event === 'endpoint') {
+                        this.endpoint = currentEvent.data;
+                        if (this.endpoint) {
+                          this.endpoint = new URL(this.endpoint, this.url).href;
+                        }
+                        resolve();
+                      } else if (
+                        (!currentEvent.event || currentEvent.event === 'message') &&
+                        this.onMessageCallback
+                      ) {
+                        try {
+                          const message = JSON.parse(currentEvent.data) as MCPResponse;
+                          this.onMessageCallback(message);
+                        } catch (e) {
+                          // Ignore parse errors
+                        }
+                      }
+                    }
+                    currentEvent = {};
+                    continue;
+                  }
+
+                  if (line.startsWith('event:')) {
+                    currentEvent.event = line.substring(6).trim();
+                  } else if (line.startsWith('data:')) {
+                    const data = line.substring(5).trim();
+                    currentEvent.data = currentEvent.data ? `${currentEvent.data}\n${data}` : data;
+                  }
+                }
+              }
+            } catch (err) {
+              if ((err as Error).name !== 'AbortError') {
+                // Only reject if we haven't resolved yet
+                // Actually, if we are already resolved, we might want to log the error or handle reconnection
+              }
+            }
+          })();
+        } catch (err) {
+          reject(err);
+        }
+      })();
     });
   }
 
@@ -131,7 +182,12 @@ class SSETransport implements MCPTransport {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to send message to MCP server: ${response.statusText}`);
+      const text = await response.text();
+      throw new Error(
+        `Failed to send message to MCP server: ${response.status} ${response.statusText}${
+          text ? ` - ${text}` : ''
+        }`
+      );
     }
   }
 
@@ -140,7 +196,7 @@ class SSETransport implements MCPTransport {
   }
 
   close(): void {
-    this.eventSource?.close();
+    this.abortController?.abort();
   }
 }
 
@@ -154,14 +210,14 @@ export class MCPClient {
     transportOrCommand: MCPTransport | string,
     timeoutOrArgs: number | string[] = [],
     env: Record<string, string> = {},
-    timeout = 30000
+    timeout = 60000
   ) {
     if (typeof transportOrCommand === 'string') {
       this.transport = new StdConfigTransport(transportOrCommand, timeoutOrArgs as string[], env);
       this.timeout = timeout;
     } else {
       this.transport = transportOrCommand;
-      this.timeout = (timeoutOrArgs as number) || 30000;
+      this.timeout = (timeoutOrArgs as number) || 60000;
     }
 
     this.transport.onMessage((response) => {
@@ -179,7 +235,7 @@ export class MCPClient {
     command: string,
     args: string[] = [],
     env: Record<string, string> = {},
-    timeout = 30000
+    timeout = 60000
   ): Promise<MCPClient> {
     const transport = new StdConfigTransport(command, args, env);
     return new MCPClient(transport, timeout);
@@ -188,7 +244,7 @@ export class MCPClient {
   static async createRemote(
     url: string,
     headers: Record<string, string> = {},
-    timeout = 30000
+    timeout = 60000
   ): Promise<MCPClient> {
     const transport = new SSETransport(url, headers);
     await transport.connect();

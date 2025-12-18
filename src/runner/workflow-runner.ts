@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
 import { WorkflowDb } from '../db/workflow-db.ts';
 import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
@@ -46,6 +47,7 @@ export interface RunOptions {
   logger?: Logger;
   mcpManager?: MCPManager;
   preventExit?: boolean; // Defaults to false
+  workflowDir?: string;
 }
 
 export interface StepContext {
@@ -456,7 +458,8 @@ export class WorkflowRunner {
         context,
         this.logger,
         this.executeSubWorkflow.bind(this),
-        this.mcpManager
+        this.mcpManager,
+        this.options.workflowDir
       );
       if (result.status === 'failed') {
         throw new Error(result.error || 'Step failed');
@@ -700,6 +703,7 @@ export class WorkflowRunner {
   ): Promise<StepResult> {
     const workflowPath = WorkflowRegistry.resolvePath(step.path);
     const workflow = WorkflowParser.loadWorkflow(workflowPath);
+    const subWorkflowDir = dirname(workflowPath);
 
     // Evaluate inputs for the sub-workflow
     const inputs: Record<string, unknown> = {};
@@ -716,6 +720,7 @@ export class WorkflowRunner {
       dbPath: this.db.dbPath,
       logger: this.logger,
       mcpManager: this.mcpManager,
+      workflowDir: subWorkflowDir,
     });
 
     try {

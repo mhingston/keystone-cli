@@ -124,77 +124,64 @@ describe('MCPClient', () => {
 
   describe('SSE Transport', () => {
     it('should connect and receive endpoint', async () => {
-      const mockEventSource = new EventEmitter();
-      // @ts-ignore
-      mockEventSource.addEventListener = mockEventSource.on;
-      // @ts-ignore
-      mockEventSource.close = mock(() => {});
-      // @ts-ignore
-      global.EventSource = mock(() => mockEventSource);
+      let controller: ReadableStreamDefaultController;
+      const stream = new ReadableStream({
+        start(c) {
+          controller = c;
+          controller.enqueue(new TextEncoder().encode('event: endpoint\ndata: /endpoint\n\n'));
+        },
+      });
+
+      const fetchMock = spyOn(global, 'fetch').mockImplementation((url) => {
+        if (url === 'http://localhost:8080/sse') {
+          return Promise.resolve(new Response(stream));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+      });
 
       const clientPromise = MCPClient.createRemote('http://localhost:8080/sse');
-
-      // Simulate endpoint event
-      mockEventSource.emit('endpoint', { data: '/endpoint' });
 
       const client = await clientPromise;
       expect(client).toBeDefined();
 
-      // Test sending a message
-      const fetchMock = spyOn(global, 'fetch').mockImplementation(() =>
-        Promise.resolve(new Response(JSON.stringify({ ok: true })))
-      );
-
       const initPromise = client.initialize();
 
       // Simulate message event (response from server)
-      mockEventSource.emit('message', {
-        data: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 0,
-          result: { protocolVersion: '2024-11-05' },
-        }),
-      });
+      if (controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `data: ${JSON.stringify({
+              jsonrpc: '2.0',
+              id: 0,
+              result: { protocolVersion: '2024-11-05' },
+            })}\n\n`
+          )
+        );
+      }
 
       const response = await initPromise;
       expect(response.result?.protocolVersion).toBe('2024-11-05');
       expect(fetchMock).toHaveBeenCalledWith('http://localhost:8080/endpoint', expect.any(Object));
 
       client.stop();
-      // @ts-ignore
-      expect(mockEventSource.close).toHaveBeenCalled();
-
       fetchMock.mockRestore();
-      // @ts-ignore
-      global.EventSource = undefined;
     });
 
     it('should handle SSE connection failure', async () => {
-      const mockEventSource = {
-        addEventListener: mock((_event: string, callback: (arg: unknown) => void) => {
-          if (_event === 'error') {
-            // Store the callback to trigger it later
-            mockEventSource.onerror = callback;
-          }
-        }),
-        onerror: null as ((arg: unknown) => void) | null,
-        close: mock(() => {}),
-      };
-
-      // @ts-ignore
-      global.EventSource = mock(() => mockEventSource);
+      const fetchMock = spyOn(global, 'fetch').mockImplementation(() =>
+        Promise.resolve(
+          new Response(null, {
+            status: 500,
+            statusText: 'Internal Server Error',
+          })
+        )
+      );
 
       const clientPromise = MCPClient.createRemote('http://localhost:8080/sse');
 
-      // Trigger the onerror callback
-      if (mockEventSource.onerror) {
-        mockEventSource.onerror({ message: 'Connection failed' });
-      }
+      await expect(clientPromise).rejects.toThrow(/SSE connection failed: 500/);
 
-      await expect(clientPromise).rejects.toThrow(/SSE connection failed/);
-
-      // @ts-ignore
-      global.EventSource = undefined;
+      fetchMock.mockRestore();
     });
   });
 });

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 
 import exploreAgent from './templates/agents/explore.md' with { type: 'text' };
@@ -265,7 +265,7 @@ program
 
       // Import WorkflowRunner dynamically
       const { WorkflowRunner } = await import('./runner/workflow-runner.ts');
-      const runner = new WorkflowRunner(workflow, { inputs });
+      const runner = new WorkflowRunner(workflow, { inputs, workflowDir: dirname(resolvedPath) });
 
       const outputs = await runner.run();
 
@@ -339,7 +339,10 @@ program
 
       // Import WorkflowRunner dynamically
       const { WorkflowRunner } = await import('./runner/workflow-runner.ts');
-      const runner = new WorkflowRunner(workflow, { resumeRunId: runId });
+      const runner = new WorkflowRunner(workflow, {
+        resumeRunId: runId,
+        workflowDir: dirname(workflowPath),
+      });
 
       const outputs = await runner.run();
 
@@ -480,9 +483,64 @@ program
   });
 
 // ===== keystone mcp =====
-program
-  .command('mcp')
-  .description('Start the Model Context Protocol server')
+const mcp = program.command('mcp').description('Model Context Protocol management');
+
+mcp
+  .command('login')
+  .description('Login to an MCP server')
+  .argument('<server>', 'Server name (from config)')
+  .action(async (serverName) => {
+    const { ConfigLoader } = await import('./utils/config-loader.ts');
+    const { AuthManager } = await import('./utils/auth-manager.ts');
+
+    const config = ConfigLoader.load();
+    const server = config.mcp_servers[serverName];
+
+    if (!server || server.type !== 'remote' || !server.oauth) {
+      console.error(`✗ MCP server '${serverName}' is not a remote server with OAuth configured.`);
+      process.exit(1);
+    }
+
+    console.log(`\n🔐 Authenticating with MCP server: ${serverName}`);
+    console.log(`   URL: ${server.url}\n`);
+
+    // For now, we'll support a manual token entry until we have a full browser redirect flow
+    // Most MCP OAuth servers provide a way to get a token via a URL
+    const authUrl = server.url.replace('/sse', '/authorize') || server.url;
+    console.log('1. Visit the following URL to authorize:');
+    console.log(`   ${authUrl}`);
+    console.log(
+      '\n   Note: For some servers like Atlassian, you may need to use a proxy like mcp-remote.'
+    );
+    console.log('   Instead of "type: remote", use:');
+    console.log('   command: npx');
+    console.log('   args: ["-y", "mcp-remote", "<server-url>"]');
+    console.log('\n2. Paste the access token below:\n');
+
+    const prompt = 'Access Token: ';
+    process.stdout.write(prompt);
+
+    let token = '';
+    for await (const line of console) {
+      token = line.trim();
+      break;
+    }
+
+    if (token) {
+      const auth = AuthManager.load();
+      const mcp_tokens = auth.mcp_tokens || {};
+      mcp_tokens[serverName] = { access_token: token };
+      AuthManager.save({ mcp_tokens });
+      console.log(`\n✓ Successfully saved token for MCP server: ${serverName}`);
+    } else {
+      console.error('✗ No token provided.');
+      process.exit(1);
+    }
+  });
+
+mcp
+  .command('start')
+  .description('Start the Keystone MCP server (to use Keystone as a tool)')
   .action(async () => {
     const { MCPServer } = await import('./runner/mcp-server.ts');
 
@@ -551,18 +609,35 @@ auth
       let token = options.token;
 
       if (!token) {
-        console.log('\nTo login with GitHub:');
-        console.log(
-          '1. Generate a Personal Access Token (Classic) with "copilot" scope (or full repo access).'
-        );
-        console.log('   https://github.com/settings/tokens/new');
-        console.log('2. Paste the token below:\n');
+        try {
+          const deviceLogin = await AuthManager.initGitHubDeviceLogin();
 
-        const prompt = 'Token: ';
-        process.stdout.write(prompt);
-        for await (const line of console) {
-          token = line.trim();
-          break;
+          console.log('\nTo login with GitHub:');
+          console.log(`1. Visit: ${deviceLogin.verification_uri}`);
+          console.log(`2. Enter code: ${deviceLogin.user_code}\n`);
+
+          console.log('Waiting for authorization...');
+          token = await AuthManager.pollGitHubDeviceLogin(deviceLogin.device_code);
+        } catch (error) {
+          console.error(
+            '\n✗ Failed to login with GitHub device flow:',
+            error instanceof Error ? error.message : error
+          );
+          console.log('\nFalling back to manual token entry...');
+
+          console.log('\nTo login with GitHub manually:');
+          console.log(
+            '1. Generate a Personal Access Token (Classic) with "copilot" scope (or full repo access).'
+          );
+          console.log('   https://github.com/settings/tokens/new');
+          console.log('2. Paste the token below:\n');
+
+          const prompt = 'Token: ';
+          process.stdout.write(prompt);
+          for await (const line of console) {
+            token = line.trim();
+            break;
+          }
         }
       }
 

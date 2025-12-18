@@ -83,7 +83,15 @@ export class ExpressionEvaluator {
         return '';
       }
 
-      if (typeof result === 'object') {
+      if (typeof result === 'object' && result !== null) {
+        // Special handling for shell command results to avoid [object Object] or JSON in commands
+        if (
+          'stdout' in result &&
+          'exitCode' in result &&
+          typeof (result as Record<string, unknown>).stdout === 'string'
+        ) {
+          return (result as Record<string, unknown>).stdout.trim();
+        }
         return JSON.stringify(result, null, 2);
       }
 

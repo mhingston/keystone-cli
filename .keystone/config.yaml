@@ -27,3 +27,10 @@ model_mappings:
   "claude-*": anthropic
   "o1-*": copilot
   "llama-*": groq
+
+mcp_servers:
+  atlassian:
+    type: remote
+    url: https://mcp.atlassian.com/v1/sse
+    oauth:
+      scope: tools:read
