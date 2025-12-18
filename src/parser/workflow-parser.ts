@@ -180,11 +180,6 @@ export class WorkflowParser {
       }
     }
 
-    // Initialize in-degree
-    for (const step of workflow.steps) {
-      inDegree.set(step.id, 0);
-    }
-
     // Calculate in-degree
     // In-degree = number of dependencies a step has
     for (const step of workflow.steps) {

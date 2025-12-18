@@ -294,9 +294,15 @@ tools:
 You are a software developer. You can use tools to explore the codebase.
 ```
 
-### Model Context Protocol (MCP)
+### Keystone as an MCP Server
 
-Keystone supports connecting to external MCP servers to give agents access to a wide range of pre-built tools and resources. You can configure MCP servers globally or directly in an LLM step.
+Keystone can itself act as an MCP server, allowing other agents (like Claude Desktop or GitHub Copilot) to discover and run your workflows as tools.
+
+```bash
+keystone mcp
+```
+
+> **Note:** Workflow execution via the Keystone MCP server is synchronous. This provides a better experience for agents as they receive the final results directly, though it means the connection remains open for the duration of the workflow run.
 
 #### Global MCP Servers
 Define shared MCP servers in `.keystone/config.yaml` to reuse them across different workflows. Keystone ensures that multiple steps using the same global server will share a single running process.
