@@ -124,15 +124,16 @@ model_mappings:
   "o1-*": openai
   "llama-*": groq
 
-mcp_servers:
-  filesystem:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]
-  github:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+  mcp_servers:
+    filesystem:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: "your-github-pat" # Or omit if GITHUB_TOKEN is in your .env
+
 
 storage:
   retention_days: 30
@@ -170,20 +171,23 @@ model: claude-3-5-sonnet-latest
 You can add any OpenAI-compatible provider (Groq, Together AI, Perplexity, Local Ollama, etc.) by setting the `type` to `openai` and providing the `base_url` and `api_key_env`.
 
 ### GitHub Copilot Support
-Keystone supports using your GitHub Copilot subscription directly. To authenticate:
+
+Keystone supports using your GitHub Copilot subscription directly. To authenticate (using the GitHub Device Flow):
+
 ```bash
 keystone auth login
 ```
+
 Then, you can use Copilot in your configuration:
+
 ```yaml
 providers:
   copilot:
     type: copilot
     default_model: gpt-4o
 ```
-API keys are handled automatically after login.
 
-API keys should be stored in a `.env` file in your project root:
+Authentication tokens for Copilot are managed automatically after the initial login. For other providers, API keys should be stored in a `.env` file in your project root:
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 
@@ -331,22 +335,20 @@ In these examples, the agent will have access to all tools provided by the MCP s
 
 ## 🛠️ CLI Commands
 
-| Command | Description |
-| :--- | :--- |
 | `init` | Initialize a new Keystone project |
-| `run <workflow>` | Execute a workflow by name or path |
+| `run <workflow>` | Execute a workflow (use `-i key=val` for inputs) |
 | `resume <run_id>` | Resume a failed or paused workflow |
-| `validate [path]` | Check workflow files (defaults to `.keystone/workflows/` or matches a workflow name) |
+| `validate [path]` | Check workflow files for errors |
 | `workflows` | List available workflows |
 | `history` | Show recent workflow runs |
 | `logs <run_id>` | View logs and step status for a specific run |
-| `graph <workflow>` | Generate a Mermaid diagram of the workflow by name or path |
-| `config` | Show current configuration and provider settings |
-| `auth <login/status/logout>` | Manage GitHub Copilot authentication |
+| `graph <workflow>` | Generate a Mermaid diagram of the workflow |
+| `config` | Show current configuration and providers |
+| `auth <login/status/logout>` | Manage GitHub and Copilot authentication |
 | `ui` | Open the interactive TUI dashboard |
-| `mcp` | Start the Model Context Protocol server |
+| `mcp` | Start the Keystone MCP server |
 | `completion [shell]` | Generate shell completion script (zsh, bash) |
-| `prune` | Cleanup old run data from the database (also automated via `storage.retention_days`) |
+| `prune [--days N]` | Cleanup old run data from the database |
 
 ---
 

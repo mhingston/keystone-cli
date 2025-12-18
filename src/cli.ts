@@ -496,105 +496,13 @@ program
 const auth = program.command('auth').description('Authentication management');
 
 auth
-  .command('login')
-  .description('Login to an authentication provider')
-  .option('-p, --provider <provider>', 'Authentication provider', 'github')
-  .action(async (options) => {
-    const { AuthManager } = await import('./utils/auth-manager.ts');
-    const provider = options.provider.toLowerCase();
-
-    if (provider !== 'github' && provider !== 'copilot') {
-      console.error(`✗ Unsupported provider: ${provider}`);
-      process.exit(1);
-    }
-
-    console.log(`🏛️  ${provider === 'copilot' ? 'GitHub Copilot' : 'GitHub'} Login\n`);
-
-    try {
-      // Step 1: Request device code
-      const deviceCodeResponse = await fetch('https://github.com/login/device/code', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          client_id: '01ab8ac9400c4e429b23',
-          scope: 'read:user',
-        }),
-      });
-
-      if (!deviceCodeResponse.ok) {
-        throw new Error(`GitHub API error: ${deviceCodeResponse.statusText}`);
-      }
-
-      const { device_code, user_code, verification_uri, interval } =
-        (await deviceCodeResponse.json()) as {
-          device_code: string;
-          user_code: string;
-          verification_uri: string;
-          interval: number;
-        };
-
-      console.log(`1. Visit: ${verification_uri}`);
-      console.log(`2. Enter code: ${user_code}\n`);
-      console.log('Waiting for authorization...');
-
-      // Step 3: Poll for access token
-      const poll = async (): Promise<string> => {
-        while (true) {
-          await new Promise((resolve) => setTimeout(resolve, interval * 1000));
-
-          const response = await fetch('https://github.com/login/oauth/access_token', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-            body: JSON.stringify({
-              client_id: '01ab8ac9400c4e429b23',
-              device_code,
-              grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            }),
-          });
-
-          const data = (await response.json()) as {
-            access_token?: string;
-            error?: string;
-          };
-
-          if (data.access_token) {
-            return data.access_token;
-          }
-
-          if (data.error === 'authorization_pending') {
-            continue;
-          }
-
-          throw new Error(`GitHub error: ${data.error}`);
-        }
-      };
-
-      const accessToken = await poll();
-      AuthManager.save({ github_token: accessToken });
-
-      console.log(
-        `\n✨ Successfully logged into ${provider === 'copilot' ? 'GitHub Copilot' : 'GitHub'}!`
-      );
-    } catch (error) {
-      console.error('\n✗ Login failed:', error instanceof Error ? error.message : error);
-      process.exit(1);
-    }
-  });
-
-auth
-  .command('status')
-  .description('Show authentication status')
+  .command('logout')
+  .description('Logout and clear authentication tokens')
+  .argument('[provider]', 'Authentication provider')
   .option('-p, --provider <provider>', 'Authentication provider')
-  .action(async (options) => {
+  .action(async (providerArg, options) => {
     const { AuthManager } = await import('./utils/auth-manager.ts');
-    const auth = AuthManager.load();
-    const provider = options.provider?.toLowerCase();
+    const provider = (options.provider || providerArg)?.toLowerCase();
 
     console.log('\n🏛️  Authentication Status:');
 
@@ -620,10 +528,14 @@ auth
 auth
   .command('logout')
   .description('Logout and clear authentication tokens')
-  .option('-p, --provider <provider>', 'Authentication provider')
-  .action(async (options) => {
+  .argument('[provider]', 'Authentication provider')
+  .option(
+    '-p, --provider <provider>',
+    'Authentication provider (deprecated, use positional argument)'
+  )
+  .action(async (providerArg, options) => {
     const { AuthManager } = await import('./utils/auth-manager.ts');
-    const provider = options.provider?.toLowerCase();
+    const provider = (options.provider || providerArg)?.toLowerCase();
 
     if (!provider || provider === 'github' || provider === 'copilot') {
       AuthManager.save({
