@@ -1,0 +1,20 @@
+name: basic-shell
+description: "A simple example workflow demonstrating basic features"
+
+inputs:
+  greeting: { type: string, default: "Hello" }
+  name: { type: string, default: "World" }
+
+outputs:
+  message: ${{ steps.create_message.output }}
+
+steps:
+  - id: create_message
+    type: shell
+    run: echo "${{ inputs.greeting }}, ${{ inputs.name }}!"
+    transform: "stdout.trim()"
+
+  - id: print_message
+    type: shell
+    needs: [create_message]
+    run: echo "Generated message - ${{ steps.create_message.output }}"

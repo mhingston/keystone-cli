@@ -78,8 +78,36 @@ export class ExpressionEvaluator {
       // Extract the expression content between ${{ and }}
       const expr = match.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
       const result = ExpressionEvaluator.evaluateExpression(expr, context);
+
+      if (result === null || result === undefined) {
+        return '';
+      }
+
+      if (typeof result === 'object') {
+        return JSON.stringify(result, null, 2);
+      }
+
       return String(result);
     });
+  }
+
+  /**
+   * Evaluate a string and ensure the result is a string.
+   * Objects and arrays are stringified to JSON.
+   * null and undefined return an empty string.
+   */
+  static evaluateString(template: string, context: ExpressionContext): string {
+    const result = ExpressionEvaluator.evaluate(template, context);
+
+    if (result === null || result === undefined) {
+      return '';
+    }
+
+    if (typeof result === 'string') {
+      return result;
+    }
+
+    return JSON.stringify(result, null, 2);
   }
 
   /**

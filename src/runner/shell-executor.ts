@@ -88,7 +88,7 @@ export async function executeShell(
   logger: Logger = console
 ): Promise<ShellResult> {
   // Evaluate the command string
-  const command = ExpressionEvaluator.evaluate(step.run, context) as string;
+  const command = ExpressionEvaluator.evaluateString(step.run, context);
 
   // Check for potential shell injection risks
   if (detectShellInjectionRisk(command)) {
@@ -101,12 +101,12 @@ export async function executeShell(
   const env: Record<string, string> = {};
   if (step.env) {
     for (const [key, value] of Object.entries(step.env)) {
-      env[key] = ExpressionEvaluator.evaluate(value, context) as string;
+      env[key] = ExpressionEvaluator.evaluateString(value, context);
     }
   }
 
   // Set working directory if specified
-  const cwd = step.dir ? (ExpressionEvaluator.evaluate(step.dir, context) as string) : undefined;
+  const cwd = step.dir ? ExpressionEvaluator.evaluateString(step.dir, context) : undefined;
 
   try {
     // Execute command using sh -c to allow shell parsing

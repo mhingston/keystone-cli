@@ -1,0 +1,12 @@
+name: human-interaction
+description: A workflow that prompts the user for input and uses it in another step.
+
+steps:
+  - id: ask_name
+    type: human
+    message: "What is your name?"
+    inputType: text
+
+  - id: greet
+    type: shell
+    run: echo "Hello, ${{ steps.ask_name.output }}!"

@@ -1,0 +1,64 @@
+name: full-feature-demo
+description: "A comprehensive workflow demonstrating multiple feature types"
+
+inputs:
+  message:
+    type: string
+    default: "Hello from Keystone!"
+
+outputs:
+  greeting: ${{ steps.greet.output }}
+  file_count: ${{ steps.count_files.output }}
+  timestamp: ${{ steps.get_date.output }}
+
+steps:
+  # Test shell execution
+  - id: greet
+    type: shell
+    run: echo "${{ inputs.message }}"
+
+  # Test shell with transform
+  - id: get_date
+    type: shell
+    run: date +%s
+    transform: parseInt(stdout.trim())
+
+  # Test file write
+  - id: write_file
+    type: file
+    op: write
+    path: /tmp/keystone-test.txt
+    content: "Test file created at ${{ steps.get_date.output }}"
+
+  # Test file read
+  - id: read_file
+    type: file
+    op: read
+    path: /tmp/keystone-test.txt
+    needs: [write_file]
+
+  # Test shell with dependencies
+  - id: count_files
+    type: shell
+    needs: [write_file]
+    run: ls /tmp/keystone-*.txt | wc -l
+    transform: parseInt(stdout.trim())
+
+  # Test conditional execution
+  - id: success_message
+    type: shell
+    if: ${{ steps.count_files.output > 0 }}
+    needs: [count_files]
+    run: echo "Found files!"
+
+  # Test HTTP request
+  - id: api_test
+    type: request
+    url: https://httpbin.org/get
+    method: GET
+
+  # Test sleep
+  - id: wait
+    type: sleep
+    duration: 100
+    needs: [api_test]

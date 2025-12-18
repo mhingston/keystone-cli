@@ -1,0 +1,13 @@
+name: composition-child
+description: "A simple child workflow"
+
+inputs:
+  name: { type: string }
+
+outputs:
+  result: "Hello from child, ${{ inputs.name }}!"
+
+steps:
+  - id: echo_step
+    type: shell
+    run: echo "Processing ${{ inputs.name }}"

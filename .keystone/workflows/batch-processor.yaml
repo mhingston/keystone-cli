@@ -1,0 +1,43 @@
+name: batch-processor
+description: "Process multiple files in parallel"
+
+inputs:
+  target_dir: { type: string, default: "./data" }
+
+outputs:
+  processed_count: ${{ steps.process_files.outputs.length }}
+
+env:
+  API_KEY: ${{ secrets.API_KEY }}
+
+steps:
+  # 1. Dynamic Input Generation
+  - id: list_files
+    type: shell
+    run: "ls ${{ inputs.target_dir }}/*.txt"
+    # Extract stdout lines into an array
+    transform: "stdout.split('\\n').filter(Boolean)"
+
+  # 2. Matrix/Looping (The Missing Piece)
+  - id: process_files
+    type: llm
+    needs: [list_files]
+    # Iterates over the array from the previous step
+    foreach: ${{ steps.list_files.output }}
+    concurrency: 5
+    # Robustness (The Missing Piece)
+    retry:
+      count: 3
+      backoff: "exponential"
+    timeout: 30000 # 30s limit per item
+    # Step Definition
+    agent: summarizer
+    prompt: "Summarize this file: ${{ item }}"
+
+  # 3. Conditional Logic
+  - id: notify
+    type: request
+    needs: [process_files]
+    if: ${{ steps.process_files.items.every(s => s.status == 'success') }}
+    method: POST
+    url: "https://webhook.site/..."

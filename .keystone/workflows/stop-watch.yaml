@@ -1,0 +1,17 @@
+name: stop-watch
+description: "A simple stopwatch workflow"
+steps:
+  - id: get_duration
+    type: human
+    message: "Please enter the duration (in seconds) for the stopwatch."
+    inputType: text
+  - id: waiting_period
+    type: sleep
+    needs: [get_duration]
+    duration: ${{ Number(steps.get_duration.output) * 1000 }}
+  - id: notify_completion
+    type: human
+    needs: [waiting_period]
+    message: "The stopwatch is complete."
+    inputType: confirm
+outputs: {}

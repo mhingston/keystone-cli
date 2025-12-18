@@ -1,0 +1,22 @@
+name: cleanup-finally
+description: "Test the finally block"
+
+steps:
+  - id: step1
+    type: shell
+    run: echo "Main step 1"
+
+  - id: fail_step
+    type: shell
+    run: "exit 1"
+    if: ${{ inputs.should_fail }}
+
+finally:
+  - id: cleanup
+    type: shell
+    run: echo "Cleanup task executed"
+  
+  - id: cleanup_with_dep
+    type: shell
+    needs: [cleanup]
+    run: echo "Cleanup with dependency executed"

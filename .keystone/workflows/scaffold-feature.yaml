@@ -1,0 +1,45 @@
+name: scaffold-feature
+description: "Autonomously build new Keystone workflows and agents"
+
+steps:
+  - id: get_requirements
+    type: human
+    message: "Describe the workflow you want to build:"
+    inputType: text
+
+  - id: design
+    type: llm
+    agent: keystone-architect
+    needs: [get_requirements]
+    prompt: |
+      The user wants to build the following:
+      ${{ steps.get_requirements.output }}
+
+      Generate the necessary Keystone workflow and optionally create an agent where appropriate.
+    schema:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              content:
+                type: string
+            required: [path, content]
+      required: [files]
+
+  - id: write_files
+    type: file
+    needs: [design]
+    foreach: ${{ steps.design.output.files }}
+    op: write
+    path: ${{ item.path }}
+    content: ${{ item.content }}
+
+  - id: summary
+    type: shell
+    needs: [write_files]
+    run: echo "Scaffolding complete. Files created."

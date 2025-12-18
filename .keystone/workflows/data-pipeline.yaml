@@ -1,0 +1,38 @@
+name: data-pipeline
+description: "A workflow that demonstrates file operations and cleanup with 'finally'"
+
+inputs:
+  input_file: { type: string, default: "input.txt" }
+  output_file: { type: string, default: "output.txt" }
+
+steps:
+  - id: prepare_data
+    type: file
+    op: write
+    path: ${{ inputs.input_file }}
+    content: "line 1\nline 2\nline 3"
+
+  - id: read_data
+    type: file
+    op: read
+    path: ${{ inputs.input_file }}
+    needs: [prepare_data]
+
+  - id: process_data
+    type: shell
+    run: |
+      echo "${{ steps.read_data.output }}" | tr '[:lower:]' '[:upper:]'
+    transform: "stdout.trim()"
+    needs: [read_data]
+
+  - id: save_result
+    type: file
+    op: write
+    path: ${{ inputs.output_file }}
+    content: ${{ steps.process_data.output }}
+    needs: [process_data]
+
+finally:
+  - id: cleanup
+    type: shell
+    run: rm ${{ inputs.input_file }}

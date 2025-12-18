@@ -159,7 +159,7 @@ async function executeFileStep(
   context: ExpressionContext,
   _logger: Logger
 ): Promise<StepResult> {
-  const path = ExpressionEvaluator.evaluate(step.path, context) as string;
+  const path = ExpressionEvaluator.evaluateString(step.path, context);
 
   switch (step.op) {
     case 'read': {
@@ -178,7 +178,7 @@ async function executeFileStep(
       if (!step.content) {
         throw new Error('Content is required for write operation');
       }
-      const content = ExpressionEvaluator.evaluate(step.content, context) as string;
+      const content = ExpressionEvaluator.evaluateString(step.content, context);
       const bytes = await Bun.write(path, content);
       return {
         output: { path, bytes },
@@ -190,7 +190,7 @@ async function executeFileStep(
       if (!step.content) {
         throw new Error('Content is required for append operation');
       }
-      const content = ExpressionEvaluator.evaluate(step.content, context) as string;
+      const content = ExpressionEvaluator.evaluateString(step.content, context);
 
       // Use Node.js fs for efficient append operation
       const fs = await import('node:fs/promises');
@@ -215,13 +215,13 @@ async function executeRequestStep(
   context: ExpressionContext,
   _logger: Logger
 ): Promise<StepResult> {
-  const url = ExpressionEvaluator.evaluate(step.url, context) as string;
+  const url = ExpressionEvaluator.evaluateString(step.url, context);
 
   // Evaluate headers
   const headers: Record<string, string> = {};
   if (step.headers) {
     for (const [key, value] of Object.entries(step.headers)) {
-      headers[key] = ExpressionEvaluator.evaluate(value, context) as string;
+      headers[key] = ExpressionEvaluator.evaluateString(value, context);
     }
   }
 
@@ -290,7 +290,7 @@ async function executeHumanStep(
   context: ExpressionContext,
   logger: Logger
 ): Promise<StepResult> {
-  const message = ExpressionEvaluator.evaluate(step.message, context) as string;
+  const message = ExpressionEvaluator.evaluateString(step.message, context);
 
   // If not a TTY (e.g. MCP server), suspend execution
   if (!process.stdin.isTTY) {

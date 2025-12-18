@@ -535,4 +535,44 @@ You are a test agent.`;
     managerSpy.mockRestore();
     ConfigLoader.clear();
   });
+
+  it('should handle object prompts by stringifying them', async () => {
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: '${{ steps.prev.output }}' as unknown as string,
+      needs: [],
+    };
+    const context: ExpressionContext = {
+      inputs: {},
+      steps: {
+        prev: { output: { key: 'value' }, status: 'success' },
+      },
+    };
+
+    let capturedPrompt = '';
+    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
+    const mockChat = mock(async (messages: LLMMessage[]) => {
+      // console.log('MESSAGES:', JSON.stringify(messages, null, 2));
+      capturedPrompt = messages.find((m) => m.role === 'user')?.content || '';
+      return { message: { role: 'assistant', content: 'Response' } };
+    }) as unknown as typeof originalOpenAIChat;
+    OpenAIAdapter.prototype.chat = mockChat;
+    CopilotAdapter.prototype.chat = mockChat;
+    AnthropicAdapter.prototype.chat = mockChat;
+
+    const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
+
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+    );
+
+    expect(capturedPrompt).toContain('"key": "value"');
+    expect(capturedPrompt).not.toContain('[object Object]');
+
+    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
+  });
 });

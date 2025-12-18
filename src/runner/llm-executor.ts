@@ -30,7 +30,7 @@ export async function executeLlmStep(
 
   const provider = step.provider || agent.provider;
   const model = step.model || agent.model || 'gpt-4o';
-  const prompt = ExpressionEvaluator.evaluate(step.prompt, context) as string;
+  const prompt = ExpressionEvaluator.evaluateString(step.prompt, context);
 
   const fullModelString = provider ? `${provider}:${model}` : model;
   const { adapter, resolvedModel } = getAdapter(fullModelString);
