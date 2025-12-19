@@ -48,6 +48,12 @@ export const ConfigSchema = z.object({
           command: z.string(),
           args: z.array(z.string()).optional(),
           env: z.record(z.string()).optional(),
+          url: z.string().url().optional(),
+          oauth: z
+            .object({
+              scope: z.string().optional(),
+            })
+            .optional(),
         }),
         z.object({
           type: z.literal('remote'),

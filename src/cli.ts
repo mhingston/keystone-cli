@@ -273,6 +273,7 @@ program
         console.log('Outputs:');
         console.log(JSON.stringify(runner.redact(outputs), null, 2));
       }
+      process.exit(0);
     } catch (error) {
       console.error(
         '✗ Failed to execute workflow:',
@@ -350,6 +351,7 @@ program
         console.log('Outputs:');
         console.log(JSON.stringify(runner.redact(outputs), null, 2));
       }
+      process.exit(0);
     } catch (error) {
       console.error('✗ Failed to resume workflow:', error instanceof Error ? error.message : error);
       process.exit(1);
@@ -496,25 +498,41 @@ mcp
     const config = ConfigLoader.load();
     const server = config.mcp_servers[serverName];
 
-    if (!server || server.type !== 'remote' || !server.oauth) {
-      console.error(`✗ MCP server '${serverName}' is not a remote server with OAuth configured.`);
+    if (!server || !server.oauth) {
+      console.error(`✗ MCP server '${serverName}' is not configured with OAuth.`);
+      process.exit(1);
+    }
+
+    let url = server.url;
+
+    // If it's a local server using mcp-remote, try to find the URL in args
+    if (!url && server.type === 'local' && server.args) {
+      url = server.args.find((arg) => arg.startsWith('http'));
+    }
+
+    if (!url) {
+      console.error(
+        `✗ MCP server '${serverName}' does not have a URL configured for authentication.`
+      );
+      console.log('  Please add a "url" property to your server configuration.');
       process.exit(1);
     }
 
     console.log(`\n🔐 Authenticating with MCP server: ${serverName}`);
-    console.log(`   URL: ${server.url}\n`);
+    console.log(`   URL: ${url}\n`);
 
     // For now, we'll support a manual token entry until we have a full browser redirect flow
     // Most MCP OAuth servers provide a way to get a token via a URL
-    const authUrl = server.url.replace('/sse', '/authorize') || server.url;
+    const authUrl = url.replace('/sse', '/authorize') || url;
     console.log('1. Visit the following URL to authorize:');
     console.log(`   ${authUrl}`);
     console.log(
-      '\n   Note: For some servers like Atlassian, you may need to use a proxy like mcp-remote.'
+      '\n   Note: If you get a 500 error, it is because the Atlassian remote server requires a registered Client ID.'
     );
-    console.log('   Instead of "type: remote", use:');
-    console.log('   command: npx');
-    console.log('   args: ["-y", "mcp-remote", "<server-url>"]');
+    console.log(
+      '   For CLI usage, it is recommended to use the local "mcp-atlassian" server instead.'
+    );
+    console.log('   You can still manually provide an OAuth token below if you have one.');
     console.log('\n2. Paste the access token below:\n');
 
     const prompt = 'Access Token: ';

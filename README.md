@@ -332,10 +332,13 @@ mcp_servers:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]
 
-  # Remote server (SSE)
+  # Remote server (via proxy)
   atlassian:
-    type: remote
-    url: https://mcp.atlassian.com/v1/sse
+    type: local
+    command: npx
+    args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
+    oauth:
+      scope: tools:read
 ```
 
 #### Using MCP in Steps

@@ -30,7 +30,8 @@ model_mappings:
 
 mcp_servers:
   atlassian:
-    type: remote
-    url: https://mcp.atlassian.com/v1/sse
+    type: local
+    command: npx
+    args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
     oauth:
       scope: tools:read

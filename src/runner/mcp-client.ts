@@ -57,12 +57,16 @@ class StdConfigTransport implements MCPTransport {
         const response = JSON.parse(line) as MCPResponse;
         callback(response);
       } catch (e) {
-        // Ignore non-JSON lines
+        // Log non-JSON lines to stderr so they show up in the terminal
+        if (line.trim()) {
+          process.stderr.write(`[MCP Server Output] ${line}\n`);
+        }
       }
     });
   }
 
   close(): void {
+    this.rl.close();
     this.process.kill();
   }
 }
@@ -73,33 +77,65 @@ class SSETransport implements MCPTransport {
   private endpoint?: string;
   private onMessageCallback?: (message: MCPResponse) => void;
   private abortController: AbortController | null = null;
+  private sessionId?: string;
 
   constructor(url: string, headers: Record<string, string> = {}) {
     this.url = url;
     this.headers = headers;
   }
 
-  async connect(): Promise<void> {
+  async connect(timeout = 60000): Promise<void> {
     this.abortController = new AbortController();
 
     return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.close();
+        reject(new Error(`SSE connection timeout: ${this.url}`));
+      }, timeout);
+
       (async () => {
         try {
-          const response = await fetch(this.url, {
+          let response = await fetch(this.url, {
             headers: {
-              Accept: 'text/event-stream',
+              Accept: 'application/json, text/event-stream',
               ...this.headers,
             },
             signal: this.abortController?.signal,
           });
 
+          if (response.status === 405) {
+            // Some MCP servers (like GitHub) require POST to start a session
+            response = await fetch(this.url, {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json, text/event-stream',
+                'Content-Type': 'application/json',
+                ...this.headers,
+              },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'ping',
+                method: 'ping',
+              }),
+              signal: this.abortController?.signal,
+            });
+          }
+
           if (!response.ok) {
+            clearTimeout(timeoutId);
             reject(new Error(`SSE connection failed: ${response.status} ${response.statusText}`));
             return;
           }
 
+          // Check for session ID in headers
+          this.sessionId =
+            response.headers.get('mcp-session-id') ||
+            response.headers.get('Mcp-Session-Id') ||
+            undefined;
+
           const reader = response.body?.getReader();
           if (!reader) {
+            clearTimeout(timeoutId);
             reject(new Error('Failed to get response body reader'));
             return;
           }
@@ -109,11 +145,53 @@ class SSETransport implements MCPTransport {
             let buffer = '';
             const decoder = new TextDecoder();
             let currentEvent: { event?: string; data?: string } = {};
+            let isResolved = false;
+
+            const dispatchEvent = () => {
+              if (currentEvent.data) {
+                if (currentEvent.event === 'endpoint') {
+                  this.endpoint = currentEvent.data;
+                  if (this.endpoint) {
+                    this.endpoint = new URL(this.endpoint, this.url).href;
+                  }
+                  if (!isResolved) {
+                    isResolved = true;
+                    clearTimeout(timeoutId);
+                    resolve();
+                  }
+                } else if (!currentEvent.event || currentEvent.event === 'message') {
+                  // If we get a message before an endpoint, assume the URL itself is the endpoint
+                  // (Common in some MCP over SSE implementations like GitHub's)
+                  if (!this.endpoint) {
+                    this.endpoint = this.url;
+                    if (!isResolved) {
+                      isResolved = true;
+                      clearTimeout(timeoutId);
+                      resolve();
+                    }
+                  }
+
+                  if (this.onMessageCallback && currentEvent.data) {
+                    try {
+                      const message = JSON.parse(currentEvent.data) as MCPResponse;
+                      this.onMessageCallback(message);
+                    } catch (e) {
+                      // Ignore parse errors
+                    }
+                  }
+                }
+              }
+              currentEvent = {};
+            };
 
             try {
               while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                  // Dispatch any remaining data
+                  dispatchEvent();
+                  break;
+                }
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split(/\r\n|\r|\n/);
@@ -121,27 +199,7 @@ class SSETransport implements MCPTransport {
 
                 for (const line of lines) {
                   if (line.trim() === '') {
-                    // End of event - dispatch
-                    if (currentEvent.data) {
-                      if (currentEvent.event === 'endpoint') {
-                        this.endpoint = currentEvent.data;
-                        if (this.endpoint) {
-                          this.endpoint = new URL(this.endpoint, this.url).href;
-                        }
-                        resolve();
-                      } else if (
-                        (!currentEvent.event || currentEvent.event === 'message') &&
-                        this.onMessageCallback
-                      ) {
-                        try {
-                          const message = JSON.parse(currentEvent.data) as MCPResponse;
-                          this.onMessageCallback(message);
-                        } catch (e) {
-                          // Ignore parse errors
-                        }
-                      }
-                    }
-                    currentEvent = {};
+                    dispatchEvent();
                     continue;
                   }
 
@@ -153,14 +211,28 @@ class SSETransport implements MCPTransport {
                   }
                 }
               }
+
+              if (!isResolved) {
+                // If the stream ended before we resolved, but we have a session ID, we can try to resolve
+                if (this.sessionId && !this.endpoint) {
+                  this.endpoint = this.url;
+                  isResolved = true;
+                  clearTimeout(timeoutId);
+                  resolve();
+                } else {
+                  clearTimeout(timeoutId);
+                  reject(new Error('SSE stream ended before connection established'));
+                }
+              }
             } catch (err) {
-              if ((err as Error).name !== 'AbortError') {
-                // Only reject if we haven't resolved yet
-                // Actually, if we are already resolved, we might want to log the error or handle reconnection
+              if ((err as Error).name !== 'AbortError' && !isResolved) {
+                clearTimeout(timeoutId);
+                reject(err);
               }
             }
           })();
         } catch (err) {
+          clearTimeout(timeoutId);
           reject(err);
         }
       })();
@@ -172,12 +244,18 @@ class SSETransport implements MCPTransport {
       throw new Error('SSE transport not connected or endpoint not received');
     }
 
+    const headers = {
+      'Content-Type': 'application/json',
+      ...this.headers,
+    };
+
+    if (this.sessionId) {
+      headers['mcp-session-id'] = this.sessionId;
+    }
+
     const response = await fetch(this.endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...this.headers,
-      },
+      headers,
       body: JSON.stringify(message),
     });
 
@@ -188,6 +266,65 @@ class SSETransport implements MCPTransport {
           text ? ` - ${text}` : ''
         }`
       );
+    }
+
+    // Some MCP servers (like GitHub) send the response directly in the POST response as SSE
+    const contentType = response.headers.get('content-type');
+    if (contentType?.includes('text/event-stream')) {
+      const reader = response.body?.getReader();
+      if (reader) {
+        (async () => {
+          let buffer = '';
+          const decoder = new TextDecoder();
+          let currentEvent: { event?: string; data?: string } = {};
+
+          const dispatchEvent = () => {
+            if (
+              this.onMessageCallback &&
+              currentEvent.data &&
+              (!currentEvent.event || currentEvent.event === 'message')
+            ) {
+              try {
+                const message = JSON.parse(currentEvent.data) as MCPResponse;
+                this.onMessageCallback(message);
+              } catch (e) {
+                // Ignore parse errors
+              }
+            }
+            currentEvent = {};
+          };
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                dispatchEvent();
+                break;
+              }
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split(/\r\n|\r|\n/);
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.trim() === '') {
+                  dispatchEvent();
+                  continue;
+                }
+
+                if (line.startsWith('event:')) {
+                  currentEvent.event = line.substring(6).trim();
+                } else if (line.startsWith('data:')) {
+                  const data = line.substring(5).trim();
+                  currentEvent.data = currentEvent.data ? `${currentEvent.data}\n${data}` : data;
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore stream errors
+          }
+        })();
+      }
     }
   }
 
@@ -247,7 +384,7 @@ export class MCPClient {
     timeout = 60000
   ): Promise<MCPClient> {
     const transport = new SSETransport(url, headers);
-    await transport.connect();
+    await transport.connect(timeout);
     return new MCPClient(transport, timeout);
   }
 

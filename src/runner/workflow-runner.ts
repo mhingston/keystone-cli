@@ -879,7 +879,9 @@ export class WorkflowRunner {
     } finally {
       this.removeSignalHandlers();
       await this.runFinally();
-      await this.mcpManager.stopAll();
+      if (!this.options.mcpManager) {
+        await this.mcpManager.stopAll();
+      }
       this.db.close();
     }
   }

@@ -93,7 +93,27 @@ export class MCPManager {
           client = await MCPClient.createRemote(config.url, headers);
         } else {
           if (!config.command) throw new Error('Local MCP server missing command');
-          client = await MCPClient.createLocal(config.command, config.args || [], config.env || {});
+
+          const env = { ...(config.env || {}) };
+
+          if (config.oauth) {
+            const { AuthManager } = await import('../utils/auth-manager');
+            const auth = AuthManager.load();
+            const token = auth.mcp_tokens?.[config.name]?.access_token;
+
+            if (!token) {
+              throw new Error(
+                `MCP server ${config.name} requires OAuth. Please run "keystone mcp login ${config.name}" first.`
+              );
+            }
+
+            // Pass token to the local proxy via environment variables
+            // Most proxies expect AUTHORIZATION or MCP_TOKEN
+            env.AUTHORIZATION = `Bearer ${token}`;
+            env.MCP_TOKEN = token;
+          }
+
+          client = await MCPClient.createLocal(config.command, config.args || [], env);
         }
 
         await client.initialize();
