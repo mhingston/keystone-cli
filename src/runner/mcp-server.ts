@@ -345,7 +345,12 @@ export class MCPServer {
             // Fulfill the step in the DB
             let output: unknown = input;
             const lowerInput = input.trim().toLowerCase();
-            if (lowerInput === 'confirm' || lowerInput === 'y' || lowerInput === 'yes' || lowerInput === '') {
+            if (
+              lowerInput === 'confirm' ||
+              lowerInput === 'y' ||
+              lowerInput === 'yes' ||
+              lowerInput === ''
+            ) {
               output = true;
             } else if (lowerInput === 'n' || lowerInput === 'no') {
               output = false;
