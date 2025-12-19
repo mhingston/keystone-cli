@@ -324,10 +324,10 @@ async function executeHumanStep(
   try {
     if (step.inputType === 'confirm') {
       logger.log(`\n❓ ${message}`);
-      logger.log('Press Enter to continue, or Ctrl+C to cancel...');
-      await rl.question('');
+      const answer = await rl.question('Confirm? (Y/n): ');
+      const isConfirmed = answer.toLowerCase() !== 'n';
       return {
-        output: true,
+        output: isConfirmed,
         status: 'success',
       };
     }

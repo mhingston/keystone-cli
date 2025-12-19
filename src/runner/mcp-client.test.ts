@@ -167,6 +167,57 @@ describe('MCPClient', () => {
       fetchMock.mockRestore();
     });
 
+    it('should handle SSE with multiple events and chunked data', async () => {
+      let controller: ReadableStreamDefaultController;
+      const stream = new ReadableStream({
+        start(c) {
+          controller = c;
+          // Send endpoint event
+          controller.enqueue(new TextEncoder().encode('event: endpoint\n'));
+          controller.enqueue(new TextEncoder().encode('data: /endpoint\n\n'));
+        },
+      });
+
+      const fetchMock = spyOn(global, 'fetch').mockImplementation((url) => {
+        if (url === 'http://localhost:8080/sse') {
+          return Promise.resolve(new Response(stream));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+      });
+
+      const client = await MCPClient.createRemote('http://localhost:8080/sse');
+
+      // We can't easily hook into onMessage without reaching into internals
+      // Instead, we'll test that initialize resolves correctly when the response arrives
+      const initPromise = client.initialize();
+
+      // Enqueue data in chunks
+      if (controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"jsonrpc":"2.0","id":0,'));
+        controller.enqueue(
+          new TextEncoder().encode('"result":{"protocolVersion":"2024-11-05"}}\n\n')
+        );
+
+        // Send another event (just to test dispatching doesn't crash)
+        controller.enqueue(
+          new TextEncoder().encode(
+            'event: message\ndata: {"jsonrpc":"2.0","id":99,"result":"ignored"}\n\n'
+          )
+        );
+
+        // Send empty line
+        controller.enqueue(new TextEncoder().encode('\n'));
+
+        controller.close();
+      }
+
+      const response = await initPromise;
+      expect(response.result?.protocolVersion).toBe('2024-11-05');
+
+      client.stop();
+      fetchMock.mockRestore();
+    });
+
     it('should handle SSE connection failure', async () => {
       const fetchMock = spyOn(global, 'fetch').mockImplementation(() =>
         Promise.resolve(

@@ -111,8 +111,12 @@ export async function executeLlmStep(
             continue;
           }
           logger.log(`  🔌 Connecting to MCP server: ${server.name}`);
-          client = new MCPClient(server.command, server.args, server.env);
           try {
+            client = await MCPClient.createLocal(
+              server.command,
+              server.args || [],
+              server.env || {}
+            );
             await client.initialize();
             localMcpClients.push(client);
           } catch (error) {

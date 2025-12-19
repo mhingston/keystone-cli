@@ -1,6 +1,6 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it, mock, spyOn } from 'bun:test';
 import type { Workflow } from '../parser/schema';
-import { generateMermaidGraph } from './mermaid';
+import { generateMermaidGraph, renderMermaidAsAscii } from './mermaid';
 
 describe('mermaid', () => {
   it('should generate a mermaid graph from a workflow', () => {
@@ -42,10 +42,34 @@ describe('mermaid', () => {
       )
     );
 
-    const { renderMermaidAsAscii } = await import('./mermaid');
     const result = await renderMermaidAsAscii('graph TD\n  A --> B');
     expect(result).toBe('ascii graph');
 
     global.fetch = originalFetch;
+  });
+
+  it('should return null if API returns error', async () => {
+    const fetchSpy = spyOn(global, 'fetch').mockResolvedValue(
+      new Response('Error', { status: 500 })
+    );
+    const result = await renderMermaidAsAscii('graph TD; A-->B');
+    expect(result).toBeNull();
+    fetchSpy.mockRestore();
+  });
+
+  it('should return null if API returns failure message', async () => {
+    const fetchSpy = spyOn(global, 'fetch').mockResolvedValue(
+      new Response('Failed to render diagram', { status: 200 })
+    );
+    const result = await renderMermaidAsAscii('graph TD; A-->B');
+    expect(result).toBeNull();
+    fetchSpy.mockRestore();
+  });
+
+  it('should return null if fetch throws', async () => {
+    const fetchSpy = spyOn(global, 'fetch').mockRejectedValue(new Error('Network error'));
+    const result = await renderMermaidAsAscii('graph TD; A-->B');
+    expect(result).toBeNull();
+    fetchSpy.mockRestore();
   });
 });

@@ -59,6 +59,10 @@ describe('ExpressionEvaluator', () => {
     expect(ExpressionEvaluator.evaluate('${{ false && 1 }}', context)).toBe(false);
     expect(ExpressionEvaluator.evaluate('${{ true || 1 }}', context)).toBe(true);
     expect(ExpressionEvaluator.evaluate('${{ false || 1 }}', context)).toBe(1);
+    // Explicit short-circuit tests
+    expect(ExpressionEvaluator.evaluate('${{ false && undefined_var }}', context)).toBe(false);
+    expect(ExpressionEvaluator.evaluate('${{ true || undefined_var }}', context)).toBe(true);
+    expect(ExpressionEvaluator.evaluate('${{ true && 2 }}', context)).toBe(2);
   });
 
   test('should support comparison operators', () => {

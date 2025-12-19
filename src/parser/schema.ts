@@ -3,7 +3,7 @@ import { z } from 'zod';
 // ===== Input/Output Schema =====
 
 const InputSchema = z.object({
-  type: z.string(),
+  type: z.enum(['string', 'number', 'boolean', 'array', 'object']),
   default: z.any().optional(),
   description: z.string().optional(),
 });

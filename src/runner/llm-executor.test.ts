@@ -1,6 +1,19 @@
-import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from 'bun:test';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from 'bun:test';
+import * as child_process from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Readable, Writable } from 'node:stream';
 import type { ExpressionContext } from '../expression/evaluator';
 import type { LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
@@ -24,8 +37,113 @@ const originalAnthropicChat = AnthropicAdapter.prototype.chat;
 
 describe('llm-executor', () => {
   const agentsDir = join(process.cwd(), '.keystone', 'workflows', 'agents');
+  let spawnSpy: ReturnType<typeof spyOn>;
+  let initSpy: ReturnType<typeof spyOn>;
+  let listToolsSpy: ReturnType<typeof spyOn>;
+  let stopSpy: ReturnType<typeof spyOn>;
+
+  const mockChat = async (messages: unknown[], _options?: unknown) => {
+    const msgs = messages as LLMMessage[];
+    const lastMessage = msgs[msgs.length - 1];
+    const systemMessage = msgs.find((m) => m.role === 'system');
+
+    // If there's any tool message, just respond with final message
+    if (msgs.some((m) => m.role === 'tool')) {
+      return {
+        message: { role: 'assistant', content: 'LLM Response' },
+      };
+    }
+
+    if (systemMessage?.content?.includes('IMPORTANT: You must output valid JSON')) {
+      return {
+        message: { role: 'assistant', content: '```json\n{"foo": "bar"}\n```' },
+      };
+    }
+
+    if (lastMessage.role === 'user' && lastMessage.content?.includes('trigger tool')) {
+      return {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call-1',
+              type: 'function',
+              function: { name: 'test-tool', arguments: '{"val": 123}' },
+            },
+          ],
+        },
+      };
+    }
+
+    if (lastMessage.role === 'user' && lastMessage.content?.includes('trigger adhoc tool')) {
+      return {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call-adhoc',
+              type: 'function',
+              function: { name: 'adhoc-tool', arguments: '{}' },
+            },
+          ],
+        },
+      };
+    }
+
+    if (lastMessage.role === 'user' && lastMessage.content?.includes('trigger unknown tool')) {
+      return {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call-unknown',
+              type: 'function',
+              function: { name: 'unknown-tool', arguments: '{}' },
+            },
+          ],
+        },
+      };
+    }
+
+    if (lastMessage.role === 'user' && lastMessage.content?.includes('trigger mcp tool')) {
+      return {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call-mcp',
+              type: 'function',
+              function: { name: 'mcp-tool', arguments: '{}' },
+            },
+          ],
+        },
+      };
+    }
+
+    return {
+      message: { role: 'assistant', content: 'LLM Response' },
+    };
+  };
 
   beforeAll(() => {
+    // Mock spawn to avoid actual process creation
+    const mockProcess = Object.assign(new EventEmitter(), {
+      stdout: new Readable({ read() {} }),
+      stdin: new Writable({
+        write(_chunk, _encoding, cb: (error?: Error | null) => void) {
+          cb();
+        },
+      }),
+      kill: mock(() => {}),
+    });
+    spawnSpy = spyOn(child_process, 'spawn').mockReturnValue(
+      mockProcess as unknown as child_process.ChildProcess
+    );
+
     try {
       mkdirSync(agentsDir, { recursive: true });
     } catch (e) {}
@@ -40,68 +158,35 @@ tools:
 ---
 You are a test agent.`;
     writeFileSync(join(agentsDir, 'test-agent.md'), agentContent);
+  });
 
-    const mockChat = async (messages: unknown[], _options?: unknown) => {
-      const lastMessage = messages[messages.length - 1] as { content?: string };
-      const systemMessage = messages.find(
-        (m) =>
-          typeof m === 'object' &&
-          m !== null &&
-          'role' in m &&
-          (m as { role: string }).role === 'system'
-      ) as { content?: string } | undefined;
+  beforeEach(() => {
+    // Global MCP mocks to avoid hangs
+    initSpy = spyOn(MCPClient.prototype, 'initialize').mockResolvedValue({
+      jsonrpc: '2.0',
+      id: 0,
+      result: { protocolVersion: '2024-11-05' },
+    } as MCPResponse);
+    listToolsSpy = spyOn(MCPClient.prototype, 'listTools').mockResolvedValue([]);
+    stopSpy = spyOn(MCPClient.prototype, 'stop').mockReturnValue(undefined);
 
-      if (systemMessage?.content?.includes('IMPORTANT: You must output valid JSON')) {
-        return {
-          message: { role: 'assistant', content: '```json\n{"foo": "bar"}\n```' },
-        };
-      }
-
-      if (lastMessage?.content?.includes('trigger tool')) {
-        return {
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [
-              {
-                id: 'call-1',
-                type: 'function',
-                function: { name: 'test-tool', arguments: '{"val": 123}' },
-              },
-            ],
-          },
-        };
-      }
-
-      if (lastMessage?.content?.includes('trigger adhoc tool')) {
-        return {
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [
-              {
-                id: 'call-adhoc',
-                type: 'function',
-                function: { name: 'adhoc-tool', arguments: '{}' },
-              },
-            ],
-          },
-        };
-      }
-      return {
-        message: { role: 'assistant', content: 'LLM Response' },
-      };
-    };
-
+    // Set adapters to global mock
     OpenAIAdapter.prototype.chat = mock(mockChat) as unknown as typeof originalOpenAIChat;
     CopilotAdapter.prototype.chat = mock(mockChat) as unknown as typeof originalCopilotChat;
     AnthropicAdapter.prototype.chat = mock(mockChat) as unknown as typeof originalAnthropicChat;
+  });
+
+  afterEach(() => {
+    initSpy.mockRestore();
+    listToolsSpy.mockRestore();
+    stopSpy.mockRestore();
   });
 
   afterAll(() => {
     OpenAIAdapter.prototype.chat = originalOpenAIChat;
     CopilotAdapter.prototype.chat = originalCopilotChat;
     AnthropicAdapter.prototype.chat = originalAnthropicChat;
+    spawnSpy.mockRestore();
   });
 
   it('should execute a simple LLM step', async () => {
@@ -279,9 +364,12 @@ You are a test agent.`;
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
-    const spy = spyOn(MCPClient.prototype, 'initialize').mockRejectedValue(
-      new Error('Connect failed')
-    );
+    const createLocalSpy = spyOn(MCPClient, 'createLocal').mockImplementation(async () => {
+      const client = Object.create(MCPClient.prototype);
+      spyOn(client, 'initialize').mockRejectedValue(new Error('Connect failed'));
+      spyOn(client, 'stop').mockReturnValue(undefined);
+      return client;
+    });
     const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
 
     await executeLlmStep(
@@ -293,7 +381,7 @@ You are a test agent.`;
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('Failed to connect to MCP server fail-mcp')
     );
-    spy.mockRestore();
+    createLocalSpy.mockRestore();
     consoleSpy.mockRestore();
   });
 
@@ -309,13 +397,14 @@ You are a test agent.`;
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
-    const initSpy = spyOn(MCPClient.prototype, 'initialize').mockResolvedValue({} as MCPResponse);
-    const listSpy = spyOn(MCPClient.prototype, 'listTools').mockResolvedValue([
-      { name: 'mcp-tool', inputSchema: {} },
-    ]);
-    const callSpy = spyOn(MCPClient.prototype, 'callTool').mockRejectedValue(
-      new Error('Tool failed')
-    );
+    const createLocalSpy = spyOn(MCPClient, 'createLocal').mockImplementation(async () => {
+      const client = Object.create(MCPClient.prototype);
+      spyOn(client, 'initialize').mockResolvedValue({} as MCPResponse);
+      spyOn(client, 'listTools').mockResolvedValue([{ name: 'mcp-tool', inputSchema: {} }]);
+      spyOn(client, 'callTool').mockRejectedValue(new Error('Tool failed'));
+      spyOn(client, 'stop').mockReturnValue(undefined);
+      return client;
+    });
 
     const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
     const originalCopilotChatInner = CopilotAdapter.prototype.chat;
@@ -351,11 +440,7 @@ You are a test agent.`;
     expect(toolErrorCaptured).toBe(true);
 
     OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
-    CopilotAdapter.prototype.chat = originalCopilotChatInner;
-    AnthropicAdapter.prototype.chat = originalAnthropicChatInner;
-    initSpy.mockRestore();
-    listSpy.mockRestore();
-    callSpy.mockRestore();
+    createLocalSpy.mockRestore();
   });
 
   it('should use global MCP servers when useGlobalMcp is true', async () => {
@@ -382,10 +467,15 @@ You are a test agent.`;
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
-    const initSpy = spyOn(MCPClient.prototype, 'initialize').mockResolvedValue({} as MCPResponse);
-    const listSpy = spyOn(MCPClient.prototype, 'listTools').mockResolvedValue([
-      { name: 'global-tool', description: 'A global tool', inputSchema: {} },
-    ]);
+    const createLocalSpy = spyOn(MCPClient, 'createLocal').mockImplementation(async () => {
+      const client = Object.create(MCPClient.prototype);
+      spyOn(client, 'initialize').mockResolvedValue({} as MCPResponse);
+      spyOn(client, 'listTools').mockResolvedValue([
+        { name: 'global-tool', description: 'A global tool', inputSchema: {} },
+      ]);
+      spyOn(client, 'stop').mockReturnValue(undefined);
+      return client;
+    });
 
     let toolFound = false;
     const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
@@ -409,8 +499,7 @@ You are a test agent.`;
     expect(toolFound).toBe(true);
 
     OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
-    initSpy.mockRestore();
-    listSpy.mockRestore();
+    createLocalSpy.mockRestore();
     ConfigLoader.clear();
   });
 
@@ -502,8 +591,13 @@ You are a test agent.`;
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
-    const initSpy = spyOn(MCPClient.prototype, 'initialize').mockResolvedValue({} as MCPResponse);
-    const listSpy = spyOn(MCPClient.prototype, 'listTools').mockResolvedValue([]);
+    const createLocalSpy = spyOn(MCPClient, 'createLocal').mockImplementation(async () => {
+      const client = Object.create(MCPClient.prototype);
+      spyOn(client, 'initialize').mockResolvedValue({} as MCPResponse);
+      spyOn(client, 'listTools').mockResolvedValue([]);
+      spyOn(client, 'stop').mockReturnValue(undefined);
+      return client;
+    });
 
     const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
     const mockChat = mock(async () => ({
@@ -526,12 +620,11 @@ You are a test agent.`;
     // We can check this by seeing how many times initialize was called if they were different,
     // but here we just want to ensure it didn't push the global one again.
 
-    // Actually, initialize will be called for 'test-mcp' (explicitly listed)
-    expect(initSpy).toHaveBeenCalledTimes(1);
+    // Actually, createLocal will be called for 'test-mcp' (explicitly listed)
+    expect(createLocalSpy).toHaveBeenCalledTimes(1);
 
     OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
-    initSpy.mockRestore();
-    listSpy.mockRestore();
+    createLocalSpy.mockRestore();
     managerSpy.mockRestore();
     ConfigLoader.clear();
   });

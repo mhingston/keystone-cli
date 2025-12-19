@@ -527,10 +527,7 @@ mcp
     console.log('1. Visit the following URL to authorize:');
     console.log(`   ${authUrl}`);
     console.log(
-      '\n   Note: If you get a 500 error, it is because the Atlassian remote server requires a registered Client ID.'
-    );
-    console.log(
-      '   For CLI usage, it is recommended to use the local "mcp-atlassian" server instead.'
+      '\n   Note: If you encounter errors, ensure the server is correctly configured and accessible.'
     );
     console.log('   You can still manually provide an OAuth token below if you have one.');
     console.log('\n2. Paste the access token below:\n');
