@@ -1,6 +1,6 @@
 {
   "name": "keystone-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A local-first, declarative, agentic workflow orchestrator built on Bun",
   "type": "module",
   "bin": {
@@ -13,7 +13,13 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."
   },
-  "keywords": ["workflow", "orchestrator", "agentic", "automation", "bun"],
+  "keywords": [
+    "workflow",
+    "orchestrator",
+    "agentic",
+    "automation",
+    "bun"
+  ],
   "author": "Mark Hingston",
   "license": "MIT",
   "repository": {
@@ -21,7 +27,12 @@
     "url": "https://github.com/mhingston/keystone-cli.git"
   },
   "homepage": "https://github.com/mhingston/keystone-cli#readme",
-  "files": ["src", "README.md", "LICENSE", "logo.png"],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "logo.png"
+  ],
   "dependencies": {
     "@jsep-plugin/arrow": "^1.0.6",
     "@jsep-plugin/object": "^1.2.2",
