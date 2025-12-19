@@ -1,4 +1,5 @@
 import * as readline from 'node:readline';
+import type { Readable, Writable } from 'node:stream';
 import pkg from '../../package.json' with { type: 'json' };
 import { WorkflowDb } from '../db/workflow-db';
 import { WorkflowParser } from '../parser/workflow-parser';
@@ -16,14 +17,18 @@ interface MCPMessage {
 
 export class MCPServer {
   private db: WorkflowDb;
+  private input: Readable;
+  private output: Writable;
 
-  constructor(db?: WorkflowDb) {
+  constructor(db?: WorkflowDb, input: Readable = process.stdin, output: Writable = process.stdout) {
     this.db = db || new WorkflowDb();
+    this.input = input;
+    this.output = output;
   }
 
   async start() {
     const rl = readline.createInterface({
-      input: process.stdin,
+      input: this.input,
       terminal: false,
     });
 
@@ -35,7 +40,7 @@ export class MCPServer {
           const message = JSON.parse(line) as MCPMessage;
           const response = await this.handleMessage(message);
           if (response) {
-            process.stdout.write(`${JSON.stringify(response)}\n`);
+            this.output.write(`${JSON.stringify(response)}\n`);
           }
         } catch (error) {
           console.error('Error handling MCP message:', error);
@@ -45,6 +50,11 @@ export class MCPServer {
       rl.on('close', () => {
         this.stop();
         resolve();
+      });
+
+      // Handle stream errors
+      this.input.on('error', (err: Error) => {
+        console.error('stdin error:', err);
       });
     });
   }
@@ -333,7 +343,14 @@ export class MCPServer {
             }
 
             // Fulfill the step in the DB
-            const output = input === 'confirm' ? true : input;
+            let output: unknown = input;
+            const lowerInput = input.trim().toLowerCase();
+            if (lowerInput === 'confirm' || lowerInput === 'y' || lowerInput === 'yes' || lowerInput === '') {
+              output = true;
+            } else if (lowerInput === 'n' || lowerInput === 'no') {
+              output = false;
+            }
+
             await this.db.completeStep(pendingStep.id, 'success', output);
 
             // Resume the workflow

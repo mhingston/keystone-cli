@@ -105,17 +105,26 @@ const SleepStepSchema = BaseStepSchema.extend({
   duration: z.union([z.number().int().positive(), z.string()]),
 });
 
+const ScriptStepSchema = BaseStepSchema.extend({
+  type: z.literal('script'),
+  run: z.string(),
+});
+
 // ===== Discriminated Union for Steps =====
 
-export const StepSchema = z.discriminatedUnion('type', [
-  ShellStepSchema,
-  LlmStepSchema,
-  WorkflowStepSchema,
-  FileStepSchema,
-  RequestStepSchema,
-  HumanStepSchema,
-  SleepStepSchema,
-]);
+// biome-ignore lint/suspicious/noExplicitAny: Recursive Zod type
+export const StepSchema: z.ZodType<any> = z.lazy(() =>
+  z.discriminatedUnion('type', [
+    ShellStepSchema,
+    LlmStepSchema,
+    WorkflowStepSchema,
+    FileStepSchema,
+    RequestStepSchema,
+    HumanStepSchema,
+    SleepStepSchema,
+    ScriptStepSchema,
+  ])
+);
 
 // ===== Workflow Schema =====
 
@@ -152,6 +161,7 @@ export type FileStep = z.infer<typeof FileStepSchema>;
 export type RequestStep = z.infer<typeof RequestStepSchema>;
 export type HumanStep = z.infer<typeof HumanStepSchema>;
 export type SleepStep = z.infer<typeof SleepStepSchema>;
+export type ScriptStep = z.infer<typeof ScriptStepSchema>;
 export type Workflow = z.infer<typeof WorkflowSchema>;
 export type AgentTool = z.infer<typeof AgentToolSchema>;
 export type Agent = z.infer<typeof AgentSchema>;

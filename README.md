@@ -265,6 +265,7 @@ Keystone supports several specialized step types:
   - `inputType: confirm`: Simple Enter-to-continue prompt.
   - `inputType: text`: Prompt for a string input, available via `${{ steps.id.output }}`.
 - `workflow`: Trigger another workflow as a sub-step.
+- `script`: Run arbitrary JavaScript in a secure sandbox (`isolated-vm` with fallback to `node:vm`).
 - `sleep`: Pause execution for a specified duration.
 
 All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), and `transform` (post-process output using expressions).

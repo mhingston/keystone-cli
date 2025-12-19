@@ -63,4 +63,10 @@ describe('Redactor', () => {
     const text = 'a and 12 are safe, but abc is a secret';
     expect(shortRedactor.redact(text)).toBe('a and 12 are safe, but ***REDACTED*** is a secret');
   });
+
+  it('should not redact substrings of larger words when using alphanumeric secrets', () => {
+    const wordRedactor = new Redactor({ USER: 'mark' });
+    const text = 'mark went to the marketplace';
+    expect(wordRedactor.redact(text)).toBe('***REDACTED*** went to the marketplace');
+  });
 });

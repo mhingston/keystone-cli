@@ -28,7 +28,7 @@ describe('MCPServer', () => {
       method: 'initialize',
     });
 
-    expect(response.result.serverInfo.name).toBe('keystone-mcp');
+    expect(response?.result?.serverInfo?.name).toBe('keystone-mcp');
   });
 
   it('should list tools', async () => {
@@ -38,9 +38,9 @@ describe('MCPServer', () => {
       method: 'tools/list',
     });
 
-    expect(response.result.tools).toHaveLength(5);
+    expect(response?.result?.tools).toHaveLength(5);
     // @ts-ignore
-    expect(response.result.tools.map((t) => t.name)).toContain('run_workflow');
+    expect(response?.result?.tools?.map((t) => t.name)).toContain('run_workflow');
   });
 
   it('should call list_workflows tool', async () => {
@@ -55,7 +55,7 @@ describe('MCPServer', () => {
       params: { name: 'list_workflows', arguments: {} },
     });
 
-    expect(response.result.content[0].text).toContain('test-wf');
+    expect(response?.result?.content?.[0]?.text).toContain('test-wf');
   });
 
   it('should call run_workflow tool successfully', async () => {
@@ -104,8 +104,8 @@ describe('MCPServer', () => {
       },
     });
 
-    expect(response.result.isError).toBe(true);
-    expect(response.result.content[0].text).toContain('Workflow failed');
+    expect(response?.result?.isError).toBe(true);
+    expect(response?.result?.content?.[0]?.text).toContain('Workflow failed');
   });
 
   it('should handle workflow suspension in run_workflow', async () => {
@@ -130,7 +130,7 @@ describe('MCPServer', () => {
       },
     });
 
-    const result = JSON.parse(response.result.content[0].text);
+    const result = JSON.parse(response?.result?.content?.[0]?.text);
     expect(result.status).toBe('paused');
     expect(result.run_id).toBe('run123');
     expect(result.message).toBe('Input needed');
@@ -187,7 +187,7 @@ describe('MCPServer', () => {
       params: { name: 'get_run_logs', arguments: { run_id: runId } },
     });
 
-    const summary = JSON.parse(response.result.content[0].text);
+    const summary = JSON.parse(response?.result?.content?.[0]?.text);
     expect(summary.workflow).toBe('test-wf');
     expect(summary.steps).toHaveLength(1);
     expect(summary.steps[0].step).toBe('s1');
@@ -202,7 +202,7 @@ describe('MCPServer', () => {
       params: { name: 'unknown_tool', arguments: {} },
     });
 
-    expect(response.error.message).toContain('Unknown tool');
+    expect(response?.error?.message).toContain('Unknown tool');
   });
 
   it('should handle unknown method', async () => {
@@ -212,14 +212,21 @@ describe('MCPServer', () => {
       method: 'unknown_method',
     });
 
-    expect(response.error.message).toContain('Method not found');
+    expect(response?.error?.message).toContain('Method not found');
   });
 
   it('should start and handle messages from stdin', async () => {
-    const writeSpy = spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const { PassThrough } = await import('node:stream');
+    const input = new PassThrough();
+    const outputStream = new PassThrough();
+
+    // Create a new server for this test to use the streams
+    const testServer = new MCPServer(db, input, outputStream);
+
+    const writeSpy = spyOn(outputStream, 'write').mockImplementation(() => true);
     const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
 
-    const startPromise = server.start();
+    const startPromise = testServer.start();
 
     // Simulate stdin data
     const message = {
@@ -227,16 +234,16 @@ describe('MCPServer', () => {
       id: 9,
       method: 'initialize',
     };
-    process.stdin.emit('data', Buffer.from(`${JSON.stringify(message)}\n`));
+    input.write(`${JSON.stringify(message)}\n`);
 
     // Wait for async processing
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     expect(writeSpy).toHaveBeenCalled();
     const output = JSON.parse(writeSpy.mock.calls[0][0] as string);
     expect(output.id).toBe(9);
 
-    process.stdin.emit('close');
+    input.end();
     await startPromise;
 
     writeSpy.mockRestore();

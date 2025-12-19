@@ -5,6 +5,7 @@ import type {
   FileStep,
   HumanStep,
   RequestStep,
+  ScriptStep,
   ShellStep,
   SleepStep,
   Step,
@@ -14,6 +15,7 @@ import { executeShell } from './shell-executor.ts';
 import type { Logger } from './workflow-runner.ts';
 
 import * as readline from 'node:readline/promises';
+import { SafeSandbox } from '../utils/sandbox.ts';
 import { executeLlmStep } from './llm-executor.ts';
 import type { MCPManager } from './mcp-manager.ts';
 
@@ -78,6 +80,9 @@ export async function executeStep(
           throw new Error('Workflow executor not provided');
         }
         result = await executeWorkflowFn(step, context);
+        break;
+      case 'script':
+        result = await executeScriptStep(step, context, logger);
         break;
       default:
         throw new Error(`Unknown step type: ${(step as Step).type}`);
@@ -324,10 +329,25 @@ async function executeHumanStep(
   try {
     if (step.inputType === 'confirm') {
       logger.log(`\n❓ ${message}`);
-      const answer = await rl.question('Confirm? (Y/n): ');
-      const isConfirmed = answer.toLowerCase() !== 'n';
+      const answer = (await rl.question('Response (Y/n/text): ')).trim();
+
+      const lowerAnswer = answer.toLowerCase();
+      if (lowerAnswer === '' || lowerAnswer === 'y' || lowerAnswer === 'yes') {
+        return {
+          output: true,
+          status: 'success',
+        };
+      }
+      if (lowerAnswer === 'n' || lowerAnswer === 'no') {
+        return {
+          output: false,
+          status: 'success',
+        };
+      }
+
+      // Fallback to text if it's not a clear yes/no
       return {
-        output: isConfirmed,
+        output: answer,
         status: 'success',
       };
     }
@@ -366,4 +386,32 @@ async function executeSleepStep(
     output: { slept: duration },
     status: 'success',
   };
+}
+/**
+ * Execute a script step in a safe sandbox
+ */
+async function executeScriptStep(
+  step: ScriptStep,
+  context: ExpressionContext,
+  _logger: Logger
+): Promise<StepResult> {
+  try {
+    const result = await SafeSandbox.execute(step.run, {
+      inputs: context.inputs,
+      secrets: context.secrets,
+      steps: context.steps,
+      env: context.env,
+    });
+
+    return {
+      output: result,
+      status: 'success',
+    };
+  } catch (error) {
+    return {
+      output: null,
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }

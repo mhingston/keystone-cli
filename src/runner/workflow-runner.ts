@@ -25,7 +25,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) {}
+  ) { }
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -53,7 +53,7 @@ export interface RunOptions {
 export interface StepContext {
   output?: unknown;
   outputs?: Record<string, unknown>;
-  status: 'success' | 'failed' | 'skipped';
+  status: 'success' | 'failed' | 'skipped' | 'pending' | 'suspended';
 }
 
 // Type for foreach results - wraps array to ensure JSON serialization preserves all properties
@@ -196,7 +196,7 @@ export class WorkflowRunner {
             items[exec.iteration_index] = {
               output: null,
               outputs: {},
-              status: exec.status as 'failed' | 'running' | 'pending',
+              status: exec.status as 'failed' | 'pending' | 'success' | 'skipped' | 'suspended',
             };
           }
         }
@@ -305,9 +305,37 @@ export class WorkflowRunner {
   private loadSecrets(): Record<string, string> {
     const secrets: Record<string, string> = {};
 
+    // Common non-secret environment variables to exclude from redaction
+    const blocklist = new Set([
+      'USER',
+      'PATH',
+      'SHELL',
+      'HOME',
+      'PWD',
+      'LOGNAME',
+      'LANG',
+      'TERM',
+      'EDITOR',
+      'VISUAL',
+      '_',
+      'SHLVL',
+      'LC_ALL',
+      'OLDPWD',
+      'DISPLAY',
+      'TMPDIR',
+      'SSH_AUTH_SOCK',
+      'XPC_FLAGS',
+      'XPC_SERVICE_NAME',
+      'ITERM_SESSION_ID',
+      'ITERM_PROFILE',
+      'TERM_PROGRAM',
+      'TERM_PROGRAM_VERSION',
+      'COLORTERM',
+    ]);
+
     // Bun automatically loads .env file
     for (const [key, value] of Object.entries(Bun.env)) {
-      if (value) {
+      if (value && !blocklist.has(key)) {
         secrets[key] = value;
       }
     }
@@ -485,11 +513,7 @@ export class WorkflowRunner {
         return result;
       }
 
-      // Redact secrets from output and error before storing
-      const redactedOutput = this.redactor.redactValue(result.output);
-      const redactedError = result.error ? this.redactor.redact(result.error) : undefined;
-
-      await this.db.completeStep(stepExecId, result.status, redactedOutput, redactedError);
+      await this.db.completeStep(stepExecId, result.status, result.output, result.error);
 
       // Ensure outputs is always an object for consistent access
       let outputs: Record<string, unknown>;
@@ -621,6 +645,7 @@ export class WorkflowRunner {
 
               // Execute and store result at correct index
               try {
+                this.logger.log(`  ⤷ [${i + 1}/${items.length}] Executing iteration...`);
                 itemResults[i] = await this.executeStepInternal(step, itemContext, stepExecId);
                 if (itemResults[i].status === 'failed') {
                   aborted = true;
@@ -760,7 +785,7 @@ export class WorkflowRunner {
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-        '   Workflows can execute arbitrary shell commands and access your environment.\n'
+      '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     // Apply defaults and validate inputs
@@ -787,8 +812,7 @@ export class WorkflowRunner {
         this.logger.log('All steps already completed. Nothing to resume.\n');
         // Evaluate outputs from completed state
         const outputs = this.evaluateOutputs();
-        const redactedOutputs = this.redactor.redactValue(outputs) as Record<string, unknown>;
-        await this.db.updateRunStatus(this.runId, 'completed', redactedOutputs);
+        await this.db.updateRunStatus(this.runId, 'completed', outputs);
         this.logger.log('✨ Workflow already completed!\n');
         return outputs;
       }
@@ -798,6 +822,9 @@ export class WorkflowRunner {
       }
 
       this.logger.log(`Execution order: ${executionOrder.join(' → ')}\n`);
+
+      const totalSteps = executionOrder.length;
+      const stepIndices = new Map(executionOrder.map((id, index) => [id, index + 1]));
 
       // Execute steps in parallel where possible (respecting dependencies)
       const pendingSteps = new Set(remainingSteps);
@@ -811,18 +838,21 @@ export class WorkflowRunner {
             if (!step) {
               throw new Error(`Step ${stepId} not found in workflow`);
             }
-            const dependenciesMet = step.needs.every((dep) => completedSteps.has(dep));
+            const dependenciesMet = step.needs.every((dep: string) => completedSteps.has(dep));
 
             if (dependenciesMet) {
               pendingSteps.delete(stepId);
 
               // Start execution
-              this.logger.log(`▶ Executing step: ${step.id} (${step.type})`);
+              const stepIndex = stepIndices.get(stepId);
+              this.logger.log(
+                `[${stepIndex}/${totalSteps}] ▶ Executing step: ${step.id} (${step.type})`
+              );
               const promise = this.executeStepWithForeach(step)
                 .then(() => {
                   completedSteps.add(stepId);
                   runningPromises.delete(stepId);
-                  this.logger.log(`  ✓ Step ${step.id} completed\n`);
+                  this.logger.log(`[${stepIndex}/${totalSteps}] ✓ Step ${step.id} completed\n`);
                 })
                 .catch((err) => {
                   runningPromises.delete(stepId);
@@ -857,11 +887,8 @@ export class WorkflowRunner {
       // Evaluate outputs
       const outputs = this.evaluateOutputs();
 
-      // Redact secrets from outputs before storing
-      const redactedOutputs = this.redactor.redactValue(outputs) as Record<string, unknown>;
-
       // Mark run as complete
-      await this.db.updateRunStatus(this.runId, 'completed', redactedOutputs);
+      await this.db.updateRunStatus(this.runId, 'completed', outputs);
 
       this.logger.log('✨ Workflow completed successfully!\n');
 
@@ -900,6 +927,8 @@ export class WorkflowRunner {
     const completedFinallySteps = new Set<string>();
     const pendingFinallySteps = new Set(this.workflow.finally.map((s) => s.id));
     const runningPromises = new Map<string, Promise<void>>();
+    const totalFinallySteps = this.workflow.finally.length;
+    const finallyStepIndices = new Map(this.workflow.finally.map((s, index) => [s.id, index + 1]));
 
     try {
       while (pendingFinallySteps.size > 0 || runningPromises.size > 0) {
@@ -909,18 +938,23 @@ export class WorkflowRunner {
 
           // Dependencies can be from main steps (already in this.stepContexts) or previous finally steps
           const dependenciesMet = step.needs.every(
-            (dep) => this.stepContexts.has(dep) || completedFinallySteps.has(dep)
+            (dep: string) => this.stepContexts.has(dep) || completedFinallySteps.has(dep)
           );
 
           if (dependenciesMet) {
             pendingFinallySteps.delete(stepId);
 
-            this.logger.log(`▶ Executing finally step: ${step.id} (${step.type})`);
+            const finallyStepIndex = finallyStepIndices.get(stepId);
+            this.logger.log(
+              `[${finallyStepIndex}/${totalFinallySteps}] ▶ Executing finally step: ${step.id} (${step.type})`
+            );
             const promise = this.executeStepWithForeach(step)
               .then(() => {
                 completedFinallySteps.add(stepId);
                 runningPromises.delete(stepId);
-                this.logger.log(`  ✓ Finally step ${step.id} completed\n`);
+                this.logger.log(
+                  `[${finallyStepIndex}/${totalFinallySteps}] ✓ Finally step ${step.id} completed\n`
+                );
               })
               .catch((err) => {
                 runningPromises.delete(stepId);

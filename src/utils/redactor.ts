@@ -30,7 +30,16 @@ export class Redactor {
       // Use a global replace to handle multiple occurrences
       // Escape special regex characters in the secret
       const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      redacted = redacted.replace(new RegExp(escaped, 'g'), '***REDACTED***');
+
+      // Use word boundaries if the secret starts/ends with an alphanumeric character
+      // to avoid partial matches (e.g. redacting 'mark' in 'marketplace')
+      const startBoundary = /^\w/.test(secret) ? '\\b' : '';
+      const endBoundary = /\w$/.test(secret) ? '\\b' : '';
+
+      redacted = redacted.replace(
+        new RegExp(`${startBoundary}${escaped}${endBoundary}`, 'g'),
+        '***REDACTED***'
+      );
     }
     return redacted;
   }
