@@ -44,11 +44,18 @@ export function parseAgent(filePath: string): Agent {
   return result.data;
 }
 
-export function resolveAgentPath(agentName: string): string {
-  const possiblePaths = [
+export function resolveAgentPath(agentName: string, baseDir?: string): string {
+  const possiblePaths: string[] = [];
+
+  if (baseDir) {
+    possiblePaths.push(join(baseDir, 'agents', `${agentName}.md`));
+    possiblePaths.push(join(baseDir, '..', 'agents', `${agentName}.md`));
+  }
+
+  possiblePaths.push(
     join(process.cwd(), '.keystone', 'workflows', 'agents', `${agentName}.md`),
-    join(homedir(), '.keystone', 'workflows', 'agents', `${agentName}.md`),
-  ];
+    join(homedir(), '.keystone', 'workflows', 'agents', `${agentName}.md`)
+  );
 
   for (const path of possiblePaths) {
     if (existsSync(path)) {

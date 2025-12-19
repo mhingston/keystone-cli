@@ -42,7 +42,8 @@ export async function executeStep(
   context: ExpressionContext,
   logger: Logger = console,
   executeWorkflowFn?: (step: WorkflowStep, context: ExpressionContext) => Promise<StepResult>,
-  mcpManager?: MCPManager
+  mcpManager?: MCPManager,
+  workflowDir?: string
 ): Promise<StepResult> {
   try {
     let result: StepResult;
@@ -66,9 +67,10 @@ export async function executeStep(
         result = await executeLlmStep(
           step,
           context,
-          (s, c) => executeStep(s, c, logger, executeWorkflowFn, mcpManager),
+          (s, c) => executeStep(s, c, logger, executeWorkflowFn, mcpManager, workflowDir),
           logger,
-          mcpManager
+          mcpManager,
+          workflowDir
         );
         break;
       case 'workflow':

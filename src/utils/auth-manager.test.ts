@@ -150,63 +150,36 @@ describe('AuthManager', () => {
     });
   });
 
-  describe('loginWithDeviceFlow()', () => {
-    it('should complete the device flow and return access token', async () => {
-      // 1. Mock first fetch for device code
-      // 2. Mock second fetch for polling (success)
-      let fetchCount = 0;
-      global.fetch = mock((): Promise<Response> => {
-        fetchCount++;
-        if (fetchCount === 1) {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                device_code: 'dev-123',
-                user_code: 'ABCD-1234',
-                verification_uri: 'https://github.com/login/device',
-                interval: 0.1, // Short interval for testing
-              }),
-              { status: 200 }
-            )
-          );
-        }
-        return Promise.resolve(
+  describe('Device Login', () => {
+    it('initGitHubDeviceLogin should return device code data', async () => {
+      const mockFetch = mock(() =>
+        Promise.resolve(
           new Response(
             JSON.stringify({
-              access_token: 'gho_test_token',
+              device_code: 'dev_code',
+              user_code: 'USER-CODE',
+              verification_uri: 'https://github.com/login/device',
+              expires_in: 900,
+              interval: 5,
             }),
             { status: 200 }
           )
-        );
-      });
+        )
+      );
+      // @ts-ignore
+      global.fetch = mockFetch;
 
-      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
-
-      const token = await AuthManager.loginWithDeviceFlow();
-
-      expect(token).toBe('gho_test_token');
-      expect(fetchCount).toBe(2);
-      consoleSpy.mockRestore();
+      const result = await AuthManager.initGitHubDeviceLogin();
+      expect(result.device_code).toBe('dev_code');
+      expect(result.user_code).toBe('USER-CODE');
+      expect(mockFetch).toHaveBeenCalled();
     });
 
-    it('should handle polling until authorized', async () => {
-      let fetchCount = 0;
-      global.fetch = mock((): Promise<Response> => {
-        fetchCount++;
-        if (fetchCount === 1) {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                device_code: 'dev-123',
-                user_code: 'ABCD-1234',
-                verification_uri: 'https://github.com/login/device',
-                interval: 0.01,
-              }),
-              { status: 200 }
-            )
-          );
-        }
-        if (fetchCount === 2) {
+    it('pollGitHubDeviceLogin should return token when successful', async () => {
+      let callCount = 0;
+      const mockFetch = mock(() => {
+        callCount++;
+        if (callCount === 1) {
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -219,20 +192,47 @@ describe('AuthManager', () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              access_token: 'gho_polled_token',
+              access_token: 'gh_access_token',
             }),
             { status: 200 }
           )
         );
       });
+      // @ts-ignore
+      global.fetch = mockFetch;
 
-      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      // Mock setTimeout to resolve immediately
+      const originalTimeout = global.setTimeout;
+      // @ts-ignore
+      global.setTimeout = (fn) => fn();
 
-      const token = await AuthManager.loginWithDeviceFlow();
+      try {
+        const token = await AuthManager.pollGitHubDeviceLogin('dev_code');
+        expect(token).toBe('gh_access_token');
+        expect(callCount).toBe(2);
+      } finally {
+        global.setTimeout = originalTimeout;
+      }
+    });
 
-      expect(token).toBe('gho_polled_token');
-      expect(fetchCount).toBe(3);
-      consoleSpy.mockRestore();
+    it('pollGitHubDeviceLogin should throw on other errors', async () => {
+      const mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: 'expired_token',
+              error_description: 'The device code has expired',
+            }),
+            { status: 200 }
+          )
+        )
+      );
+      // @ts-ignore
+      global.fetch = mockFetch;
+
+      await expect(AuthManager.pollGitHubDeviceLogin('dev_code')).rejects.toThrow(
+        'The device code has expired'
+      );
     });
   });
 });

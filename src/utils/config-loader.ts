@@ -19,7 +19,17 @@ export class ConfigLoader {
     for (const path of configPaths) {
       if (existsSync(path)) {
         try {
-          const content = readFileSync(path, 'utf8');
+          let content = readFileSync(path, 'utf8');
+
+          // Interpolate environment variables: ${VAR_NAME} or $VAR_NAME
+          content = content.replace(
+            /\${([^}]+)}|\$([a-zA-Z_][a-zA-Z0-9_]*)/g,
+            (_, group1, group2) => {
+              const varName = group1 || group2;
+              return process.env[varName] || '';
+            }
+          );
+
           userConfig = (yaml.load(content) as Record<string, unknown>) || {};
           break;
         } catch (error) {

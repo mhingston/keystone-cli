@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as yaml from 'js-yaml';
 import { z } from 'zod';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
@@ -15,6 +15,7 @@ export class WorkflowParser {
       const content = readFileSync(path, 'utf-8');
       const raw = yaml.load(content);
       const workflow = WorkflowSchema.parse(raw);
+      const workflowDir = dirname(path);
 
       // Resolve implicit dependencies from expressions
       WorkflowParser.resolveImplicitDependencies(workflow);
@@ -23,7 +24,7 @@ export class WorkflowParser {
       WorkflowParser.validateDAG(workflow);
 
       // Validate agents exist
-      WorkflowParser.validateAgents(workflow);
+      WorkflowParser.validateAgents(workflow, workflowDir);
 
       // Validate finally block
       WorkflowParser.validateFinally(workflow);
@@ -121,12 +122,12 @@ export class WorkflowParser {
   /**
    * Validate that all agents referenced in LLM steps exist
    */
-  private static validateAgents(workflow: Workflow): void {
+  private static validateAgents(workflow: Workflow, baseDir?: string): void {
     const allSteps = [...workflow.steps, ...(workflow.finally || [])];
     for (const step of allSteps) {
       if (step.type === 'llm') {
         try {
-          resolveAgentPath(step.agent);
+          resolveAgentPath(step.agent, baseDir);
         } catch (error) {
           throw new Error(`Agent "${step.agent}" referenced in step "${step.id}" not found.`);
         }

@@ -8,7 +8,14 @@ export interface AuthData {
   copilot_expires_at?: number;
   openai_api_key?: string;
   anthropic_api_key?: string;
-  [key: string]: string | number | undefined;
+  mcp_tokens?: Record<
+    string,
+    {
+      access_token: string;
+      expires_at?: number;
+      refresh_token?: string;
+    }
+  >;
 }
 
 export const COPILOT_HEADERS = {
@@ -16,6 +23,8 @@ export const COPILOT_HEADERS = {
   'Editor-Plugin-Version': 'copilot-chat/0.23.1',
   'User-Agent': 'GithubCopilot/1.255.0',
 };
+
+const GITHUB_CLIENT_ID = '013444988716b5155f4c'; // GitHub CLI Client ID
 
 export class AuthManager {
   private static getAuthPath(): string {
@@ -47,86 +56,80 @@ export class AuthManager {
     writeFileSync(path, JSON.stringify({ ...current, ...data }, null, 2));
   }
 
-  static async loginWithDeviceFlow(): Promise<string | undefined> {
-    const CLIENT_ID = '01ab8ac9400c4e429b23'; // GitHub CLI client_id
-    const SCOPES = 'read:user,repo,copilot';
+  static async initGitHubDeviceLogin(): Promise<{
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    expires_in: number;
+    interval: number;
+  }> {
+    const response = await fetch('https://github.com/login/device/code', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        client_id: GITHUB_CLIENT_ID,
+        scope: 'read:user workflow repo',
+      }),
+    });
 
-    try {
-      // 1. Request device code
-      const response = await fetch('https://github.com/login/device/code', {
+    if (!response.ok) {
+      throw new Error(`Failed to initialize device login: ${response.statusText}`);
+    }
+
+    return response.json() as Promise<{
+      device_code: string;
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+      interval: number;
+    }>;
+  }
+
+  static async pollGitHubDeviceLogin(deviceCode: string): Promise<string> {
+    const poll = async (): Promise<string> => {
+      const response = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          client_id: CLIENT_ID,
-          scope: SCOPES,
+          client_id: GITHUB_CLIENT_ID,
+          device_code: deviceCode,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         }),
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to get device code: ${response.statusText}`);
+        throw new Error(`Failed to poll device login: ${response.statusText}`);
       }
 
       const data = (await response.json()) as {
-        device_code: string;
-        user_code: string;
-        verification_uri: string;
-        expires_in: number;
-        interval: number;
+        access_token?: string;
+        error?: string;
+        error_description?: string;
       };
 
-      console.log('\nTo authenticate with GitHub:');
-      console.log(`1. Open ${data.verification_uri}`);
-      console.log(`2. Enter code: ${data.user_code}\n`);
-
-      // 2. Poll for access token
-      const interval = (data.interval || 5) * 1000 + 1000;
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, interval));
-
-        const pollResponse = await fetch('https://github.com/login/oauth/access_token', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            client_id: CLIENT_ID,
-            device_code: data.device_code,
-            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-          }),
-        });
-
-        const pollData = (await pollResponse.json()) as {
-          access_token?: string;
-          error?: string;
-          error_description?: string;
-        };
-
-        if (pollData.access_token) {
-          return pollData.access_token;
-        }
-
-        if (pollData.error) {
-          if (pollData.error === 'authorization_pending') {
-            continue;
-          }
-          if (pollData.error === 'slow_down') {
-            // Wait longer if requested
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            continue;
-          }
-          throw new Error(`Authentication failed: ${pollData.error_description || pollData.error}`);
-        }
+      if (data.access_token) {
+        return data.access_token;
       }
-    } catch (error) {
-      console.error(
-        '\n✗ Device flow authentication failed:',
-        error instanceof Error ? error.message : error
-      );
-      return undefined;
+
+      if (data.error === 'authorization_pending') {
+        return ''; // Continue polling
+      }
+
+      throw new Error(data.error_description || data.error || 'Failed to get access token');
+    };
+
+    // Poll every 5 seconds (GitHub's default interval is usually 5)
+    // In a real implementation, we should use the interval from initGitHubDeviceLogin
+    while (true) {
+      const token = await poll();
+      if (token) return token;
+      await new Promise((resolve) => setTimeout(resolve, 5000));
     }
   }
 

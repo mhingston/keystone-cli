@@ -23,9 +23,10 @@ export async function executeLlmStep(
   context: ExpressionContext,
   executeStepFn: (step: Step, context: ExpressionContext) => Promise<StepResult>,
   logger: Logger = console,
-  mcpManager?: MCPManager
+  mcpManager?: MCPManager,
+  workflowDir?: string
 ): Promise<StepResult> {
-  const agentPath = resolveAgentPath(step.agent);
+  const agentPath = resolveAgentPath(step.agent, workflowDir);
   const agent = parseAgent(agentPath);
 
   const provider = step.provider || agent.provider;

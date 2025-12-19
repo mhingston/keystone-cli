@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 
 import exploreAgent from './templates/agents/explore.md' with { type: 'text' };
@@ -265,7 +265,7 @@ program
 
       // Import WorkflowRunner dynamically
       const { WorkflowRunner } = await import('./runner/workflow-runner.ts');
-      const runner = new WorkflowRunner(workflow, { inputs });
+      const runner = new WorkflowRunner(workflow, { inputs, workflowDir: dirname(resolvedPath) });
 
       const outputs = await runner.run();
 
@@ -273,6 +273,7 @@ program
         console.log('Outputs:');
         console.log(JSON.stringify(runner.redact(outputs), null, 2));
       }
+      process.exit(0);
     } catch (error) {
       console.error(
         '✗ Failed to execute workflow:',
@@ -339,7 +340,10 @@ program
 
       // Import WorkflowRunner dynamically
       const { WorkflowRunner } = await import('./runner/workflow-runner.ts');
-      const runner = new WorkflowRunner(workflow, { resumeRunId: runId });
+      const runner = new WorkflowRunner(workflow, {
+        resumeRunId: runId,
+        workflowDir: dirname(workflowPath),
+      });
 
       const outputs = await runner.run();
 
@@ -347,6 +351,7 @@ program
         console.log('Outputs:');
         console.log(JSON.stringify(runner.redact(outputs), null, 2));
       }
+      process.exit(0);
     } catch (error) {
       console.error('✗ Failed to resume workflow:', error instanceof Error ? error.message : error);
       process.exit(1);
@@ -480,9 +485,80 @@ program
   });
 
 // ===== keystone mcp =====
-program
-  .command('mcp')
-  .description('Start the Model Context Protocol server')
+const mcp = program.command('mcp').description('Model Context Protocol management');
+
+mcp
+  .command('login')
+  .description('Login to an MCP server')
+  .argument('<server>', 'Server name (from config)')
+  .action(async (serverName) => {
+    const { ConfigLoader } = await import('./utils/config-loader.ts');
+    const { AuthManager } = await import('./utils/auth-manager.ts');
+
+    const config = ConfigLoader.load();
+    const server = config.mcp_servers[serverName];
+
+    if (!server || !server.oauth) {
+      console.error(`✗ MCP server '${serverName}' is not configured with OAuth.`);
+      process.exit(1);
+    }
+
+    let url = server.url;
+
+    // If it's a local server using mcp-remote, try to find the URL in args
+    if (!url && server.type === 'local' && server.args) {
+      url = server.args.find((arg) => arg.startsWith('http'));
+    }
+
+    if (!url) {
+      console.error(
+        `✗ MCP server '${serverName}' does not have a URL configured for authentication.`
+      );
+      console.log('  Please add a "url" property to your server configuration.');
+      process.exit(1);
+    }
+
+    console.log(`\n🔐 Authenticating with MCP server: ${serverName}`);
+    console.log(`   URL: ${url}\n`);
+
+    // For now, we'll support a manual token entry until we have a full browser redirect flow
+    // Most MCP OAuth servers provide a way to get a token via a URL
+    const authUrl = url.replace('/sse', '/authorize') || url;
+    console.log('1. Visit the following URL to authorize:');
+    console.log(`   ${authUrl}`);
+    console.log(
+      '\n   Note: If you get a 500 error, it is because the Atlassian remote server requires a registered Client ID.'
+    );
+    console.log(
+      '   For CLI usage, it is recommended to use the local "mcp-atlassian" server instead.'
+    );
+    console.log('   You can still manually provide an OAuth token below if you have one.');
+    console.log('\n2. Paste the access token below:\n');
+
+    const prompt = 'Access Token: ';
+    process.stdout.write(prompt);
+
+    let token = '';
+    for await (const line of console) {
+      token = line.trim();
+      break;
+    }
+
+    if (token) {
+      const auth = AuthManager.load();
+      const mcp_tokens = auth.mcp_tokens || {};
+      mcp_tokens[serverName] = { access_token: token };
+      AuthManager.save({ mcp_tokens });
+      console.log(`\n✓ Successfully saved token for MCP server: ${serverName}`);
+    } else {
+      console.error('✗ No token provided.');
+      process.exit(1);
+    }
+  });
+
+mcp
+  .command('start')
+  .description('Start the Keystone MCP server (to use Keystone as a tool)')
   .action(async () => {
     const { MCPServer } = await import('./runner/mcp-server.ts');
 
@@ -541,21 +617,46 @@ const auth = program.command('auth').description('Authentication management');
 auth
   .command('login')
   .description('Login to an authentication provider')
-  .argument('[provider]', 'Authentication provider (github, openai, anthropic)', 'github')
-  .option(
-    '-p, --provider <provider>',
-    'Authentication provider (deprecated, use positional argument)'
-  )
-  .option('-t, --token <token>', 'Manual token or API key')
-  .action(async (providerArg, options) => {
+  .option('-p, --provider <provider>', 'Authentication provider', 'github')
+  .option('-t, --token <token>', 'Personal Access Token (if not using interactive mode)')
+  .action(async (options) => {
     const { AuthManager } = await import('./utils/auth-manager.ts');
-    const provider = (options.provider || providerArg).toLowerCase();
+    const provider = options.provider.toLowerCase();
 
     if (provider === 'github') {
       let token = options.token;
 
       if (!token) {
-        token = await AuthManager.loginWithDeviceFlow();
+        try {
+          const deviceLogin = await AuthManager.initGitHubDeviceLogin();
+
+          console.log('\nTo login with GitHub:');
+          console.log(`1. Visit: ${deviceLogin.verification_uri}`);
+          console.log(`2. Enter code: ${deviceLogin.user_code}\n`);
+
+          console.log('Waiting for authorization...');
+          token = await AuthManager.pollGitHubDeviceLogin(deviceLogin.device_code);
+        } catch (error) {
+          console.error(
+            '\n✗ Failed to login with GitHub device flow:',
+            error instanceof Error ? error.message : error
+          );
+          console.log('\nFalling back to manual token entry...');
+
+          console.log('\nTo login with GitHub manually:');
+          console.log(
+            '1. Generate a Personal Access Token (Classic) with "copilot" scope (or full repo access).'
+          );
+          console.log('   https://github.com/settings/tokens/new');
+          console.log('2. Paste the token below:\n');
+
+          const prompt = 'Token: ';
+          process.stdout.write(prompt);
+          for await (const line of console) {
+            token = line.trim();
+            break;
+          }
+        }
       }
 
       if (token) {
@@ -575,31 +676,6 @@ auth
         }
       } else {
         console.error('✗ No token provided.');
-        process.exit(1);
-      }
-    } else if (provider === 'openai' || provider === 'anthropic') {
-      let key = options.token;
-
-      if (!key) {
-        const prompt = `${provider === 'openai' ? 'OpenAI' : 'Anthropic'} API Key: `;
-        process.stdout.write(prompt);
-        for await (const line of console) {
-          key = line.trim();
-          break;
-        }
-      }
-
-      if (key) {
-        const data: AuthData = {};
-        if (provider === 'openai') {
-          data.openai_api_key = key;
-        } else {
-          data.anthropic_api_key = key;
-        }
-        AuthManager.save(data);
-        console.log(`\n✓ Successfully saved ${provider} API key.`);
-      } else {
-        console.error('✗ No API key provided.');
         process.exit(1);
       }
     } else {
@@ -634,27 +710,7 @@ auth
       }
     }
 
-    if (!provider || provider === 'openai') {
-      if (auth.openai_api_key) {
-        console.log('  ✓ OpenAI API key configured');
-      } else if (provider) {
-        console.log(
-          '  ⊘ OpenAI API key not configured. Run "keystone auth login openai" to configure.'
-        );
-      }
-    }
-
-    if (!provider || provider === 'anthropic') {
-      if (auth.anthropic_api_key) {
-        console.log('  ✓ Anthropic API key configured');
-      } else if (provider) {
-        console.log(
-          '  ⊘ Anthropic API key not configured. Run "keystone auth login anthropic" to configure.'
-        );
-      }
-    }
-
-    if (!auth.github_token && !auth.openai_api_key && !auth.anthropic_api_key && !provider) {
+    if (!auth.github_token && !provider) {
       console.log('  ⊘ Not logged in. Run "keystone auth login" to authenticate.');
     }
   });
@@ -678,19 +734,7 @@ auth
         copilot_expires_at: undefined,
       });
       console.log('✓ Successfully logged out of GitHub.');
-    }
-
-    if (!provider || provider === 'openai') {
-      AuthManager.save({ openai_api_key: undefined });
-      console.log('✓ Successfully removed OpenAI API key.');
-    }
-
-    if (!provider || provider === 'anthropic') {
-      AuthManager.save({ anthropic_api_key: undefined });
-      console.log('✓ Successfully removed Anthropic API key.');
-    }
-
-    if (provider && !['github', 'copilot', 'openai', 'anthropic'].includes(provider)) {
+    } else {
       console.error(`✗ Unknown provider: ${provider}`);
       process.exit(1);
     }
@@ -782,16 +826,6 @@ _keystone() {
             'logout:Logout and clear authentication tokens'
           )
           _describe -t auth_commands 'auth command' auth_commands
-
-          if [[ $words[2] == "login" || $words[2] == "status" || $words[2] == "logout" ]]; then
-            local -a providers
-            providers=(
-              'github:GitHub'
-              'openai:OpenAI'
-              'anthropic:Anthropic'
-            )
-            _describe -t providers 'provider' providers
-          fi
           ;;
       esac
       ;;
