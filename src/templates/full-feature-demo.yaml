@@ -62,3 +62,8 @@ steps:
     type: sleep
     duration: 100
     needs: [api_test]
+
+finally:
+  - id: cleanup
+    type: shell
+    run: rm /tmp/keystone-test.txt
