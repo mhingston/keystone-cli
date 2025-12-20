@@ -6,7 +6,10 @@ import { parseAgent, resolveAgentPath } from './agent-parser';
 
 describe('agent-parser', () => {
   // Use a unique temp directory with random suffix to prevent parallel test collisions
-  const tempDir = join(process.cwd(), `temp-test-agents-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const tempDir = join(
+    process.cwd(),
+    `temp-test-agents-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
 
   beforeAll(() => {
     mkdirSync(tempDir, { recursive: true });
@@ -15,7 +18,7 @@ describe('agent-parser', () => {
   afterAll(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch (e) { }
+    } catch (e) {}
   });
 
   describe('parseAgent', () => {
@@ -97,7 +100,7 @@ Prompt`;
       const agentsDir = join(process.cwd(), '.keystone', 'workflows', 'agents');
       try {
         mkdirSync(agentsDir, { recursive: true });
-      } catch (e) { }
+      } catch (e) {}
 
       const filePath = join(agentsDir, 'my-agent.md');
       writeFileSync(filePath, '---name: my-agent---');

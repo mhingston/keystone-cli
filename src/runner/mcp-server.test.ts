@@ -38,7 +38,7 @@ describe('MCPServer', () => {
       method: 'tools/list',
     });
 
-    expect(response?.result?.tools).toHaveLength(5);
+    expect(response?.result?.tools).toHaveLength(7);
     // @ts-ignore
     expect(response?.result?.tools?.map((t) => t.name)).toContain('run_workflow');
   });
@@ -248,5 +248,119 @@ describe('MCPServer', () => {
 
     writeSpy.mockRestore();
     consoleSpy.mockRestore();
+  });
+
+  it('should call start_workflow tool and return immediately', async () => {
+    spyOn(WorkflowRegistry, 'resolvePath').mockReturnValue('test.yaml');
+    // @ts-ignore
+    spyOn(WorkflowParser, 'loadWorkflow').mockReturnValue({
+      name: 'test-wf',
+      steps: [],
+    });
+
+    // Mock WorkflowRunner - simulate a slow workflow
+    const mockRun = mock(
+      () => new Promise((resolve) => setTimeout(() => resolve({ result: 'ok' }), 100))
+    );
+    // @ts-ignore
+    spyOn(WorkflowRunner.prototype, 'run').mockImplementation(mockRun);
+    spyOn(WorkflowRunner.prototype, 'getRunId').mockReturnValue('async-run-123');
+
+    const response = await handleMessage({
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'tools/call',
+      params: {
+        name: 'start_workflow',
+        arguments: { workflow_name: 'test-wf', inputs: {} },
+      },
+    });
+
+    const result = JSON.parse(response?.result?.content?.[0]?.text);
+    expect(result.status).toBe('running');
+    expect(result.run_id).toBe('async-run-123');
+    expect(result.hint).toContain('get_run_status');
+  });
+
+  it('should call get_run_status tool for running workflow', async () => {
+    const runId = 'status-test-run';
+    await db.createRun(runId, 'test-wf', { foo: 'bar' });
+    await db.updateRunStatus(runId, 'running');
+
+    const response = await handleMessage({
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/call',
+      params: { name: 'get_run_status', arguments: { run_id: runId } },
+    });
+
+    const status = JSON.parse(response?.result?.content?.[0]?.text);
+    expect(status.run_id).toBe(runId);
+    expect(status.workflow).toBe('test-wf');
+    expect(status.status).toBe('running');
+    expect(status.hint).toContain('still running');
+  });
+
+  it('should call get_run_status tool for completed workflow', async () => {
+    const runId = 'completed-test-run';
+    await db.createRun(runId, 'test-wf', {});
+    await db.updateRunStatus(runId, 'completed', { output: 'done' });
+
+    const response = await handleMessage({
+      jsonrpc: '2.0',
+      id: 12,
+      method: 'tools/call',
+      params: { name: 'get_run_status', arguments: { run_id: runId } },
+    });
+
+    const status = JSON.parse(response?.result?.content?.[0]?.text);
+    expect(status.status).toBe('completed');
+    expect(status.outputs).toEqual({ output: 'done' });
+    expect(status.hint).toBeUndefined();
+  });
+
+  it('should call get_run_status tool for failed workflow', async () => {
+    const runId = 'failed-test-run';
+    await db.createRun(runId, 'test-wf', {});
+    await db.updateRunStatus(runId, 'failed', undefined, 'Something went wrong');
+
+    const response = await handleMessage({
+      jsonrpc: '2.0',
+      id: 13,
+      method: 'tools/call',
+      params: { name: 'get_run_status', arguments: { run_id: runId } },
+    });
+
+    const status = JSON.parse(response?.result?.content?.[0]?.text);
+    expect(status.status).toBe('failed');
+    expect(status.error).toBe('Something went wrong');
+  });
+
+  it('should call get_run_status tool for paused workflow', async () => {
+    const runId = 'paused-test-run';
+    await db.createRun(runId, 'test-wf', {});
+    await db.updateRunStatus(runId, 'paused');
+
+    const response = await handleMessage({
+      jsonrpc: '2.0',
+      id: 14,
+      method: 'tools/call',
+      params: { name: 'get_run_status', arguments: { run_id: runId } },
+    });
+
+    const status = JSON.parse(response?.result?.content?.[0]?.text);
+    expect(status.status).toBe('paused');
+    expect(status.hint).toContain('answer_human_input');
+  });
+
+  it('should return error for non-existent run in get_run_status', async () => {
+    const response = await handleMessage({
+      jsonrpc: '2.0',
+      id: 15,
+      method: 'tools/call',
+      params: { name: 'get_run_status', arguments: { run_id: 'non-existent' } },
+    });
+
+    expect(response?.error?.message).toContain('not found');
   });
 });

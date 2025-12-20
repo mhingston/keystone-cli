@@ -34,7 +34,7 @@ const Dashboard = () => {
             }
             return sum;
           }, 0);
-        } catch (e) { }
+        } catch (e) {}
         return { ...run, total_tokens };
       });
       setRuns(runsWithUsage);

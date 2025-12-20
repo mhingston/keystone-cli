@@ -39,6 +39,22 @@ export class WorkflowDb {
   }
 
   /**
+   * Type guard to check if an error is a SQLite busy error
+   */
+  private isSQLiteBusyError(error: unknown): boolean {
+    if (typeof error === 'object' && error !== null) {
+      const err = error as { code?: string | number; message?: string };
+      return (
+        err.code === 'SQLITE_BUSY' ||
+        err.code === 5 ||
+        (typeof err.message === 'string' &&
+          (err.message.includes('SQLITE_BUSY') || err.message.includes('database is locked')))
+      );
+    }
+    return false;
+  }
+
+  /**
    * Retry wrapper for SQLite operations that may encounter SQLITE_BUSY errors
    * during high concurrency scenarios (e.g., foreach loops)
    */
@@ -50,14 +66,7 @@ export class WorkflowDb {
         return operation();
       } catch (error) {
         // Check if this is a SQLITE_BUSY error
-        const isBusy = (error as any).code === 'SQLITE_BUSY' ||
-          (error as any).code === 5 ||
-          (error instanceof Error && (
-            error.message.includes('SQLITE_BUSY') ||
-            error.message.includes('database is locked')
-          ));
-
-        if (isBusy) {
+        if (this.isSQLiteBusyError(error)) {
           lastError = error instanceof Error ? error : new Error(String(error));
           // Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms
           const delayMs = 10 * 2 ** attempt;

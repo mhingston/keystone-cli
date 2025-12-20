@@ -152,7 +152,9 @@ async function executeShellStep(
 
   if (isRisky) {
     // Check if we have a resume approval
-    const stepInputs = context.inputs ? (context.inputs as any)[step.id] : undefined;
+    const stepInputs = context.inputs
+      ? (context.inputs as Record<string, unknown>)[step.id]
+      : undefined;
     if (
       stepInputs &&
       typeof stepInputs === 'object' &&
@@ -367,8 +369,11 @@ async function executeRequestStep(
     status: response.ok ? 'success' : 'failed',
     error: response.ok
       ? undefined
-      : `HTTP ${response.status}: ${response.statusText}${responseText ? `\nResponse Body: ${responseText.substring(0, 500)}${responseText.length > 500 ? '...' : ''}` : ''
-      }`,
+      : `HTTP ${response.status}: ${response.statusText}${
+          responseText
+            ? `\nResponse Body: ${responseText.substring(0, 500)}${responseText.length > 500 ? '...' : ''}`
+            : ''
+        }`,
   };
 }
 
@@ -383,11 +388,16 @@ async function executeHumanStep(
   const message = ExpressionEvaluator.evaluateString(step.message, context);
 
   // Check if we have a resume answer
-  const stepInputs = context.inputs ? (context.inputs as any)[step.id] : undefined;
+  const stepInputs = context.inputs
+    ? (context.inputs as Record<string, unknown>)[step.id]
+    : undefined;
   if (stepInputs && typeof stepInputs === 'object' && '__answer' in stepInputs) {
-    const answer = (stepInputs as any).__answer;
+    const answer = (stepInputs as Record<string, unknown>).__answer;
     return {
-      output: step.inputType === 'confirm' ? (answer === true || answer === 'true' || answer === 'yes' || answer === 'y') : answer,
+      output:
+        step.inputType === 'confirm'
+          ? answer === true || answer === 'true' || answer === 'yes' || answer === 'y'
+          : answer,
       status: 'success',
     };
   }
@@ -476,14 +486,18 @@ async function executeScriptStep(
   _logger: Logger
 ): Promise<StepResult> {
   try {
-    const result = await SafeSandbox.execute(step.run, {
-      inputs: context.inputs,
-      secrets: context.secrets,
-      steps: context.steps,
-      env: context.env,
-    }, {
-      allowInsecureFallback: step.allowInsecure,
-    });
+    const result = await SafeSandbox.execute(
+      step.run,
+      {
+        inputs: context.inputs,
+        secrets: context.secrets,
+        steps: context.steps,
+        env: context.env,
+      },
+      {
+        allowInsecureFallback: step.allowInsecure,
+      }
+    );
 
     return {
       output: result,

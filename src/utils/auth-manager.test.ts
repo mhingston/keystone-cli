@@ -28,7 +28,7 @@ describe('AuthManager', () => {
     if (fs.existsSync(TEMP_AUTH_FILE)) {
       try {
         fs.rmSync(TEMP_AUTH_FILE);
-      } catch (e) { }
+      } catch (e) {}
     }
     global.fetch = originalFetch;
     // Set environment variable for EACH test to be safe
@@ -141,7 +141,7 @@ describe('AuthManager', () => {
         )
       );
 
-      const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
+      const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
       const token = await AuthManager.getCopilotToken();
 
       expect(token).toBeUndefined();

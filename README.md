@@ -332,7 +332,23 @@ Keystone can itself act as an MCP server, allowing other agents (like Claude Des
 keystone mcp start
 ```
 
-> **Note:** Workflow execution via the Keystone MCP server is synchronous. This provides a better experience for agents as they receive the final results directly, though it means the connection remains open for the duration of the workflow run.
+#### Sync vs Async Execution
+
+The MCP server provides two modes for running workflows:
+
+| Tool | Mode | Use Case |
+|------|------|----------|
+| `run_workflow` | **Sync** | Short workflows. Blocks until completion, returns outputs directly. |
+| `start_workflow` | **Async** | Long workflows. Returns immediately with a `run_id`, use `get_run_status` to poll. |
+
+**Example: Async execution pattern**
+```
+1. Agent calls start_workflow → { run_id: "abc", status: "running" }
+2. Agent polls get_run_status → { status: "running" }
+3. Agent polls get_run_status → { status: "completed", outputs: {...} }
+```
+
+The async pattern is ideal for LLM-heavy workflows that may take minutes to complete.
 
 #### Global MCP Servers
 Define shared MCP servers in `.keystone/config.yaml` to reuse them across different workflows. Keystone ensures that multiple steps using the same global server will share a single running process.

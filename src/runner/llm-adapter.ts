@@ -94,7 +94,7 @@ export class OpenAIAdapter implements LLMAdapter {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
-      let toolCalls: LLMToolCall[] = [];
+      const toolCalls: LLMToolCall[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -254,10 +254,10 @@ export class AnthropicAdapter implements LLMAdapter {
 
     const anthropicTools = options?.tools
       ? options.tools.map((t) => ({
-        name: t.function.name,
-        description: t.function.description,
-        input_schema: t.function.parameters,
-      }))
+          name: t.function.name,
+          description: t.function.description,
+          input_schema: t.function.parameters,
+        }))
       : undefined;
 
     const response = await fetch(`${this.baseUrl}/messages`, {
@@ -287,7 +287,7 @@ export class AnthropicAdapter implements LLMAdapter {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
-      let toolCalls: any[] = [];
+      const toolCalls: { id: string; name: string; inputString: string }[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -424,7 +424,7 @@ export class CopilotAdapter implements LLMAdapter {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
-      let toolCalls: LLMToolCall[] = [];
+      const toolCalls: LLMToolCall[] = [];
 
       while (true) {
         const { done, value } = await reader.read();

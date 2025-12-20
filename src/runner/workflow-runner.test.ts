@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { existsSync, rmSync } from 'node:fs';
+import { WorkflowDb } from '../db/workflow-db';
 import type { Workflow } from '../parser/schema';
 import { WorkflowParser } from '../parser/workflow-parser';
 import { WorkflowRegistry } from '../utils/workflow-registry';
 import { WorkflowRunner } from './workflow-runner';
-import { WorkflowDb } from '../db/workflow-db';
 
 describe('WorkflowRunner', () => {
   const dbPath = ':memory:';
@@ -261,8 +261,8 @@ describe('WorkflowRunner', () => {
       log: (msg: string) => {
         if (msg.includes('Executing step: s1')) s1Executed = true;
       },
-      error: () => { },
-      warn: () => { },
+      error: () => {},
+      warn: () => {},
     };
 
     const runner2 = new WorkflowRunner(fixedWorkflow, {
@@ -351,13 +351,13 @@ describe('WorkflowRunner', () => {
   it('should continue even if finally step fails', async () => {
     let finallyFailedLogged = false;
     const runnerLogger = {
-      log: () => { },
+      log: () => {},
       error: (msg: string) => {
         if (msg.includes('Finally step fin failed')) {
           finallyFailedLogged = true;
         }
       },
-      warn: () => { },
+      warn: () => {},
     };
 
     const failFinallyWorkflow: Workflow = {
@@ -379,8 +379,8 @@ describe('WorkflowRunner', () => {
           retryLogged = true;
         }
       },
-      error: () => { },
-      warn: () => { },
+      error: () => {},
+      warn: () => {},
     };
 
     const retryWorkflow: Workflow = {
@@ -437,7 +437,7 @@ describe('WorkflowRunner', () => {
     process.stdin.isTTY = false;
 
     const runner1 = new WorkflowRunner(workflow, { dbPath: resumeDbPath });
-    let suspendedError: any;
+    let suspendedError: unknown;
     try {
       await runner1.run();
     } catch (e) {
@@ -447,7 +447,11 @@ describe('WorkflowRunner', () => {
     }
 
     expect(suspendedError).toBeDefined();
-    expect(suspendedError.name).toBe('WorkflowSuspendedError');
+    expect(
+      typeof suspendedError === 'object' && suspendedError !== null && 'name' in suspendedError
+        ? (suspendedError as { name: string }).name
+        : undefined
+    ).toBe('WorkflowSuspendedError');
 
     const runId = runner1.getRunId();
 
@@ -457,7 +461,10 @@ describe('WorkflowRunner', () => {
     expect(run?.status).toBe('paused');
 
     const steps = db.getStepsByRun(runId);
-    const parentStep = steps.find((s: any) => s.step_id === 'process' && s.iteration_index === null);
+    const parentStep = steps.find(
+      (s: { step_id: string; iteration_index: number | null }) =>
+        s.step_id === 'process' && s.iteration_index === null
+    );
     expect(parentStep?.status).toBe('suspended');
     db.close();
 
@@ -466,8 +473,8 @@ describe('WorkflowRunner', () => {
       dbPath: resumeDbPath,
       resumeRunId: runId,
       resumeInputs: {
-        'process': { __answer: 'ok' }
-      }
+        process: { __answer: 'ok' },
+      },
     });
 
     const outputs = await runner2.run();

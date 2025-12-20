@@ -8,7 +8,11 @@ describe('SafeSandbox', () => {
   });
 
   it('should have access to context variables', async () => {
-    const result = await SafeSandbox.execute('a + b', { a: 10, b: 20 }, { allowInsecureFallback: true });
+    const result = await SafeSandbox.execute(
+      'a + b',
+      { a: 10, b: 20 },
+      { allowInsecureFallback: true }
+    );
     expect(result).toBe(30);
   });
 
@@ -18,7 +22,11 @@ describe('SafeSandbox', () => {
   });
 
   it('should handle object results', async () => {
-    const result = await SafeSandbox.execute('({ x: 1, y: 2 })', {}, { allowInsecureFallback: true });
+    const result = await SafeSandbox.execute(
+      '({ x: 1, y: 2 })',
+      {},
+      { allowInsecureFallback: true }
+    );
     expect(result).toEqual({ x: 1, y: 2 });
   });
 

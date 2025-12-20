@@ -25,7 +25,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) { }
+  ) {}
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -545,7 +545,13 @@ export class WorkflowRunner {
         return result;
       }
 
-      await this.db.completeStep(stepExecId, result.status, result.output, result.error, result.usage);
+      await this.db.completeStep(
+        stepExecId,
+        result.status,
+        result.output,
+        result.error,
+        result.usage
+      );
 
       // Ensure outputs is always an object for consistent access
       let outputs: Record<string, unknown>;
@@ -855,7 +861,7 @@ export class WorkflowRunner {
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-      '   Workflows can execute arbitrary shell commands and access your environment.\n'
+        '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     // Apply defaults and validate inputs

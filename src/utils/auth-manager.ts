@@ -93,6 +93,7 @@ export class AuthManager {
     intervalSeconds = 5,
     expiresInSeconds = 900
   ): Promise<string> {
+    let currentInterval = intervalSeconds;
     const poll = async (): Promise<string> => {
       const response = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST',
@@ -127,7 +128,7 @@ export class AuthManager {
 
       if (data.error === 'slow_down') {
         // According to GitHub docs, "slow_down" means wait 5 seconds more
-        intervalSeconds += 5;
+        currentInterval += 5;
         return '';
       }
 
@@ -142,7 +143,7 @@ export class AuthManager {
       const token = await poll();
       if (token) return token;
       // Convert seconds to milliseconds
-      await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1000));
+      await new Promise((resolve) => setTimeout(resolve, currentInterval * 1000));
     }
 
     throw new Error('Device login timed out');

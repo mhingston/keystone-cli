@@ -34,7 +34,7 @@ interface RequestOutput {
 // Mock node:readline/promises
 const mockRl = {
   question: mock(() => Promise.resolve('')),
-  close: mock(() => { }),
+  close: mock(() => {}),
 };
 
 mock.module('node:readline/promises', () => ({
@@ -49,13 +49,13 @@ describe('step-executor', () => {
   beforeAll(() => {
     try {
       mkdirSync(tempDir, { recursive: true });
-    } catch (e) { }
+    } catch (e) {}
   });
 
   afterAll(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch (e) { }
+    } catch (e) {}
   });
 
   beforeEach(() => {
@@ -353,7 +353,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => { } });
+      const result = await executeStep(step, context, { log: () => {} });
       expect(result.status).toBe('success');
       expect(result.output).toBe(true);
       expect(mockRl.question).toHaveBeenCalled();
@@ -370,7 +370,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => { } });
+      const result = await executeStep(step, context, { log: () => {} });
       expect(result.status).toBe('success');
       expect(result.output).toBe('user response');
     });
@@ -386,19 +386,19 @@ describe('step-executor', () => {
       // Test 'yes'
       mockRl.question.mockResolvedValue('yes');
       // @ts-ignore
-      let result = await executeStep(step, context, { log: () => { } });
+      let result = await executeStep(step, context, { log: () => {} });
       expect(result.output).toBe(true);
 
       // Test 'no'
       mockRl.question.mockResolvedValue('no');
       // @ts-ignore
-      result = await executeStep(step, context, { log: () => { } });
+      result = await executeStep(step, context, { log: () => {} });
       expect(result.output).toBe(false);
 
       // Test empty string (default to true)
       mockRl.question.mockResolvedValue('');
       // @ts-ignore
-      result = await executeStep(step, context, { log: () => { } });
+      result = await executeStep(step, context, { log: () => {} });
       expect(result.output).toBe(true);
     });
 
@@ -413,7 +413,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => { } });
+      const result = await executeStep(step, context, { log: () => {} });
       expect(result.status).toBe('success');
       expect(result.output).toBe('some custom response');
     });
@@ -429,7 +429,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => { } });
+      const result = await executeStep(step, context, { log: () => {} });
       expect(result.status).toBe('suspended');
       expect(result.error).toBe('Proceed?');
     });

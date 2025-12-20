@@ -57,17 +57,15 @@ export class SafeSandbox {
     if (!options.allowInsecureFallback) {
       throw new Error(
         'Execution in secure sandbox failed (isolated-vm not available) and insecure fallback is disabled.\n' +
-        'To allow insecure execution, set allowInsecureFallback: true in sandbox options.\n' +
-        'Note: Insecure execution is NOT recommended for untrusted code.'
+          'To allow insecure execution, set allowInsecureFallback: true in sandbox options.\n' +
+          'Note: Insecure execution is NOT recommended for untrusted code.'
       );
     }
 
     if (!SafeSandbox.warned) {
       const isBun = typeof Bun !== 'undefined';
       console.warn(
-        `\n⚠️  SECURITY WARNING: Using ${isBun ? 'Bun' : 'Node.js'} built-in VM for script execution.\n` +
-        '   This sandbox is NOT secure against malicious code.\n' +
-        '   Only run workflows from trusted sources.\n'
+        `\n⚠️  SECURITY WARNING: Using ${isBun ? 'Bun' : 'Node.js'} built-in VM for script execution.\n   This sandbox is NOT secure against malicious code.\n   Only run workflows from trusted sources.\n`
       );
       SafeSandbox.warned = true;
     }

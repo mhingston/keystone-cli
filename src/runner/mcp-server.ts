@@ -153,6 +153,40 @@ export class MCPServer {
                   required: ['run_id', 'input'],
                 },
               },
+              {
+                name: 'start_workflow',
+                description:
+                  'Start a workflow asynchronously. Returns immediately with a run_id. Use get_run_status to poll for completion.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    workflow_name: {
+                      type: 'string',
+                      description: 'The name of the workflow to run (e.g., "deploy", "cleanup")',
+                    },
+                    inputs: {
+                      type: 'object',
+                      description: 'Key-value pairs for workflow inputs',
+                    },
+                  },
+                  required: ['workflow_name'],
+                },
+              },
+              {
+                name: 'get_run_status',
+                description:
+                  'Get the current status of a workflow run. Returns status and outputs if complete.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    run_id: {
+                      type: 'string',
+                      description: 'The ID of the workflow run',
+                    },
+                  },
+                  required: ['run_id'],
+                },
+              },
             ],
           },
         };
@@ -444,6 +478,121 @@ export class MCPServer {
                     ),
                   },
                 ],
+              },
+            };
+          }
+
+          // --- Tool: start_workflow (async) ---
+          if (toolParams.name === 'start_workflow') {
+            const { workflow_name, inputs } = toolParams.arguments as {
+              workflow_name: string;
+              inputs?: Record<string, unknown>;
+            };
+
+            const path = WorkflowRegistry.resolvePath(workflow_name);
+            const workflow = WorkflowParser.loadWorkflow(path);
+
+            // Create a silent logger - we don't capture logs for async runs
+            const logger = {
+              log: () => {},
+              error: () => {},
+              warn: () => {},
+            };
+
+            const runner = new WorkflowRunner(workflow, {
+              inputs: inputs || {},
+              logger,
+              preventExit: true,
+            });
+
+            const runId = runner.getRunId();
+
+            // Start the workflow asynchronously - don't await
+            runner.run().then(
+              (outputs) => {
+                // Update DB with success on completion (RunStatus uses 'completed')
+                this.db.updateRunStatus(runId, 'completed', outputs);
+              },
+              (error) => {
+                // Update DB with failure
+                if (error instanceof WorkflowSuspendedError) {
+                  this.db.updateRunStatus(runId, 'paused');
+                } else {
+                  this.db.updateRunStatus(
+                    runId,
+                    'failed',
+                    undefined,
+                    error instanceof Error ? error.message : String(error)
+                  );
+                }
+              }
+            );
+
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(
+                      {
+                        status: 'running',
+                        run_id: runId,
+                        workflow: workflow_name,
+                        hint: 'Use get_run_status to check for completion.',
+                      },
+                      null,
+                      2
+                    ),
+                  },
+                ],
+              },
+            };
+          }
+
+          // --- Tool: get_run_status ---
+          if (toolParams.name === 'get_run_status') {
+            const { run_id } = toolParams.arguments as { run_id: string };
+            const run = this.db.getRun(run_id);
+
+            if (!run) {
+              throw new Error(`Run ID ${run_id} not found`);
+            }
+
+            const response: Record<string, unknown> = {
+              run_id,
+              workflow: run.workflow_name,
+              status: run.status,
+            };
+
+            // Include outputs if completed successfully
+            if (run.status === 'completed' && run.outputs) {
+              response.outputs = JSON.parse(run.outputs);
+            }
+
+            // Include error if failed
+            if (run.status === 'failed' && run.error) {
+              response.error = run.error;
+            }
+
+            // Include hint for paused workflows
+            if (run.status === 'paused') {
+              response.hint =
+                'Workflow is paused waiting for human input. Use answer_human_input to resume.';
+            }
+
+            // Include hint for running workflows
+            if (run.status === 'running') {
+              response.hint =
+                'Workflow is still running. Call get_run_status again to check for completion.';
+            }
+
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [{ type: 'text', text: JSON.stringify(response, null, 2) }],
               },
             };
           }
