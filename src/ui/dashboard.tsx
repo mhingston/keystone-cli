@@ -7,6 +7,7 @@ interface Run {
   workflow_name: string;
   status: string;
   started_at: string;
+  total_tokens?: number;
 }
 
 const Dashboard = () => {
@@ -16,8 +17,27 @@ const Dashboard = () => {
   const fetchData = useCallback(() => {
     const db = new WorkflowDb();
     try {
-      const recentRuns = db.listRuns(10);
-      setRuns(recentRuns);
+      const recentRuns = db.listRuns(10) as (Run & { outputs: string | null })[];
+      const runsWithUsage = recentRuns.map((run) => {
+        let total_tokens = 0;
+        try {
+          // Get steps to aggregate tokens if not in outputs (future-proofing)
+          const steps = db.getStepsByRun(run.id);
+          total_tokens = steps.reduce((sum, s) => {
+            if (s.usage) {
+              try {
+                const u = JSON.parse(s.usage);
+                return sum + (u.total_tokens || 0);
+              } catch (e) {
+                return sum;
+              }
+            }
+            return sum;
+          }, 0);
+        } catch (e) { }
+        return { ...run, total_tokens };
+      });
+      setRuns(runsWithUsage);
     } catch (error) {
       console.error('Failed to fetch runs:', error);
     } finally {
@@ -71,9 +91,14 @@ const Dashboard = () => {
               STATUS
             </Text>
           </Box>
-          <Box>
+          <Box width={15}>
             <Text bold color="cyan">
               STARTED
+            </Text>
+          </Box>
+          <Box>
+            <Text bold color="cyan">
+              TOKENS
             </Text>
           </Box>
         </Box>
@@ -100,8 +125,11 @@ const Dashboard = () => {
                   {getStatusIcon(run.status)} {run.status.toUpperCase()}
                 </Text>
               </Box>
+              <Box width={15}>
+                <Text color="gray">{new Date(run.started_at).toLocaleTimeString()}</Text>
+              </Box>
               <Box>
-                <Text color="gray">{new Date(run.started_at).toLocaleString()}</Text>
+                <Text color="yellow">{run.total_tokens || 0}</Text>
               </Box>
             </Box>
           ))

@@ -5,7 +5,8 @@ import { parseAgent, resolveAgentPath } from '../parser/agent-parser';
 import type { AgentTool, LlmStep, Step } from '../parser/schema';
 import { type LLMMessage, getAdapter } from './llm-adapter';
 import { MCPClient } from './mcp-client';
-import type { MCPManager } from './mcp-manager';
+import { Redactor } from '../utils/redactor';
+import type { MCPManager, MCPServerConfig } from './mcp-manager';
 import type { StepResult } from './step-executor';
 import type { Logger } from './workflow-runner';
 
@@ -42,10 +43,30 @@ export async function executeLlmStep(
     systemPrompt += `\n\nIMPORTANT: You must output valid JSON that matches the following schema:\n${JSON.stringify(step.schema, null, 2)}`;
   }
 
-  const messages: LLMMessage[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: prompt },
-  ];
+  const messages: LLMMessage[] = [];
+
+  // Resume from state if provided
+  if (context.output && typeof context.output === 'object' && 'messages' in context.output) {
+    messages.push(...(context.output.messages as LLMMessage[]));
+
+    // If we have an answer in inputs, add it as a tool result for the last tool call
+    const stepInputs = context.inputs?.[step.id] as Record<string, unknown> | undefined;
+    if (stepInputs && typeof stepInputs === 'object' && '__answer' in stepInputs) {
+      const answer = stepInputs.__answer;
+      const lastMessage = messages[messages.length - 1];
+      const askCall = lastMessage?.tool_calls?.find((tc) => tc.function.name === 'ask');
+      if (askCall) {
+        messages.push({
+          role: 'tool',
+          tool_call_id: askCall.id,
+          name: 'ask',
+          content: String(answer),
+        });
+      }
+    }
+  } else {
+    messages.push({ role: 'system', content: systemPrompt }, { role: 'user', content: prompt });
+  }
 
   const localMcpClients: MCPClient[] = [];
   const allTools: ToolDefinition[] = [];
@@ -84,14 +105,15 @@ export async function executeLlmStep(
     }
 
     // 3. Add MCP tools
-    const mcpServersToConnect = [...(step.mcpServers || [])];
+    const mcpServersToConnect: (string | MCPServerConfig)[] = [...(step.mcpServers || [])];
     if (step.useGlobalMcp && mcpManager) {
       const globalServers = mcpManager.getGlobalServers();
       for (const globalServer of globalServers) {
         // Only add if not already explicitly listed
-        const alreadyListed = mcpServersToConnect.some((s) =>
-          typeof s === 'string' ? s === globalServer.name : s.name === globalServer.name
-        );
+        const alreadyListed = mcpServersToConnect.some((s) => {
+          const name = typeof s === 'string' ? s : s.name;
+          return name === globalServer.name;
+        });
         if (!alreadyListed) {
           mcpServersToConnect.push(globalServer);
         }
@@ -103,7 +125,7 @@ export async function executeLlmStep(
         let client: MCPClient | undefined;
 
         if (mcpManager) {
-          client = await mcpManager.getClient(server, logger);
+          client = await mcpManager.getClient(server as string | MCPServerConfig, logger);
         } else {
           // Fallback if no manager (should not happen in normal workflow run)
           if (typeof server === 'string') {
@@ -113,9 +135,9 @@ export async function executeLlmStep(
           logger.log(`  🔌 Connecting to MCP server: ${server.name}`);
           try {
             client = await MCPClient.createLocal(
-              server.command,
-              server.args || [],
-              server.env || {}
+              (server as MCPServerConfig).command || 'node',
+              (server as MCPServerConfig).args || [],
+              (server as MCPServerConfig).env || {}
             );
             await client.initialize();
             localMcpClients.push(client);
@@ -123,7 +145,9 @@ export async function executeLlmStep(
             logger.error(
               `  ✗ Failed to connect to MCP server ${server.name}: ${error instanceof Error ? error.message : String(error)}`
             );
-            client.stop();
+            if (client) {
+              client.stop();
+            }
             client = undefined;
           }
         }
@@ -144,32 +168,67 @@ export async function executeLlmStep(
     }
 
     const llmTools = allTools.map((t) => ({
-      type: 'function',
+      type: 'function' as const,
       function: {
         name: t.name,
         description: t.description,
-        parameters: t.parameters,
+        parameters: t.parameters as Record<string, unknown>,
       },
     }));
+
+    if (step.allowClarification) {
+      llmTools.push({
+        type: 'function' as const,
+        function: {
+          name: 'ask',
+          description:
+            'Ask the user a clarifying question if the initial request is ambiguous or missing information.',
+          parameters: {
+            type: 'object',
+            properties: {
+              question: {
+                type: 'string',
+                description: 'The question to ask the user',
+              },
+            },
+            required: ['question'],
+          } as Record<string, unknown>,
+        },
+      });
+    }
 
     // ReAct Loop
     let iterations = 0;
     const maxIterations = step.maxIterations || 10;
+    const totalUsage = {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    };
 
     while (iterations < maxIterations) {
       iterations++;
 
+      const redactor = new Redactor(context.secrets || {});
+
       const response = await adapter.chat(messages, {
         model: resolvedModel,
         tools: llmTools.length > 0 ? llmTools : undefined,
+        onStream: (chunk) => {
+          if (!step.schema) {
+            process.stdout.write(redactor.redact(chunk));
+          }
+        },
       });
+
+      if (response.usage) {
+        totalUsage.prompt_tokens += response.usage.prompt_tokens;
+        totalUsage.completion_tokens += response.usage.completion_tokens;
+        totalUsage.total_tokens += response.usage.total_tokens;
+      }
 
       const { message } = response;
       messages.push(message);
-
-      if (message.content && !step.schema) {
-        logger.log(`\n${message.content}`);
-      }
 
       if (!message.tool_calls || message.tool_calls.length === 0) {
         let output = message.content;
@@ -177,11 +236,8 @@ export async function executeLlmStep(
         // If schema is defined, attempt to parse JSON
         if (step.schema && typeof output === 'string') {
           try {
-            // Attempt to extract JSON if wrapped in markdown code blocks or just finding the first {
-            const jsonMatch =
-              output.match(/```(?:json)?\s*([\s\S]*?)\s*```/i) || output.match(/\{[\s\S]*\}/);
-            const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : output;
-            output = JSON.parse(jsonStr);
+            const { extractJson } = await import('../utils/json-parser');
+            output = extractJson(output);
           } catch (e) {
             throw new Error(
               `Failed to parse LLM output as JSON matching schema: ${e instanceof Error ? e.message : String(e)}\nOutput: ${output}`
@@ -192,6 +248,7 @@ export async function executeLlmStep(
         return {
           output,
           status: 'success',
+          usage: totalUsage,
         };
       }
 
@@ -201,6 +258,41 @@ export async function executeLlmStep(
         const toolInfo = allTools.find((t) => t.name === toolCall.function.name);
 
         if (!toolInfo) {
+          if (toolCall.function.name === 'ask' && step.allowClarification) {
+            const args = JSON.parse(toolCall.function.arguments) as { question: string };
+
+            if (process.stdin.isTTY) {
+              // In TTY, we can use a human step to get the answer immediately
+              logger.log(`\n🤔 Question from ${agent.name}: ${args.question}`);
+              const result = await executeStepFn(
+                {
+                  id: `${step.id}-clarify`,
+                  type: 'human',
+                  message: args.question,
+                  inputType: 'text',
+                } as Step,
+                context
+              );
+
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: 'ask',
+                content: String(result.output),
+              });
+              continue;
+            }
+            // In non-TTY, we suspend
+            return {
+              status: 'suspended',
+              output: {
+                messages,
+                question: args.question,
+              },
+              usage: totalUsage,
+            };
+          }
+
           messages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
@@ -233,7 +325,7 @@ export async function executeLlmStep(
           // Execute the tool as a step
           const toolContext: ExpressionContext = {
             ...context,
-            args,
+            item: args, // Use item to pass args to tool execution
           };
 
           const result = await executeStepFn(toolInfo.execution, toolContext);

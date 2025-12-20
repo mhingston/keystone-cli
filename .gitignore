@@ -9,6 +9,7 @@ bun.lockb
 .env.local
 
 # Keystone State
+.keystone
 *.db
 *.db-shm
 *.db-wal

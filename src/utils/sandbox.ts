@@ -3,6 +3,7 @@ import * as vm from 'node:vm';
 export interface SandboxOptions {
   timeout?: number;
   memoryLimit?: number;
+  allowInsecureFallback?: boolean;
 }
 
 export class SafeSandbox {
@@ -48,14 +49,35 @@ export class SafeSandbox {
         }
       }
     } catch (e) {
-      // Fallback to node:vm if isolated-vm fails to load or run
+      // If isolated-vm failed during execution (not just loading), log it if we're debugging
     }
 
     // Fallback implementation using node:vm (built-in)
+    // ONLY allowed if explicitly opted in via options
+    if (!options.allowInsecureFallback) {
+      throw new Error(
+        'Execution in secure sandbox failed (isolated-vm not available) and insecure fallback is disabled.\n' +
+        'To allow insecure execution, set allowInsecureFallback: true in sandbox options.\n' +
+        'Note: Insecure execution is NOT recommended for untrusted code.'
+      );
+    }
+
+    if (!SafeSandbox.warned) {
+      const isBun = typeof Bun !== 'undefined';
+      console.warn(
+        `\n⚠️  SECURITY WARNING: Using ${isBun ? 'Bun' : 'Node.js'} built-in VM for script execution.\n` +
+        '   This sandbox is NOT secure against malicious code.\n' +
+        '   Only run workflows from trusted sources.\n'
+      );
+      SafeSandbox.warned = true;
+    }
+
     const sandbox = { ...context };
     return vm.runInNewContext(code, sandbox, {
       timeout: options.timeout || 5000,
       displayErrors: true,
     });
   }
+
+  private static warned = false;
 }

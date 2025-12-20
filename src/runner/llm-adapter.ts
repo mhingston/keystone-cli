@@ -39,7 +39,11 @@ export interface LLMTool {
 export interface LLMAdapter {
   chat(
     messages: LLMMessage[],
-    options?: { model?: string; tools?: LLMTool[] }
+    options?: {
+      model?: string;
+      tools?: LLMTool[];
+      onStream?: (chunk: string) => void;
+    }
   ): Promise<LLMResponse>;
 }
 
@@ -58,8 +62,14 @@ export class OpenAIAdapter implements LLMAdapter {
 
   async chat(
     messages: LLMMessage[],
-    options?: { model?: string; tools?: LLMTool[] }
+    options?: {
+      model?: string;
+      tools?: LLMTool[];
+      onStream?: (chunk: string) => void;
+    }
   ): Promise<LLMResponse> {
+    const isStreaming = !!options?.onStream;
+
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -70,12 +80,69 @@ export class OpenAIAdapter implements LLMAdapter {
         model: options?.model || 'gpt-4o',
         messages,
         tools: options?.tools,
+        stream: isStreaming,
       }),
     });
 
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${error}`);
+    }
+
+    if (isStreaming) {
+      if (!response.body) throw new Error('Response body is null');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let toolCalls: LLMToolCall[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter((line) => line.trim() !== '');
+
+        for (const line of lines) {
+          if (line.includes('[DONE]')) continue;
+          if (!line.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(line.slice(6));
+            const delta = data.choices[0].delta;
+
+            if (delta.content) {
+              fullContent += delta.content;
+              options.onStream?.(delta.content);
+            }
+
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                if (!toolCalls[tc.index]) {
+                  toolCalls[tc.index] = {
+                    id: tc.id,
+                    type: 'function',
+                    function: { name: '', arguments: '' },
+                  };
+                }
+                const existing = toolCalls[tc.index];
+                if (tc.function?.name) existing.function.name += tc.function.name;
+                if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+              }
+            }
+          } catch (e) {
+            // Ignore parse errors for incomplete chunks
+          }
+        }
+      }
+
+      return {
+        message: {
+          role: 'assistant',
+          content: fullContent || null,
+          tool_calls: toolCalls.length > 0 ? toolCalls.filter(Boolean) : undefined,
+        },
+      };
     }
 
     const data = (await response.json()) as {
@@ -104,8 +171,13 @@ export class AnthropicAdapter implements LLMAdapter {
 
   async chat(
     messages: LLMMessage[],
-    options?: { model?: string; tools?: LLMTool[] }
+    options?: {
+      model?: string;
+      tools?: LLMTool[];
+      onStream?: (chunk: string) => void;
+    }
   ): Promise<LLMResponse> {
+    const isStreaming = !!options?.onStream;
     const system = messages.find((m) => m.role === 'system')?.content || undefined;
 
     // Anthropic requires alternating user/assistant roles.
@@ -182,10 +254,10 @@ export class AnthropicAdapter implements LLMAdapter {
 
     const anthropicTools = options?.tools
       ? options.tools.map((t) => ({
-          name: t.function.name,
-          description: t.function.description,
-          input_schema: t.function.parameters,
-        }))
+        name: t.function.name,
+        description: t.function.description,
+        input_schema: t.function.parameters,
+      }))
       : undefined;
 
     const response = await fetch(`${this.baseUrl}/messages`, {
@@ -201,12 +273,68 @@ export class AnthropicAdapter implements LLMAdapter {
         messages: anthropicMessages,
         tools: anthropicTools,
         max_tokens: 4096,
+        stream: isStreaming,
       }),
     });
 
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`Anthropic API error: ${response.status} ${response.statusText} - ${error}`);
+    }
+
+    if (isStreaming) {
+      if (!response.body) throw new Error('Response body is null');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let toolCalls: any[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter((line) => line.trim() !== '');
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === 'content_block_delta' && data.delta?.text) {
+              fullContent += data.delta.text;
+              options.onStream?.(data.delta.text);
+            }
+
+            if (data.type === 'content_block_start' && data.content_block?.type === 'tool_use') {
+              toolCalls.push({
+                id: data.content_block.id,
+                name: data.content_block.name,
+                inputString: '',
+              });
+            }
+
+            if (data.type === 'tool_use_delta' && data.delta?.partial_json) {
+              const lastTool = toolCalls[toolCalls.length - 1];
+              if (lastTool) lastTool.inputString += data.delta.partial_json;
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      return {
+        message: {
+          role: 'assistant',
+          content: fullContent || null,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.name, arguments: tc.inputString },
+          })),
+        },
+      };
     }
 
     const data = (await response.json()) as {
@@ -256,8 +384,13 @@ export class CopilotAdapter implements LLMAdapter {
 
   async chat(
     messages: LLMMessage[],
-    options?: { model?: string; tools?: LLMTool[] }
+    options?: {
+      model?: string;
+      tools?: LLMTool[];
+      onStream?: (chunk: string) => void;
+    }
   ): Promise<LLMResponse> {
+    const isStreaming = !!options?.onStream;
     const token = await AuthManager.getCopilotToken();
     if (!token) {
       throw new Error('GitHub Copilot token not found. Please run "keystone auth login" first.');
@@ -276,12 +409,71 @@ export class CopilotAdapter implements LLMAdapter {
         model: options?.model || 'gpt-4o',
         messages,
         tools: options?.tools,
+        stream: isStreaming,
       }),
     });
 
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`Copilot API error: ${response.status} ${response.statusText} - ${error}`);
+    }
+
+    if (isStreaming) {
+      // Use the same streaming logic as OpenAIAdapter since Copilot uses OpenAI API
+      if (!response.body) throw new Error('Response body is null');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let toolCalls: LLMToolCall[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter((line) => line.trim() !== '');
+
+        for (const line of lines) {
+          if (line.includes('[DONE]')) continue;
+          if (!line.startsWith('data: ')) continue;
+
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (!data.choices?.[0]?.delta) continue;
+            const delta = data.choices[0].delta;
+
+            if (delta.content) {
+              fullContent += delta.content;
+              options.onStream?.(delta.content);
+            }
+
+            if (delta.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                if (!toolCalls[tc.index]) {
+                  toolCalls[tc.index] = {
+                    id: tc.id,
+                    type: 'function',
+                    function: { name: '', arguments: '' },
+                  };
+                }
+                const existing = toolCalls[tc.index];
+                if (tc.function?.name) existing.function.name += tc.function.name;
+                if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+              }
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+      }
+
+      return {
+        message: {
+          role: 'assistant',
+          content: fullContent || null,
+          tool_calls: toolCalls.length > 0 ? toolCalls.filter(Boolean) : undefined,
+        },
+      };
     }
 
     const data = (await response.json()) as {

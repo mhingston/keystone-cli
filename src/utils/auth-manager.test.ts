@@ -28,7 +28,7 @@ describe('AuthManager', () => {
     if (fs.existsSync(TEMP_AUTH_FILE)) {
       try {
         fs.rmSync(TEMP_AUTH_FILE);
-      } catch (e) {}
+      } catch (e) { }
     }
     global.fetch = originalFetch;
     // Set environment variable for EACH test to be safe
@@ -141,7 +141,7 @@ describe('AuthManager', () => {
         )
       );
 
-      const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
+      const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
       const token = await AuthManager.getCopilotToken();
 
       expect(token).toBeUndefined();
@@ -233,6 +233,37 @@ describe('AuthManager', () => {
       await expect(AuthManager.pollGitHubDeviceLogin('dev_code')).rejects.toThrow(
         'The device code has expired'
       );
+    });
+
+    it('pollGitHubDeviceLogin should timeout after 15 minutes', async () => {
+      // Mock fetch to always return authorization_pending
+      // @ts-ignore
+      global.fetch = mock(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: 'authorization_pending',
+            }),
+            { status: 200 }
+          )
+        )
+      );
+
+      // Mock Date.now to simulate time passing
+      let now = Date.now();
+      const dateSpy = spyOn(Date, 'now').mockImplementation(() => {
+        const current = now;
+        now += 1000 * 60 * 16; // Advance 16 minutes on each call to trigger timeout immediately
+        return current;
+      });
+
+      try {
+        await expect(AuthManager.pollGitHubDeviceLogin('dev_code')).rejects.toThrow(
+          'Device login timed out'
+        );
+      } finally {
+        dateSpy.mockRestore();
+      }
     });
   });
 });

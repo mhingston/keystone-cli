@@ -31,6 +31,7 @@ export interface ExpressionContext {
   item?: unknown;
   index?: number;
   env?: Record<string, string>;
+  output?: unknown;
 }
 
 type ASTNode = jsep.Expression;

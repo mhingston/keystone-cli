@@ -88,7 +88,11 @@ export class AuthManager {
     }>;
   }
 
-  static async pollGitHubDeviceLogin(deviceCode: string): Promise<string> {
+  static async pollGitHubDeviceLogin(
+    deviceCode: string,
+    intervalSeconds = 5,
+    expiresInSeconds = 900
+  ): Promise<string> {
     const poll = async (): Promise<string> => {
       const response = await fetch('https://github.com/login/oauth/access_token', {
         method: 'POST',
@@ -121,16 +125,27 @@ export class AuthManager {
         return ''; // Continue polling
       }
 
+      if (data.error === 'slow_down') {
+        // According to GitHub docs, "slow_down" means wait 5 seconds more
+        intervalSeconds += 5;
+        return '';
+      }
+
       throw new Error(data.error_description || data.error || 'Failed to get access token');
     };
 
-    // Poll every 5 seconds (GitHub's default interval is usually 5)
-    // In a real implementation, we should use the interval from initGitHubDeviceLogin
-    while (true) {
+    // Use interval and expiration from parameters
+    const startTime = Date.now();
+    const timeout = expiresInSeconds * 1000;
+
+    while (Date.now() - startTime < timeout) {
       const token = await poll();
       if (token) return token;
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      // Convert seconds to milliseconds
+      await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1000));
     }
+
+    throw new Error('Device login timed out');
   }
 
   static async getCopilotToken(): Promise<string | undefined> {

@@ -1,21 +1,21 @@
-import { afterAll, describe, expect, it, spyOn } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { parseAgent, resolveAgentPath } from './agent-parser';
 
 describe('agent-parser', () => {
-  const tempDir = join(process.cwd(), 'temp-test-agents');
+  // Use a unique temp directory with random suffix to prevent parallel test collisions
+  const tempDir = join(process.cwd(), `temp-test-agents-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-  // Setup temp directory
-  try {
+  beforeAll(() => {
     mkdirSync(tempDir, { recursive: true });
-  } catch (e) {}
+  });
 
   afterAll(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch (e) {}
+    } catch (e) { }
   });
 
   describe('parseAgent', () => {
@@ -97,7 +97,7 @@ Prompt`;
       const agentsDir = join(process.cwd(), '.keystone', 'workflows', 'agents');
       try {
         mkdirSync(agentsDir, { recursive: true });
-      } catch (e) {}
+      } catch (e) { }
 
       const filePath = join(agentsDir, 'my-agent.md');
       writeFileSync(filePath, '---name: my-agent---');

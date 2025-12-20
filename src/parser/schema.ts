@@ -21,7 +21,7 @@ const RetrySchema = z.object({
 const BaseStepSchema = z.object({
   id: z.string(),
   type: z.string(),
-  needs: z.array(z.string()).default([]),
+  needs: z.array(z.string()).optional().default([]),
   if: z.string().optional(),
   timeout: z.number().int().positive().optional(),
   retry: RetrySchema.optional(),
@@ -58,15 +58,19 @@ const LlmStepSchema = BaseStepSchema.extend({
   tools: z.array(AgentToolSchema).optional(),
   maxIterations: z.number().int().positive().default(10),
   useGlobalMcp: z.boolean().optional(),
+  allowClarification: z.boolean().optional(),
   mcpServers: z
     .array(
       z.union([
         z.string(),
         z.object({
           name: z.string(),
-          command: z.string(),
+          type: z.enum(['local', 'remote']).optional(),
+          command: z.string().optional(),
           args: z.array(z.string()).optional(),
           env: z.record(z.string()).optional(),
+          url: z.string().optional(),
+          headers: z.record(z.string()).optional(),
         }),
       ])
     )
@@ -108,6 +112,7 @@ const SleepStepSchema = BaseStepSchema.extend({
 const ScriptStepSchema = BaseStepSchema.extend({
   type: z.literal('script'),
   run: z.string(),
+  allowInsecure: z.boolean().optional().default(false),
 });
 
 // ===== Discriminated Union for Steps =====
@@ -134,6 +139,7 @@ export const WorkflowSchema = z.object({
   inputs: z.record(InputSchema).optional(),
   outputs: z.record(z.string()).optional(),
   env: z.record(z.string()).optional(),
+  concurrency: z.union([z.number().int().positive(), z.string()]).optional(),
   steps: z.array(StepSchema),
   finally: z.array(StepSchema).optional(),
 });

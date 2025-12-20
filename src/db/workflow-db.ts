@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'paused';
-export type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+export type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'suspended';
 
 export interface WorkflowRun {
   id: string;
@@ -25,12 +25,13 @@ export interface StepExecution {
   started_at: string | null;
   completed_at: string | null;
   retry_count: number;
+  usage: string | null; // JSON
 }
 
 export class WorkflowDb {
   private db: Database;
 
-  constructor(dbPath = '.keystone/state.db') {
+  constructor(public readonly dbPath = '.keystone/state.db') {
     this.db = new Database(dbPath, { create: true });
     this.db.exec('PRAGMA journal_mode = WAL;'); // Write-ahead logging
     this.db.exec('PRAGMA foreign_keys = ON;'); // Enable foreign key enforcement
@@ -49,9 +50,15 @@ export class WorkflowDb {
         return operation();
       } catch (error) {
         // Check if this is a SQLITE_BUSY error
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        if (errorMsg.includes('SQLITE_BUSY') || errorMsg.includes('database is locked')) {
-          lastError = error instanceof Error ? error : new Error(errorMsg);
+        const isBusy = (error as any).code === 'SQLITE_BUSY' ||
+          (error as any).code === 5 ||
+          (error instanceof Error && (
+            error.message.includes('SQLITE_BUSY') ||
+            error.message.includes('database is locked')
+          ));
+
+        if (isBusy) {
+          lastError = error instanceof Error ? error : new Error(String(error));
           // Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms
           const delayMs = 10 * 2 ** attempt;
           await Bun.sleep(delayMs);
@@ -89,6 +96,7 @@ export class WorkflowDb {
         started_at TEXT,
         completed_at TEXT,
         retry_count INTEGER DEFAULT 0,
+        usage TEXT,
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
       );
 
@@ -204,12 +212,13 @@ export class WorkflowDb {
     id: string,
     status: StepStatus,
     output?: unknown,
-    error?: string
+    error?: string,
+    usage?: unknown
   ): Promise<void> {
     await this.withRetry(() => {
       const stmt = this.db.prepare(`
         UPDATE step_executions
-        SET status = ?, output = ?, error = ?, completed_at = ?
+        SET status = ?, output = ?, error = ?, completed_at = ?, usage = ?
         WHERE id = ?
       `);
       stmt.run(
@@ -217,6 +226,7 @@ export class WorkflowDb {
         output ? JSON.stringify(output) : null,
         error || null,
         new Date().toISOString(),
+        usage ? JSON.stringify(usage) : null,
         id
       );
     });

@@ -259,6 +259,7 @@ Keystone supports several specialized step types:
 
 - `shell`: Run arbitrary shell commands.
 - `llm`: Prompt an agent and get structured or unstructured responses. Supports `schema` (JSON Schema) for structured output.
+  - `allowClarification`: Boolean (default `false`). If `true`, allows the LLM to ask clarifying questions back to the user or suspend the workflow if no human is available.
 - `request`: Make HTTP requests (GET, POST, etc.).
 - `file`: Read, write, or append to files.
 - `human`: Pause execution for manual confirmation or text input.

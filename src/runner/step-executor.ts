@@ -11,7 +11,7 @@ import type {
   Step,
   WorkflowStep,
 } from '../parser/schema.ts';
-import { executeShell } from './shell-executor.ts';
+import { detectShellInjectionRisk, executeShell } from './shell-executor.ts';
 import type { Logger } from './workflow-runner.ts';
 
 import * as readline from 'node:readline/promises';
@@ -34,6 +34,11 @@ export interface StepResult {
   output: unknown;
   status: 'success' | 'failed' | 'suspended';
   error?: string;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }
 
 /**
@@ -45,16 +50,17 @@ export async function executeStep(
   logger: Logger = console,
   executeWorkflowFn?: (step: WorkflowStep, context: ExpressionContext) => Promise<StepResult>,
   mcpManager?: MCPManager,
-  workflowDir?: string
+  workflowDir?: string,
+  dryRun?: boolean
 ): Promise<StepResult> {
   try {
     let result: StepResult;
     switch (step.type) {
       case 'shell':
-        result = await executeShellStep(step, context, logger);
+        result = await executeShellStep(step, context, logger, dryRun);
         break;
       case 'file':
-        result = await executeFileStep(step, context, logger);
+        result = await executeFileStep(step, context, logger, dryRun);
         break;
       case 'request':
         result = await executeRequestStep(step, context, logger);
@@ -69,7 +75,7 @@ export async function executeStep(
         result = await executeLlmStep(
           step,
           context,
-          (s, c) => executeStep(s, c, logger, executeWorkflowFn, mcpManager, workflowDir),
+          (s, c) => executeStep(s, c, logger, executeWorkflowFn, mcpManager, workflowDir, dryRun),
           logger,
           mcpManager,
           workflowDir
@@ -129,8 +135,59 @@ export async function executeStep(
 async function executeShellStep(
   step: ShellStep,
   context: ExpressionContext,
-  logger: Logger
+  logger: Logger,
+  dryRun?: boolean
 ): Promise<StepResult> {
+  if (dryRun) {
+    const command = ExpressionEvaluator.evaluateString(step.run, context);
+    logger.log(`[DRY RUN] Would execute shell command: ${command}`);
+    return {
+      output: { stdout: '[DRY RUN] Success', stderr: '', exitCode: 0 },
+      status: 'success',
+    };
+  }
+  // Check for risk and prompt if TTY
+  const command = ExpressionEvaluator.evaluateString(step.run, context);
+  const isRisky = detectShellInjectionRisk(command);
+
+  if (isRisky) {
+    // Check if we have a resume approval
+    const stepInputs = context.inputs ? (context.inputs as any)[step.id] : undefined;
+    if (
+      stepInputs &&
+      typeof stepInputs === 'object' &&
+      '__approved' in stepInputs &&
+      stepInputs.__approved === true
+    ) {
+      // Already approved, proceed
+    } else {
+      const message = `Potentially risky shell command detected: ${command}`;
+
+      if (!process.stdin.isTTY) {
+        return {
+          output: null,
+          status: 'suspended',
+          error: `APPROVAL_REQUIRED: ${message}`,
+        };
+      }
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      try {
+        logger.warn(`\n⚠️  ${message}`);
+        const answer = (await rl.question('Do you want to execute this command? (y/N): ')).trim();
+        if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
+          throw new Error('Command execution denied by user');
+        }
+      } finally {
+        rl.close();
+      }
+    }
+  }
+
   const result = await executeShell(step, context, logger);
 
   if (result.stdout) {
@@ -165,9 +222,19 @@ async function executeShellStep(
 async function executeFileStep(
   step: FileStep,
   context: ExpressionContext,
-  _logger: Logger
+  _logger: Logger,
+  dryRun?: boolean
 ): Promise<StepResult> {
   const path = ExpressionEvaluator.evaluateString(step.path, context);
+
+  if (dryRun && step.op !== 'read') {
+    const opVerb = step.op === 'write' ? 'write to' : 'append to';
+    _logger.log(`[DRY RUN] Would ${opVerb} file: ${path}`);
+    return {
+      output: { path, bytes: 0 },
+      status: 'success',
+    };
+  }
 
   switch (step.op) {
     case 'read': {
@@ -298,7 +365,10 @@ async function executeRequestStep(
       data: responseData,
     },
     status: response.ok ? 'success' : 'failed',
-    error: response.ok ? undefined : `HTTP ${response.status}: ${response.statusText}`,
+    error: response.ok
+      ? undefined
+      : `HTTP ${response.status}: ${response.statusText}${responseText ? `\nResponse Body: ${responseText.substring(0, 500)}${responseText.length > 500 ? '...' : ''}` : ''
+      }`,
   };
 }
 
@@ -311,6 +381,16 @@ async function executeHumanStep(
   logger: Logger
 ): Promise<StepResult> {
   const message = ExpressionEvaluator.evaluateString(step.message, context);
+
+  // Check if we have a resume answer
+  const stepInputs = context.inputs ? (context.inputs as any)[step.id] : undefined;
+  if (stepInputs && typeof stepInputs === 'object' && '__answer' in stepInputs) {
+    const answer = (stepInputs as any).__answer;
+    return {
+      output: step.inputType === 'confirm' ? (answer === true || answer === 'true' || answer === 'yes' || answer === 'y') : answer,
+      status: 'success',
+    };
+  }
 
   // If not a TTY (e.g. MCP server), suspend execution
   if (!process.stdin.isTTY) {
@@ -401,6 +481,8 @@ async function executeScriptStep(
       secrets: context.secrets,
       steps: context.steps,
       env: context.env,
+    }, {
+      allowInsecureFallback: step.allowInsecure,
     });
 
     return {

@@ -335,11 +335,13 @@ export class MCPServer {
               throw new Error(`Run ${run_id} is not paused (status: ${run.status})`);
             }
 
-            // Find the pending human step
+            // Find the pending or suspended step
             const steps = this.db.getStepsByRun(run_id);
-            const pendingStep = steps.find((s) => s.status === 'pending');
+            const pendingStep = steps.find(
+              (s) => s.status === 'pending' || s.status === 'suspended'
+            );
             if (!pendingStep) {
-              throw new Error(`No pending step found for run ${run_id}`);
+              throw new Error(`No pending or suspended step found for run ${run_id}`);
             }
 
             // Fulfill the step in the DB
@@ -371,6 +373,7 @@ export class MCPServer {
 
             const runner = new WorkflowRunner(workflow, {
               resumeRunId: run_id,
+              resumeInputs: { [pendingStep.step_id]: { __answer: output } },
               logger,
               preventExit: true,
             });

@@ -1,8 +1,0 @@
-name: llm-agent
-description: "Test LLM step"
-
-steps:
-  - id: ask_llm
-    type: llm
-    agent: summarizer
-    prompt: "Hello, who are you?"

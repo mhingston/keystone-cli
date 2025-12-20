@@ -135,7 +135,10 @@ export class MCPManager {
   }
 
   private getServerKey(config: MCPServerConfig): string {
-    return config.name;
+    if (config.type === 'remote') {
+      return `remote:${config.name}:${config.url}`;
+    }
+    return `local:${config.name}:${config.command}:${(config.args || []).join(' ')}`;
   }
 
   getGlobalServers(): MCPServerConfig[] {

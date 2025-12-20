@@ -4,6 +4,7 @@ import type { Workflow } from '../parser/schema';
 import { WorkflowParser } from '../parser/workflow-parser';
 import { WorkflowRegistry } from '../utils/workflow-registry';
 import { WorkflowRunner } from './workflow-runner';
+import { WorkflowDb } from '../db/workflow-db';
 
 describe('WorkflowRunner', () => {
   const dbPath = ':memory:';
@@ -11,6 +12,9 @@ describe('WorkflowRunner', () => {
   afterAll(() => {
     if (existsSync('test-resume.db')) {
       rmSync('test-resume.db');
+    }
+    if (existsSync('test-foreach-resume.db')) {
+      rmSync('test-foreach-resume.db');
     }
   });
 
@@ -257,8 +261,8 @@ describe('WorkflowRunner', () => {
       log: (msg: string) => {
         if (msg.includes('Executing step: s1')) s1Executed = true;
       },
-      error: () => {},
-      warn: () => {},
+      error: () => { },
+      warn: () => { },
     };
 
     const runner2 = new WorkflowRunner(fixedWorkflow, {
@@ -271,6 +275,51 @@ describe('WorkflowRunner', () => {
 
     expect(outputs.out).toBe('one-two');
     expect(s1Executed).toBe(false); // Should have been skipped
+  });
+
+  it('should merge resumeInputs with stored inputs on resume', async () => {
+    const resumeDbPath = 'test-merge-inputs.db';
+    if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
+
+    const workflow: Workflow = {
+      name: 'merge-wf',
+      inputs: {
+        initial: { type: 'string' },
+        resumed: { type: 'string' },
+      },
+      steps: [{ id: 's1', type: 'shell', run: 'exit 1', needs: [] }],
+      outputs: {
+        merged: '${{ inputs.initial }}-${{ inputs.resumed }}',
+      },
+    } as unknown as Workflow;
+
+    const runner1 = new WorkflowRunner(workflow, {
+      dbPath: resumeDbPath,
+      inputs: { initial: 'first', resumed: 'pending' },
+    });
+
+    let runId = '';
+    try {
+      await runner1.run();
+    } catch (e) {
+      runId = runner1.getRunId();
+    }
+
+    const fixedWorkflow: Workflow = {
+      ...workflow,
+      steps: [{ id: 's1', type: 'shell', run: 'echo ok', needs: [] }],
+    } as unknown as Workflow;
+
+    const runner2 = new WorkflowRunner(fixedWorkflow, {
+      dbPath: resumeDbPath,
+      resumeRunId: runId,
+      resumeInputs: { resumed: 'second' },
+    });
+
+    const outputs = await runner2.run();
+    expect(outputs.merged).toBe('first-second');
+
+    if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
   });
 
   it('should redact secrets from outputs', async () => {
@@ -302,13 +351,13 @@ describe('WorkflowRunner', () => {
   it('should continue even if finally step fails', async () => {
     let finallyFailedLogged = false;
     const runnerLogger = {
-      log: () => {},
+      log: () => { },
       error: (msg: string) => {
         if (msg.includes('Finally step fin failed')) {
           finallyFailedLogged = true;
         }
       },
-      warn: () => {},
+      warn: () => { },
     };
 
     const failFinallyWorkflow: Workflow = {
@@ -330,8 +379,8 @@ describe('WorkflowRunner', () => {
           retryLogged = true;
         }
       },
-      error: () => {},
-      warn: () => {},
+      error: () => { },
+      warn: () => { },
     };
 
     const retryWorkflow: Workflow = {
@@ -354,5 +403,81 @@ describe('WorkflowRunner', () => {
       // Expected to fail
     }
     expect(retryLogged).toBe(true);
+  });
+
+  it('should handle foreach suspension and resume correctly', async () => {
+    const resumeDbPath = 'test-foreach-resume.db';
+    if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
+
+    const workflow: Workflow = {
+      name: 'foreach-suspend-wf',
+      steps: [
+        {
+          id: 'gen',
+          type: 'shell',
+          run: 'echo "[1, 2]"',
+          transform: 'JSON.parse(output.stdout)',
+          needs: [],
+        },
+        {
+          id: 'process',
+          type: 'human',
+          message: 'Item ${{ item }}',
+          foreach: '${{ steps.gen.output }}',
+          needs: ['gen'],
+        },
+      ],
+      outputs: {
+        results: '${{ steps.process.output }}',
+      },
+    } as unknown as Workflow;
+
+    // First run - should suspend
+    const originalIsTTY = process.stdin.isTTY;
+    process.stdin.isTTY = false;
+
+    const runner1 = new WorkflowRunner(workflow, { dbPath: resumeDbPath });
+    let suspendedError: any;
+    try {
+      await runner1.run();
+    } catch (e) {
+      suspendedError = e;
+    } finally {
+      process.stdin.isTTY = originalIsTTY;
+    }
+
+    expect(suspendedError).toBeDefined();
+    expect(suspendedError.name).toBe('WorkflowSuspendedError');
+
+    const runId = runner1.getRunId();
+
+    // Check DB status - parent should be 'paused' and step should be 'suspended'
+    const db = new WorkflowDb(resumeDbPath);
+    const run = db.getRun(runId);
+    expect(run?.status).toBe('paused');
+
+    const steps = db.getStepsByRun(runId);
+    const parentStep = steps.find((s: any) => s.step_id === 'process' && s.iteration_index === null);
+    expect(parentStep?.status).toBe('suspended');
+    db.close();
+
+    // Second run - resume with answers
+    const runner2 = new WorkflowRunner(workflow, {
+      dbPath: resumeDbPath,
+      resumeRunId: runId,
+      resumeInputs: {
+        'process': { __answer: 'ok' }
+      }
+    });
+
+    const outputs = await runner2.run();
+    expect(outputs.results).toEqual(['ok', 'ok']);
+
+    const finalDb = new WorkflowDb(resumeDbPath);
+    const finalRun = finalDb.getRun(runId);
+    expect(finalRun?.status).toBe('completed');
+    finalDb.close();
+
+    if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
   });
 });

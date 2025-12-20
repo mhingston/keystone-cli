@@ -60,7 +60,7 @@ export interface ShellResult {
  * Check if a command contains potentially dangerous shell metacharacters
  * Returns true if the command looks like it might contain unescaped user input
  */
-function detectShellInjectionRisk(command: string): boolean {
+export function detectShellInjectionRisk(command: string): boolean {
   // Common shell metacharacters that indicate potential injection
   const dangerousPatterns = [
     /;[\s]*\w/, // Command chaining with semicolon
