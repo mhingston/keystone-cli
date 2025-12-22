@@ -249,9 +249,14 @@ export async function executeLlmStep(
           try {
             output = extractJson(output) as typeof output;
           } catch (e) {
-            throw new Error(
-              `Failed to parse LLM output as JSON matching schema: ${e instanceof Error ? e.message : String(e)}\nOutput: ${output}`
-            );
+            const errorMessage = `Failed to parse LLM output as JSON matching schema: ${e instanceof Error ? e.message : String(e)}`;
+            logger.error(`  ⚠️  ${errorMessage}. Retrying...`);
+
+            messages.push({
+              role: 'user',
+              content: `Error: ${errorMessage}\n\nPlease correct your output to be valid JSON matching the schema.`,
+            });
+            continue;
           }
         }
 

@@ -132,13 +132,13 @@ describe('llm-executor', () => {
   beforeAll(() => {
     // Mock spawn to avoid actual process creation
     const mockProcess = Object.assign(new EventEmitter(), {
-      stdout: new Readable({ read() {} }),
+      stdout: new Readable({ read() { } }),
       stdin: new Writable({
         write(_chunk, _encoding, cb: (error?: Error | null) => void) {
           cb();
         },
       }),
-      kill: mock(() => {}),
+      kill: mock(() => { }),
     });
     spawnSpy = spyOn(child_process, 'spawn').mockReturnValue(
       mockProcess as unknown as child_process.ChildProcess
@@ -266,7 +266,7 @@ You are a test agent.`;
     expect(result.output).toEqual({ foo: 'bar' });
   });
 
-  it('should throw error if JSON parsing fails for schema', async () => {
+  it('should retry if LLM output fails schema validation', async () => {
     const step: LlmStep = {
       id: 'l1',
       type: 'llm',
@@ -279,7 +279,51 @@ You are a test agent.`;
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
-    // Mock response with invalid JSON
+    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
+    const originalCopilotChatInner = CopilotAdapter.prototype.chat;
+    const originalAnthropicChatInner = AnthropicAdapter.prototype.chat;
+
+    let attempt = 0;
+    const mockChat = mock(async () => {
+      attempt++;
+      if (attempt === 1) {
+        return { message: { role: 'assistant', content: 'Not JSON' } };
+      }
+      return { message: { role: 'assistant', content: '{"success": true}' } };
+    }) as unknown as typeof originalOpenAIChat;
+
+    OpenAIAdapter.prototype.chat = mockChat;
+    CopilotAdapter.prototype.chat = mockChat;
+    AnthropicAdapter.prototype.chat = mockChat;
+
+    const result = await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+    );
+
+    expect(result.status).toBe('success');
+    expect(result.output).toEqual({ success: true });
+    expect(attempt).toBe(2);
+
+    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
+    CopilotAdapter.prototype.chat = originalCopilotChatInner;
+    AnthropicAdapter.prototype.chat = originalAnthropicChatInner;
+  });
+
+  it('should fail after max iterations if JSON remains invalid', async () => {
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'give me invalid json',
+      needs: [],
+      maxIterations: 3,
+      schema: { type: 'object' },
+    };
+    const context: ExpressionContext = { inputs: {}, steps: {} };
+    const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
+
     const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
     const originalCopilotChatInner = CopilotAdapter.prototype.chat;
     const originalAnthropicChatInner = AnthropicAdapter.prototype.chat;
@@ -298,7 +342,7 @@ You are a test agent.`;
         context,
         executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
       )
-    ).rejects.toThrow(/Failed to parse LLM output as JSON/);
+    ).rejects.toThrow('Max ReAct iterations reached');
 
     OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
     CopilotAdapter.prototype.chat = originalCopilotChatInner;
@@ -378,7 +422,7 @@ You are a test agent.`;
       spyOn(client, 'stop').mockReturnValue(undefined);
       return client;
     });
-    const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
 
     await executeLlmStep(
       step,
@@ -565,7 +609,7 @@ You are a test agent.`;
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
-    const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
 
     await executeLlmStep(
       step,
