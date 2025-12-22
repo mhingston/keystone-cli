@@ -25,6 +25,7 @@ describe('shell-executor', () => {
       const step: ShellStep = {
         id: 'test',
         type: 'shell',
+        needs: [],
         run: 'echo "hello world"',
       };
 
@@ -37,6 +38,7 @@ describe('shell-executor', () => {
       const step: ShellStep = {
         id: 'test',
         type: 'shell',
+        needs: [],
         run: 'echo "${{ inputs.name }}"',
       };
       const customContext: ExpressionContext = {
@@ -52,6 +54,7 @@ describe('shell-executor', () => {
       const step: ShellStep = {
         id: 'test',
         type: 'shell',
+        needs: [],
         run: 'echo $TEST_VAR',
         env: {
           TEST_VAR: 'env-value',
@@ -66,6 +69,7 @@ describe('shell-executor', () => {
       const step: ShellStep = {
         id: 'test',
         type: 'shell',
+        needs: [],
         run: 'pwd',
         dir: '/tmp',
       };
@@ -78,6 +82,7 @@ describe('shell-executor', () => {
       const step: ShellStep = {
         id: 'test',
         type: 'shell',
+        needs: [],
         run: 'echo "error" >&2',
       };
 
@@ -89,6 +94,7 @@ describe('shell-executor', () => {
       const step: ShellStep = {
         id: 'test',
         type: 'shell',
+        needs: [],
         run: 'exit 1',
       };
 
@@ -96,28 +102,15 @@ describe('shell-executor', () => {
       expect(result.exitCode).toBe(1);
     });
 
-    it('should warn about shell injection risk', async () => {
-      const spy = console.warn;
-      let warned = false;
-      console.warn = (...args: unknown[]) => {
-        const msg = args[0];
-        if (
-          typeof msg === 'string' &&
-          msg.includes('WARNING: Command contains shell metacharacters')
-        ) {
-          warned = true;
-        }
-      };
-
+    it('should throw error on shell injection risk', async () => {
       const step: ShellStep = {
         id: 'test',
         type: 'shell',
+        needs: [],
         run: 'echo "hello" ; rm -rf /tmp/foo',
       };
 
-      await executeShell(step, context);
-      expect(warned).toBe(true);
-      console.warn = spy; // Restore
+      await expect(executeShell(step, context)).rejects.toThrow(/Security Error/);
     });
   });
 });

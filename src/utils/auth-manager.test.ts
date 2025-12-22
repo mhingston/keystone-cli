@@ -28,7 +28,9 @@ describe('AuthManager', () => {
     if (fs.existsSync(TEMP_AUTH_FILE)) {
       try {
         fs.rmSync(TEMP_AUTH_FILE);
-      } catch (e) {}
+      } catch (e) {
+        // Ignore likely missing file error
+      }
     }
     global.fetch = originalFetch;
     // Set environment variable for EACH test to be safe

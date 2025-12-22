@@ -15,13 +15,17 @@ describe('WorkflowRegistry', () => {
   beforeAll(() => {
     try {
       mkdirSync(tempWorkflowsDir, { recursive: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore cleanup error
+    }
   });
 
   afterAll(() => {
     try {
       rmSync(tempWorkflowsDir, { recursive: true, force: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore cleanup error
+    }
   });
 
   it('should list workflows in the workflows directory', () => {

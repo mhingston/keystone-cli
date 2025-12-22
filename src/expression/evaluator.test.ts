@@ -74,6 +74,18 @@ describe('ExpressionEvaluator', () => {
     expect(ExpressionEvaluator.evaluate('${{ 1 >= 1 }}', context)).toBe(true);
   });
 
+  test('should support loose equality with type coercion', () => {
+    // == should perform type coercion (unlike ===)
+    expect(ExpressionEvaluator.evaluate('${{ 5 == "5" }}', context)).toBe(true);
+    expect(ExpressionEvaluator.evaluate('${{ 5 === "5" }}', context)).toBe(false);
+    // != should perform type coercion (unlike !==)
+    expect(ExpressionEvaluator.evaluate('${{ 5 != "6" }}', context)).toBe(true);
+    expect(ExpressionEvaluator.evaluate('${{ 5 != "5" }}', context)).toBe(false);
+    // null == undefined should be true
+    const ctxWithNull = { ...context, nullVal: null };
+    expect(ExpressionEvaluator.evaluate('${{ nullVal == undefined }}', ctxWithNull)).toBe(true);
+  });
+
   test('should support more globals and complex expressions', () => {
     expect(ExpressionEvaluator.evaluate('${{ Math.max(1, 2) }}', context)).toBe(2);
     expect(ExpressionEvaluator.evaluate('${{ JSON.stringify({a: 1}) }}', context)).toBe('{"a":1}');
@@ -196,7 +208,7 @@ describe('ExpressionEvaluator', () => {
 
   test('should throw error for forbidden properties', () => {
     expect(() => ExpressionEvaluator.evaluate("${{ inputs['constructor'] }}", context)).toThrow(
-      /Access to property constructor is forbidden/
+      /Access to property.*constructor.*is forbidden/
     );
   });
 
@@ -211,8 +223,9 @@ describe('ExpressionEvaluator', () => {
   });
 
   test('should throw error for method not allowed', () => {
+    // 'reverse' is now a safe method but strings don't have it
     expect(() => ExpressionEvaluator.evaluate("${{ 'abc'.reverse() }}", context)).toThrow(
-      /Method reverse is not allowed/
+      /Cannot call method reverse on string/
     );
   });
 

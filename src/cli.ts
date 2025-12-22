@@ -225,6 +225,7 @@ program
   .description('Execute a workflow')
   .argument('<workflow>', 'Workflow name or path to workflow file')
   .option('-i, --input <key=value...>', 'Input values')
+  .option('--dry-run', 'Show what would be executed without actually running it')
   .action(async (workflowPath, options) => {
     // Parse inputs
     const inputs: Record<string, unknown> = {};
@@ -264,7 +265,11 @@ program
 
       // Import WorkflowRunner dynamically
       const { WorkflowRunner } = await import('./runner/workflow-runner.ts');
-      const runner = new WorkflowRunner(workflow, { inputs, workflowDir: dirname(resolvedPath) });
+      const runner = new WorkflowRunner(workflow, {
+        inputs,
+        workflowDir: dirname(resolvedPath),
+        dryRun: !!options.dryRun,
+      });
 
       const outputs = await runner.run();
 

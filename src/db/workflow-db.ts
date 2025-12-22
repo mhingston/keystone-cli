@@ -1,7 +1,14 @@
 import { Database } from 'bun:sqlite';
+import {
+  StepStatus as StepStatusConst,
+  type StepStatusType,
+  WorkflowStatus as WorkflowStatusConst,
+  type WorkflowStatusType,
+} from '../types/status';
 
-export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'paused';
-export type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'suspended';
+// Re-export for backward compatibility - these map to the database column values
+export type RunStatus = WorkflowStatusType | 'pending' | 'completed';
+export type StepStatus = StepStatusType;
 
 export interface WorkflowRun {
   id: string;
@@ -35,6 +42,7 @@ export class WorkflowDb {
     this.db = new Database(dbPath, { create: true });
     this.db.exec('PRAGMA journal_mode = WAL;'); // Write-ahead logging
     this.db.exec('PRAGMA foreign_keys = ON;'); // Enable foreign key enforcement
+    this.db.exec('PRAGMA busy_timeout = 5000;'); // Retry busy signals for up to 5s
     this.initSchema();
   }
 
@@ -58,7 +66,7 @@ export class WorkflowDb {
    * Retry wrapper for SQLite operations that may encounter SQLITE_BUSY errors
    * during high concurrency scenarios (e.g., foreach loops)
    */
-  private async withRetry<T>(operation: () => T, maxRetries = 5): Promise<T> {
+  private async withRetry<T>(operation: () => T, maxRetries = 10): Promise<T> {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -68,8 +76,8 @@ export class WorkflowDb {
         // Check if this is a SQLITE_BUSY error
         if (this.isSQLiteBusyError(error)) {
           lastError = error instanceof Error ? error : new Error(String(error));
-          // Exponential backoff: 10ms, 20ms, 40ms, 80ms, 160ms
-          const delayMs = 10 * 2 ** attempt;
+          // Exponential backoff with jitter: 20ms base
+          const delayMs = 20 * 1.5 ** attempt + Math.random() * 20;
           await Bun.sleep(delayMs);
           continue;
         }
@@ -262,13 +270,14 @@ export class WorkflowDb {
     return stmt.get(runId, stepId, iterationIndex) as StepExecution | null;
   }
 
-  getStepsByRun(runId: string): StepExecution[] {
+  getStepsByRun(runId: string, limit = -1, offset = 0): StepExecution[] {
     const stmt = this.db.prepare(`
       SELECT * FROM step_executions
       WHERE run_id = ?
       ORDER BY started_at ASC, iteration_index ASC, rowid ASC
+      LIMIT ? OFFSET ?
     `);
-    return stmt.all(runId) as StepExecution[];
+    return stmt.all(runId, limit, offset) as StepExecution[];
   }
 
   close(): void {

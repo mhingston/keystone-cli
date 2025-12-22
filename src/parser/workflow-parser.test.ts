@@ -8,12 +8,16 @@ describe('WorkflowParser', () => {
   const tempDir = join(process.cwd(), 'temp-test-workflows');
   try {
     mkdirSync(tempDir, { recursive: true });
-  } catch (e) {}
+  } catch (e) {
+    // Ignore existing dir error
+  }
 
   afterAll(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore cleanup error
+    }
   });
   describe('topologicalSort', () => {
     test('should sort simple dependencies', () => {

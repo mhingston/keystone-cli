@@ -2,6 +2,12 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { type Interface, createInterface } from 'node:readline';
 import pkg from '../../package.json' with { type: 'json' };
 
+// MCP Protocol version - update when upgrading to newer MCP spec
+export const MCP_PROTOCOL_VERSION = '2024-11-05';
+
+// Maximum buffer size for incoming messages (10MB) to prevent memory exhaustion
+const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+
 interface MCPTool {
   name: string;
   description?: string;
@@ -33,8 +39,19 @@ class StdConfigTransport implements MCPTransport {
   private rl: Interface;
 
   constructor(command: string, args: string[] = [], env: Record<string, string> = {}) {
+    // Filter out sensitive environment variables from the host process
+    // unless they are explicitly provided in the 'env' argument
+    const safeEnv: Record<string, string> = {};
+    const sensitivePattern = /(?:key|token|secret|password|credential|auth|private)/i;
+
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value && !sensitivePattern.test(key)) {
+        safeEnv[key] = value;
+      }
+    }
+
     this.process = spawn(command, args, {
-      env: { ...process.env, ...env },
+      env: { ...safeEnv, ...env },
       stdio: ['pipe', 'pipe', 'inherit'],
     });
 
@@ -53,6 +70,14 @@ class StdConfigTransport implements MCPTransport {
 
   onMessage(callback: (message: MCPResponse) => void): void {
     this.rl.on('line', (line) => {
+      // Safety check for extremely long lines that might have bypassed readline's internal limits
+      if (line.length > MAX_BUFFER_SIZE) {
+        process.stderr.write(
+          `[MCP Error] Received line exceeding maximum size (${line.length} bytes), ignoring.\n`
+        );
+        return;
+      }
+
       try {
         const response = JSON.parse(line) as MCPResponse;
         callback(response);
@@ -78,6 +103,7 @@ class SSETransport implements MCPTransport {
   private onMessageCallback?: (message: MCPResponse) => void;
   private abortController: AbortController | null = null;
   private sessionId?: string;
+  private activeReaders: Set<ReadableStreamDefaultReader<Uint8Array>> = new Set();
 
   constructor(url: string, headers: Record<string, string> = {}) {
     this.url = url;
@@ -140,6 +166,9 @@ class SSETransport implements MCPTransport {
             return;
           }
 
+          // Track reader for cleanup
+          this.activeReaders.add(reader);
+
           // Process the stream in the background
           (async () => {
             let buffer = '';
@@ -160,14 +189,26 @@ class SSETransport implements MCPTransport {
                     resolve();
                   }
                 } else if (!currentEvent.event || currentEvent.event === 'message') {
-                  // If we get a message before an endpoint, assume the URL itself is the endpoint
+                  // If we get a message before an endpoint, verify it's a valid JSON-RPC message
+                  // before assuming the URL itself is the endpoint.
                   // (Common in some MCP over SSE implementations like GitHub's)
                   if (!this.endpoint) {
-                    this.endpoint = this.url;
-                    if (!isResolved) {
-                      isResolved = true;
-                      clearTimeout(timeoutId);
-                      resolve();
+                    try {
+                      const msg = JSON.parse(currentEvent.data || '{}');
+                      if (
+                        msg &&
+                        typeof msg === 'object' &&
+                        (msg.jsonrpc === '2.0' || msg.id !== undefined)
+                      ) {
+                        this.endpoint = this.url;
+                        if (!isResolved) {
+                          isResolved = true;
+                          clearTimeout(timeoutId);
+                          resolve();
+                        }
+                      }
+                    } catch (e) {
+                      // Not a valid JSON message, ignore for endpoint discovery
                     }
                   }
 
@@ -193,7 +234,12 @@ class SSETransport implements MCPTransport {
                   break;
                 }
 
-                buffer += decoder.decode(value, { stream: true });
+                const decoded = decoder.decode(value, { stream: true });
+                if (buffer.length + decoded.length > MAX_BUFFER_SIZE) {
+                  throw new Error(`SSE buffer size limit exceeded (${MAX_BUFFER_SIZE} bytes)`);
+                }
+                buffer += decoded;
+
                 const lines = buffer.split(/\r\n|\r|\n/);
                 buffer = lines.pop() || '';
 
@@ -207,6 +253,12 @@ class SSETransport implements MCPTransport {
                     currentEvent.event = line.substring(6).trim();
                   } else if (line.startsWith('data:')) {
                     const data = line.substring(5).trim();
+                    if (
+                      currentEvent.data &&
+                      currentEvent.data.length + data.length > MAX_BUFFER_SIZE
+                    ) {
+                      throw new Error(`SSE data size limit exceeded (${MAX_BUFFER_SIZE} bytes)`);
+                    }
                     currentEvent.data = currentEvent.data ? `${currentEvent.data}\n${data}` : data;
                   }
                 }
@@ -229,6 +281,8 @@ class SSETransport implements MCPTransport {
                 clearTimeout(timeoutId);
                 reject(err);
               }
+            } finally {
+              this.activeReaders.delete(reader);
             }
           })();
         } catch (err) {
@@ -244,7 +298,7 @@ class SSETransport implements MCPTransport {
       throw new Error('SSE transport not connected or endpoint not received');
     }
 
-    const headers = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...this.headers,
     };
@@ -273,6 +327,8 @@ class SSETransport implements MCPTransport {
     if (contentType?.includes('text/event-stream')) {
       const reader = response.body?.getReader();
       if (reader) {
+        // Track reader for cleanup
+        this.activeReaders.add(reader);
         (async () => {
           let buffer = '';
           const decoder = new TextDecoder();
@@ -302,7 +358,12 @@ class SSETransport implements MCPTransport {
                 break;
               }
 
-              buffer += decoder.decode(value, { stream: true });
+              const decoded = decoder.decode(value, { stream: true });
+              if (buffer.length + decoded.length > MAX_BUFFER_SIZE) {
+                throw new Error(`SSE buffer size limit exceeded (${MAX_BUFFER_SIZE} bytes)`);
+              }
+              buffer += decoded;
+
               const lines = buffer.split(/\r\n|\r|\n/);
               buffer = lines.pop() || '';
 
@@ -316,12 +377,20 @@ class SSETransport implements MCPTransport {
                   currentEvent.event = line.substring(6).trim();
                 } else if (line.startsWith('data:')) {
                   const data = line.substring(5).trim();
+                  if (
+                    currentEvent.data &&
+                    currentEvent.data.length + data.length > MAX_BUFFER_SIZE
+                  ) {
+                    throw new Error(`SSE data size limit exceeded (${MAX_BUFFER_SIZE} bytes)`);
+                  }
                   currentEvent.data = currentEvent.data ? `${currentEvent.data}\n${data}` : data;
                 }
               }
             }
           } catch (e) {
             // Ignore stream errors
+          } finally {
+            this.activeReaders.delete(reader);
           }
         })();
       }
@@ -333,6 +402,11 @@ class SSETransport implements MCPTransport {
   }
 
   close(): void {
+    // Cancel all active readers to prevent memory leaks
+    for (const reader of this.activeReaders) {
+      reader.cancel().catch(() => {});
+    }
+    this.activeReaders.clear();
     this.abortController?.abort();
   }
 }
@@ -401,25 +475,29 @@ export class MCPClient {
     };
 
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, resolve);
-      this.transport.send(message).catch((err) => {
-        this.pendingRequests.delete(id);
-        reject(err);
-      });
-
-      // Add a timeout
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
           reject(new Error(`MCP request timeout: ${method}`));
         }
       }, this.timeout);
+
+      this.pendingRequests.set(id, (response) => {
+        clearTimeout(timeoutId);
+        resolve(response);
+      });
+
+      this.transport.send(message).catch((err) => {
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(id);
+        reject(err);
+      });
     });
   }
 
   async initialize() {
     return this.request('initialize', {
-      protocolVersion: '2024-11-05',
+      protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: {
         name: 'keystone-cli',
@@ -445,6 +523,11 @@ export class MCPClient {
   }
 
   stop() {
+    // Reject all pending requests to prevent hanging callers
+    for (const [id, resolve] of this.pendingRequests) {
+      resolve({ id, error: { code: -1, message: 'MCP client stopped' } });
+    }
+    this.pendingRequests.clear();
     this.transport.close();
   }
 }

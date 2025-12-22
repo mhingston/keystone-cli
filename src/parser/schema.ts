@@ -38,6 +38,7 @@ const ShellStepSchema = BaseStepSchema.extend({
   run: z.string(),
   dir: z.string().optional(),
   env: z.record(z.string()).optional(),
+  allowInsecure: z.boolean().optional(),
 });
 
 // Forward declaration for AgentToolSchema which depends on StepSchema
@@ -71,6 +72,7 @@ const LlmStepSchema = BaseStepSchema.extend({
           env: z.record(z.string()).optional(),
           url: z.string().optional(),
           headers: z.record(z.string()).optional(),
+          timeout: z.number().int().positive().optional(),
         }),
       ])
     )

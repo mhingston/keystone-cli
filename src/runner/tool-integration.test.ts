@@ -28,7 +28,9 @@ describe('llm-executor with tools and MCP', () => {
   beforeAll(() => {
     try {
       mkdirSync(agentsDir, { recursive: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore error
+    }
     const agentContent = `---
 name: tool-test-agent
 tools:
@@ -45,7 +47,9 @@ Test system prompt`;
   afterAll(() => {
     try {
       unlinkSync(agentPath);
-    } catch (e) {}
+    } catch (e) {
+      // Ignore error
+    }
   });
 
   it('should merge tools from agent, step and MCP', async () => {
@@ -90,6 +94,7 @@ Test system prompt`;
       agent: 'tool-test-agent',
       prompt: 'test',
       needs: [],
+      maxIterations: 10,
       tools: [
         {
           name: 'step-tool',
@@ -179,6 +184,7 @@ Test system prompt`;
       agent: 'tool-test-agent',
       prompt: 'test',
       needs: [],
+      maxIterations: 10,
       mcpServers: [{ name: 'test-mcp', command: 'node', args: ['-e', ''] }],
     };
 

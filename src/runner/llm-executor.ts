@@ -3,7 +3,8 @@ import type { ExpressionContext } from '../expression/evaluator';
 import { ExpressionEvaluator } from '../expression/evaluator';
 import { parseAgent, resolveAgentPath } from '../parser/agent-parser';
 import type { AgentTool, LlmStep, Step } from '../parser/schema';
-import { Redactor } from '../utils/redactor';
+import { extractJson } from '../utils/json-parser';
+import { RedactionBuffer, Redactor } from '../utils/redactor';
 import { type LLMMessage, getAdapter } from './llm-adapter';
 import { MCPClient } from './mcp-client';
 import type { MCPManager, MCPServerConfig } from './mcp-manager';
@@ -121,50 +122,54 @@ export async function executeLlmStep(
     }
 
     if (mcpServersToConnect.length > 0) {
-      for (const server of mcpServersToConnect) {
-        let client: MCPClient | undefined;
+      await Promise.all(
+        mcpServersToConnect.map(async (server) => {
+          let client: MCPClient | undefined;
+          const serverName = typeof server === 'string' ? server : server.name;
 
-        if (mcpManager) {
-          client = await mcpManager.getClient(server as string | MCPServerConfig, logger);
-        } else {
-          // Fallback if no manager (should not happen in normal workflow run)
-          if (typeof server === 'string') {
-            logger.error(`  ✗ Cannot reference global MCP server '${server}' without MCPManager`);
-            continue;
-          }
-          logger.log(`  🔌 Connecting to MCP server: ${server.name}`);
           try {
-            client = await MCPClient.createLocal(
-              (server as MCPServerConfig).command || 'node',
-              (server as MCPServerConfig).args || [],
-              (server as MCPServerConfig).env || {}
-            );
-            await client.initialize();
-            localMcpClients.push(client);
+            if (mcpManager) {
+              client = await mcpManager.getClient(server as string | MCPServerConfig, logger);
+            } else {
+              // Fallback if no manager (should not happen in normal workflow run)
+              if (typeof server === 'string') {
+                logger.error(
+                  `  ✗ Cannot reference global MCP server '${server}' without MCPManager`
+                );
+                return;
+              }
+              logger.log(`  🔌 Connecting to MCP server: ${server.name}`);
+              client = await MCPClient.createLocal(
+                (server as MCPServerConfig).command || 'node',
+                (server as MCPServerConfig).args || [],
+                (server as MCPServerConfig).env || {}
+              );
+              await client.initialize();
+              localMcpClients.push(client);
+            }
+
+            if (client) {
+              const mcpTools = await client.listTools();
+              for (const tool of mcpTools) {
+                allTools.push({
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.inputSchema,
+                  source: 'mcp',
+                  mcpClient: client,
+                });
+              }
+            }
           } catch (error) {
             logger.error(
-              `  ✗ Failed to connect to MCP server ${server.name}: ${error instanceof Error ? error.message : String(error)}`
+              `  ✗ Failed to list tools from MCP server ${serverName}: ${error instanceof Error ? error.message : String(error)}`
             );
-            if (client) {
+            if (!mcpManager && client) {
               client.stop();
             }
-            client = undefined;
           }
-        }
-
-        if (client) {
-          const mcpTools = await client.listTools();
-          for (const tool of mcpTools) {
-            allTools.push({
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.inputSchema,
-              source: 'mcp',
-              mcpClient: client,
-            });
-          }
-        }
-      }
+        })
+      );
     }
 
     const llmTools = allTools.map((t) => ({
@@ -210,16 +215,21 @@ export async function executeLlmStep(
       iterations++;
 
       const redactor = new Redactor(context.secrets || {});
+      const redactionBuffer = new RedactionBuffer(redactor);
 
       const response = await adapter.chat(messages, {
         model: resolvedModel,
         tools: llmTools.length > 0 ? llmTools : undefined,
         onStream: (chunk) => {
           if (!step.schema) {
-            process.stdout.write(redactor.redact(chunk));
+            process.stdout.write(redactionBuffer.process(chunk));
           }
         },
       });
+
+      if (!step.schema) {
+        process.stdout.write(redactionBuffer.flush());
+      }
 
       if (response.usage) {
         totalUsage.prompt_tokens += response.usage.prompt_tokens;
@@ -236,7 +246,6 @@ export async function executeLlmStep(
         // If schema is defined, attempt to parse JSON
         if (step.schema && typeof output === 'string') {
           try {
-            const { extractJson } = await import('../utils/json-parser');
             output = extractJson(output) as typeof output;
           } catch (e) {
             throw new Error(
@@ -259,7 +268,18 @@ export async function executeLlmStep(
 
         if (!toolInfo) {
           if (toolCall.function.name === 'ask' && step.allowClarification) {
-            const args = JSON.parse(toolCall.function.arguments) as { question: string };
+            let args: { question: string };
+            try {
+              args = JSON.parse(toolCall.function.arguments);
+            } catch (e) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: 'ask',
+                content: `Error: Invalid JSON in arguments: ${e instanceof Error ? e.message : String(e)}`,
+              });
+              continue;
+            }
 
             if (process.stdin.isTTY) {
               // In TTY, we can use a human step to get the answer immediately
@@ -302,7 +322,18 @@ export async function executeLlmStep(
           continue;
         }
 
-        const args = JSON.parse(toolCall.function.arguments);
+        let args: Record<string, unknown>;
+        try {
+          args = JSON.parse(toolCall.function.arguments);
+        } catch (e) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: `Error: Invalid JSON in arguments: ${e instanceof Error ? e.message : String(e)}`,
+          });
+          continue;
+        }
 
         if (toolInfo.source === 'mcp' && toolInfo.mcpClient) {
           try {

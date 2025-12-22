@@ -53,18 +53,22 @@ export class WorkflowParser {
       const detected = new Set<string>();
 
       // Helper to scan any value for dependencies
-      const scan = (value: unknown) => {
+      const scan = (value: unknown, depth = 0) => {
+        if (depth > 100) {
+          throw new Error('Maximum expression nesting depth exceeded (potential DOS attack)');
+        }
+
         if (typeof value === 'string') {
           for (const dep of ExpressionEvaluator.findStepDependencies(value)) {
             detected.add(dep);
           }
         } else if (Array.isArray(value)) {
           for (const item of value) {
-            scan(item);
+            scan(item, depth + 1);
           }
         } else if (value && typeof value === 'object') {
           for (const val of Object.values(value)) {
-            scan(val);
+            scan(val, depth + 1);
           }
         }
       };
@@ -187,6 +191,15 @@ export class WorkflowParser {
       inDegree.set(step.id, step.needs.length);
     }
 
+    // Build reverse dependency map for O(1) lookups instead of O(n)
+    const dependents = new Map<string, string[]>();
+    for (const step of workflow.steps) {
+      for (const dep of step.needs) {
+        if (!dependents.has(dep)) dependents.set(dep, []);
+        dependents.get(dep)?.push(step.id);
+      }
+    }
+
     // Kahn's algorithm
     const queue: string[] = [];
     const result: string[] = [];
@@ -203,14 +216,12 @@ export class WorkflowParser {
       if (!stepId) continue;
       result.push(stepId);
 
-      // Find all steps that depend on this step
-      for (const step of workflow.steps) {
-        if (step.needs.includes(stepId)) {
-          const newDegree = (inDegree.get(step.id) || 0) - 1;
-          inDegree.set(step.id, newDegree);
-          if (newDegree === 0) {
-            queue.push(step.id);
-          }
+      // Find all steps that depend on this step (O(1) lookup)
+      for (const dependentId of dependents.get(stepId) || []) {
+        const newDegree = (inDegree.get(dependentId) || 0) - 1;
+        inDegree.set(dependentId, newDegree);
+        if (newDegree === 0) {
+          queue.push(dependentId);
         }
       }
     }

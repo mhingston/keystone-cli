@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
-import { WorkflowDb } from '../db/workflow-db.ts';
+import { type RunStatus, WorkflowDb } from '../db/workflow-db.ts';
 import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
 import type { Step, Workflow, WorkflowStep } from '../parser/schema.ts';
@@ -89,6 +89,9 @@ export class WorkflowRunner {
   private mcpManager: MCPManager;
   private options: RunOptions;
   private signalHandler?: (signal: string) => void;
+  private isStopping = false;
+  private hasWarnedMemory = false;
+  private static readonly MEMORY_WARNING_THRESHOLD = 1000;
 
   constructor(workflow: Workflow, options: RunOptions = {}) {
     this.workflow = workflow;
@@ -144,9 +147,11 @@ export class WorkflowRunner {
       const storedInputs = JSON.parse(run.inputs);
       this.inputs = { ...storedInputs, ...this.inputs };
     } catch (error) {
-      throw new Error(
-        `Failed to parse inputs from run: ${error instanceof Error ? error.message : String(error)}`
+      // Log warning but continue with default empty inputs instead of crashing
+      this.logger.warn(
+        `Failed to parse inputs from run ${this.runId}, using defaults: ${error instanceof Error ? error.message : String(error)}`
       );
+      // Keep existing inputs (from resumeInputs or empty)
     }
 
     // Load all step executions for this run
@@ -190,7 +195,15 @@ export class WorkflowRunner {
           if (exec.iteration_index === null) continue; // Skip parent step record
 
           if (exec.status === 'success' || exec.status === 'skipped') {
-            const output = exec.output ? JSON.parse(exec.output) : null;
+            let output: unknown = null;
+            try {
+              output = exec.output ? JSON.parse(exec.output) : null;
+            } catch (error) {
+              this.logger.warn(
+                `Failed to parse output for step ${stepId} iteration ${exec.iteration_index}: ${error}`
+              );
+              output = { error: 'Failed to parse output' };
+            }
             items[exec.iteration_index] = {
               output,
               outputs:
@@ -261,7 +274,13 @@ export class WorkflowRunner {
         // Single execution step
         const exec = stepExecutions[0];
         if (exec.status === 'success' || exec.status === 'skipped' || exec.status === 'suspended') {
-          const output = exec.output ? JSON.parse(exec.output) : null;
+          let output: unknown = null;
+          try {
+            output = exec.output ? JSON.parse(exec.output) : null;
+          } catch (error) {
+            this.logger.warn(`Failed to parse output for step ${stepId}: ${error}`);
+            output = { error: 'Failed to parse output' };
+          }
           this.stepContexts.set(stepId, {
             output,
             outputs:
@@ -286,18 +305,9 @@ export class WorkflowRunner {
    */
   private setupSignalHandlers(): void {
     const handler = async (signal: string) => {
+      if (this.isStopping) return;
       this.logger.log(`\n\n🛑 Received ${signal}. Cleaning up...`);
-      try {
-        await this.db.updateRunStatus(
-          this.runId,
-          'failed',
-          undefined,
-          `Cancelled by user (${signal})`
-        );
-        this.logger.log('✓ Run status updated to failed');
-      } catch (error) {
-        this.logger.error(`Error during cleanup: ${error}`);
-      }
+      await this.stop('failed', `Cancelled by user (${signal})`);
 
       // Only exit if not embedded
       if (!this.options.preventExit) {
@@ -309,6 +319,28 @@ export class WorkflowRunner {
 
     process.on('SIGINT', handler);
     process.on('SIGTERM', handler);
+  }
+
+  /**
+   * Stop the runner and cleanup resources
+   */
+  public async stop(status: RunStatus = 'failed', error?: string): Promise<void> {
+    if (this.isStopping) return;
+    this.isStopping = true;
+
+    try {
+      this.removeSignalHandlers();
+
+      // Update run status in DB
+      await this.db.updateRunStatus(this.runId, status, undefined, error);
+
+      // Stop all MCP clients
+      await this.mcpManager.stopAll();
+
+      this.db.close();
+    } catch (err) {
+      this.logger.error(`Error during stop/cleanup: ${err}`);
+    }
   }
 
   /**
@@ -611,6 +643,13 @@ export class WorkflowRunner {
 
       this.logger.log(`  ⤷ Executing step ${step.id} for ${items.length} items`);
 
+      if (items.length > WorkflowRunner.MEMORY_WARNING_THRESHOLD && !this.hasWarnedMemory) {
+        this.logger.warn(
+          `  ⚠️  Warning: Large foreach loop detected (${items.length} items). This may consume significant memory and lead to instability.`
+        );
+        this.hasWarnedMemory = true;
+      }
+
       // Evaluate concurrency if it's an expression, otherwise use the number directly
       let concurrencyLimit = items.length;
       if (step.concurrency !== undefined) {
@@ -667,7 +706,15 @@ export class WorkflowRunner {
                 existingExec &&
                 (existingExec.status === 'success' || existingExec.status === 'skipped')
               ) {
-                const output = existingExec.output ? JSON.parse(existingExec.output) : null;
+                let output: unknown = null;
+                try {
+                  output = existingExec.output ? JSON.parse(existingExec.output) : null;
+                } catch (error) {
+                  this.logger.warn(
+                    `Failed to parse output for step ${step.id} iteration ${i}: ${error}`
+                  );
+                  output = { error: 'Failed to parse output' };
+                }
                 itemResults[i] = {
                   output,
                   outputs:

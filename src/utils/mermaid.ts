@@ -71,14 +71,6 @@ export function generateMermaidGraph(workflow: Workflow): string {
   return lines.join('\n');
 }
 
-/**
- * Renders a workflow as a local ASCII graph using dagre for layout.
- */
-export async function renderMermaidAsAscii(_mermaid: string): Promise<string | null> {
-  // We no longer use the mermaid string for ASCII, we use the workflow object directly.
-  return null;
-}
-
 export function renderWorkflowAsAscii(workflow: Workflow): string {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: 'LR', nodesep: 2, edgesep: 1, ranksep: 4 });

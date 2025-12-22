@@ -1,27 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, rmdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Config } from '../parser/config-schema';
 import { ConfigLoader } from './config-loader';
 
 describe('ConfigLoader', () => {
-  const tempDir = join(process.cwd(), '.keystone-test');
-
   afterEach(() => {
     ConfigLoader.clear();
-    if (existsSync(tempDir)) {
-      try {
-        // Simple recursive delete
-        const files = ['config.yaml', 'config.yml'];
-        for (const file of files) {
-          const path = join(tempDir, file);
-          if (existsSync(path)) {
-            // fs.unlinkSync(path);
-          }
-        }
-        // rmdirSync(tempDir);
-      } catch (e) {}
-    }
   });
 
   it('should allow setting and clearing config', () => {
@@ -33,6 +16,7 @@ describe('ConfigLoader', () => {
       model_mappings: {},
       storage: { retention_days: 30 },
       workflows_directory: 'workflows',
+      mcp_servers: {},
     };
 
     ConfigLoader.setConfig(mockConfig);
@@ -58,6 +42,7 @@ describe('ConfigLoader', () => {
       },
       storage: { retention_days: 30 },
       workflows_directory: 'workflows',
+      mcp_servers: {},
     };
     ConfigLoader.setConfig(mockConfig);
 

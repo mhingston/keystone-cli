@@ -18,7 +18,9 @@ describe('agent-parser', () => {
   afterAll(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore cleanup error
+    }
   });
 
   describe('parseAgent', () => {
@@ -100,7 +102,9 @@ Prompt`;
       const agentsDir = join(process.cwd(), '.keystone', 'workflows', 'agents');
       try {
         mkdirSync(agentsDir, { recursive: true });
-      } catch (e) {}
+      } catch (e) {
+        // Ignore cleanup error
+      }
 
       const filePath = join(agentsDir, 'my-agent.md');
       writeFileSync(filePath, '---name: my-agent---');

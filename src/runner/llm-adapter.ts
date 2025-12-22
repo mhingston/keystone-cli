@@ -1,6 +1,9 @@
 import { AuthManager, COPILOT_HEADERS } from '../utils/auth-manager';
 import { ConfigLoader } from '../utils/config-loader';
 
+// Maximum response size to prevent memory exhaustion (1MB)
+const MAX_RESPONSE_SIZE = 1024 * 1024;
+
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
@@ -112,6 +115,9 @@ export class OpenAIAdapter implements LLMAdapter {
             const delta = data.choices[0].delta;
 
             if (delta.content) {
+              if (fullContent.length + delta.content.length > MAX_RESPONSE_SIZE) {
+                throw new Error(`LLM response exceeds maximum size of ${MAX_RESPONSE_SIZE} bytes`);
+              }
               fullContent += delta.content;
               options.onStream?.(delta.content);
             }
@@ -287,7 +293,8 @@ export class AnthropicAdapter implements LLMAdapter {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
-      const toolCalls: { id: string; name: string; inputString: string }[] = [];
+      // Track tool calls by content block index for robust correlation
+      const toolCallsMap = new Map<number, { id: string; name: string; inputString: string }>();
 
       while (true) {
         const { done, value } = await reader.read();
@@ -302,21 +309,43 @@ export class AnthropicAdapter implements LLMAdapter {
           try {
             const data = JSON.parse(line.slice(6));
             if (data.type === 'content_block_delta' && data.delta?.text) {
+              if (fullContent.length + data.delta.text.length > MAX_RESPONSE_SIZE) {
+                throw new Error(`LLM response exceeds maximum size of ${MAX_RESPONSE_SIZE} bytes`);
+              }
               fullContent += data.delta.text;
               options.onStream?.(data.delta.text);
             }
 
+            // Track tool calls by their index in the content blocks
             if (data.type === 'content_block_start' && data.content_block?.type === 'tool_use') {
-              toolCalls.push({
-                id: data.content_block.id,
-                name: data.content_block.name,
+              const index = data.index ?? toolCallsMap.size;
+              toolCallsMap.set(index, {
+                id: data.content_block.id || '',
+                name: data.content_block.name || '',
                 inputString: '',
               });
             }
 
-            if (data.type === 'tool_use_delta' && data.delta?.partial_json) {
-              const lastTool = toolCalls[toolCalls.length - 1];
-              if (lastTool) lastTool.inputString += data.delta.partial_json;
+            // Handle tool input streaming - Anthropic uses content_block_delta with input_json_delta
+            if (
+              data.type === 'content_block_delta' &&
+              data.delta?.type === 'input_json_delta' &&
+              data.delta?.partial_json
+            ) {
+              const index = data.index;
+              const toolCall = toolCallsMap.get(index);
+              if (toolCall) {
+                toolCall.inputString += data.delta.partial_json;
+              }
+            }
+
+            // Update tool call ID if it arrives later (some edge cases)
+            if (data.type === 'content_block_delta' && data.content_block?.id) {
+              const index = data.index;
+              const toolCall = toolCallsMap.get(index);
+              if (toolCall && !toolCall.id) {
+                toolCall.id = data.content_block.id;
+              }
             }
           } catch (e) {
             // Ignore parse errors
@@ -324,15 +353,20 @@ export class AnthropicAdapter implements LLMAdapter {
         }
       }
 
+      // Convert map to array and filter out incomplete tool calls
+      const toolCalls = Array.from(toolCallsMap.values())
+        .filter((tc) => tc.id && tc.name) // Only include complete tool calls
+        .map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.name, arguments: tc.inputString },
+        }));
+
       return {
         message: {
           role: 'assistant',
           content: fullContent || null,
-          tool_calls: toolCalls.map((tc) => ({
-            id: tc.id,
-            type: 'function',
-            function: { name: tc.name, arguments: tc.inputString },
-          })),
+          tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
         },
       };
     }
@@ -443,6 +477,9 @@ export class CopilotAdapter implements LLMAdapter {
             const delta = data.choices[0].delta;
 
             if (delta.content) {
+              if (fullContent.length + delta.content.length > MAX_RESPONSE_SIZE) {
+                throw new Error(`LLM response exceeds maximum size of ${MAX_RESPONSE_SIZE} bytes`);
+              }
               fullContent += delta.content;
               options.onStream?.(delta.content);
             }

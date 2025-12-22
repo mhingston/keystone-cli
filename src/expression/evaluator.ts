@@ -56,18 +56,34 @@ interface ObjectExpression extends jsep.Expression {
 }
 
 export class ExpressionEvaluator {
+  // Pre-compiled regex for performance - handles nested braces (up to 3 levels)
+  private static readonly EXPRESSION_REGEX =
+    /\$\{\{(?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*\}\}/g;
+  private static readonly SINGLE_EXPRESSION_REGEX =
+    /^\s*\$\{\{(?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*\}\}\s*$/;
+  // Non-global version for hasExpression to avoid lastIndex state issues with global regex
+  private static readonly HAS_EXPRESSION_REGEX =
+    /\$\{\{(?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*\}\}/;
+
+  // Forbidden properties for security - prevents prototype pollution
+  private static readonly FORBIDDEN_PROPERTIES = new Set([
+    'constructor',
+    '__proto__',
+    'prototype',
+    '__defineGetter__',
+    '__defineSetter__',
+    '__lookupGetter__',
+    '__lookupSetter__',
+  ]);
+
   /**
    * Evaluate a string that may contain ${{ }} expressions
    */
   static evaluate(template: string, context: ExpressionContext): unknown {
-    // Improved regex that handles nested braces (up to 2 levels of nesting)
-    // Matches ${{ ... }} and allows { ... } inside for object literals and arrow functions
-    const expressionRegex = /\$\{\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\}/g;
+    const expressionRegex = new RegExp(ExpressionEvaluator.EXPRESSION_REGEX.source, 'g');
 
     // If the entire string is a single expression, return the evaluated value directly
-    const singleExprMatch = template.match(
-      /^\s*\$\{\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\}\s*$/
-    );
+    const singleExprMatch = template.match(ExpressionEvaluator.SINGLE_EXPRESSION_REGEX);
     if (singleExprMatch) {
       // Extract the expression content between ${{ and }}
       const expr = singleExprMatch[0].replace(/^\s*\$\{\{\s*|\s*\}\}\s*$/g, '');
@@ -91,7 +107,7 @@ export class ExpressionEvaluator {
           'exitCode' in result &&
           typeof (result as Record<string, unknown>).stdout === 'string'
         ) {
-          return (result as Record<string, unknown>).stdout.trim();
+          return ((result as Record<string, unknown>).stdout as string).trim();
         }
         return JSON.stringify(result, null, 2);
       }
@@ -150,7 +166,7 @@ export class ExpressionEvaluator {
           Boolean: Boolean,
           Number: Number,
           String: String,
-          Array: Array,
+          // Array: Array, // Disabled for security (DoS prevention)
           Object: Object,
           Math: Math,
           Date: Date,
@@ -162,21 +178,21 @@ export class ExpressionEvaluator {
           undefined: undefined,
           null: null,
           NaN: Number.NaN,
-          Infinity: Number.Infinity,
+          Infinity: Number.POSITIVE_INFINITY,
           true: true,
           false: false,
           escape: escapeShellArg, // Shell argument escaping for safe command execution
         };
 
-        // Check safe globals first
-        if (name in safeGlobals) {
-          return safeGlobals[name];
-        }
-
         // Check if it's an arrow function parameter (stored directly in context)
         const contextAsRecord = context as Record<string, unknown>;
         if (name in contextAsRecord && contextAsRecord[name] !== undefined) {
           return contextAsRecord[name];
+        }
+
+        // Check safe globals
+        if (name in safeGlobals) {
+          return safeGlobals[name];
         }
 
         // Root context variables
@@ -218,10 +234,21 @@ export class ExpressionEvaluator {
 
         const propertyAsRecord = object as Record<string | number, unknown>;
 
-        // Security check for sensitive properties
-        const forbiddenProperties = ['constructor', '__proto__', 'prototype'];
-        if (typeof property === 'string' && forbiddenProperties.includes(property)) {
-          throw new Error(`Access to property ${property} is forbidden`);
+        // Security check for sensitive properties - normalize and check
+        if (typeof property === 'string') {
+          // Normalize the property name to catch bypass attempts (e.g., via unicode or encoded strings)
+          const normalizedProperty = property.normalize('NFKC').toLowerCase();
+          const propertyLower = property.toLowerCase();
+
+          // Check both original and normalized forms
+          if (
+            ExpressionEvaluator.FORBIDDEN_PROPERTIES.has(property) ||
+            ExpressionEvaluator.FORBIDDEN_PROPERTIES.has(propertyLower) ||
+            normalizedProperty.includes('proto') ||
+            normalizedProperty.includes('constructor')
+          ) {
+            throw new Error(`Access to property "${property}" is forbidden for security reasons`);
+          }
         }
 
         return propertyAsRecord[property];
@@ -253,11 +280,15 @@ export class ExpressionEvaluator {
           case '%':
             return (left as number) % (right as number);
           case '==':
-            return left === right;
+            // Use loose equality to match non-programmer expectations (e.g. "5" == 5)
+            // Strict equality is available via ===
+            // biome-ignore lint/suspicious/noDoubleEquals: Intentional loose equality for expression language
+            return left == right;
           case '===':
             return left === right;
           case '!=':
-            return left !== right;
+            // biome-ignore lint/suspicious/noDoubleEquals: Intentional loose inequality for expression language
+            return left != right;
           case '!==':
             return left !== right;
           case '<':
@@ -290,7 +321,7 @@ export class ExpressionEvaluator {
       }
 
       case 'LogicalExpression': {
-        const logicalNode = node as jsep.LogicalExpression;
+        const logicalNode = node as unknown as { left: ASTNode; right: ASTNode; operator: string };
         const left = ExpressionEvaluator.evaluateNode(logicalNode.left, context);
 
         // Short-circuit evaluation
@@ -314,7 +345,9 @@ export class ExpressionEvaluator {
 
       case 'ArrayExpression': {
         const arrayNode = node as jsep.ArrayExpression;
-        return arrayNode.elements.map((elem) => ExpressionEvaluator.evaluateNode(elem, context));
+        return arrayNode.elements.map((elem) =>
+          elem ? ExpressionEvaluator.evaluateNode(elem, context) : null
+        );
       }
 
       case 'ObjectExpression': {
@@ -337,7 +370,14 @@ export class ExpressionEvaluator {
         if (callNode.callee.type === 'MemberExpression') {
           const memberNode = callNode.callee as jsep.MemberExpression;
           const object = ExpressionEvaluator.evaluateNode(memberNode.object, context);
-          const methodName = (memberNode.property as jsep.Identifier).name;
+
+          let methodName: string;
+          if (memberNode.computed) {
+            const evaluated = ExpressionEvaluator.evaluateNode(memberNode.property, context);
+            methodName = String(evaluated);
+          } else {
+            methodName = (memberNode.property as jsep.Identifier).name;
+          }
 
           // Evaluate arguments, handling arrow functions specially
           const args = callNode.arguments.map((arg) => {
@@ -350,8 +390,9 @@ export class ExpressionEvaluator {
             return ExpressionEvaluator.evaluateNode(arg, context);
           });
 
-          // Allow only safe array/string methods
+          // Allow only safe array/string/number methods
           const safeMethods = [
+            // Array methods
             'map',
             'filter',
             'reduce',
@@ -364,27 +405,56 @@ export class ExpressionEvaluator {
             'slice',
             'concat',
             'join',
+            'flat',
+            'flatMap',
+            'reverse',
+            'sort',
+            // String methods
             'split',
             'toLowerCase',
             'toUpperCase',
             'trim',
+            'trimStart',
+            'trimEnd',
             'startsWith',
             'endsWith',
             'replace',
+            'replaceAll',
             'match',
             'toString',
-            'length',
+            'charAt',
+            'charCodeAt',
+            'substring',
+            'substr',
+            'padStart',
+            'padEnd',
+            // 'repeat', // Disabled for security (DoS prevention)
+            'normalize',
+            'localeCompare',
+            // Number methods
+            'toFixed',
+            'toPrecision',
+            'toExponential',
+            'toLocaleString',
+            // Math methods
             'max',
             'min',
             'abs',
             'round',
             'floor',
             'ceil',
+            'pow',
+            'sqrt',
+            'random',
+            // Object/JSON methods
             'stringify',
             'parse',
             'keys',
             'values',
             'entries',
+            'hasOwnProperty',
+            // General
+            'length',
           ];
 
           if (!safeMethods.includes(methodName)) {
@@ -394,7 +464,10 @@ export class ExpressionEvaluator {
           // For methods that take callbacks (map, filter, etc.), we need special handling
           // Since we can't pass AST nodes directly, we'll handle the most common patterns
           if (object && typeof (object as Record<string, unknown>)[methodName] === 'function') {
-            return (object as Record<string, unknown>)[methodName](...args);
+            const method = (object as Record<string, unknown>)[methodName] as (
+              ...args: unknown[]
+            ) => unknown;
+            return method.call(object, ...args);
           }
 
           throw new Error(`Cannot call method ${methodName} on ${typeof object}`);
@@ -466,8 +539,8 @@ export class ExpressionEvaluator {
    * Check if a string contains any expressions
    */
   static hasExpression(str: string): boolean {
-    // Use same improved regex that handles nested braces (up to 2 levels)
-    return /\$\{\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\}/.test(str);
+    // Use non-global regex to avoid lastIndex state issues
+    return ExpressionEvaluator.HAS_EXPRESSION_REGEX.test(str);
   }
 
   /**
@@ -498,7 +571,7 @@ export class ExpressionEvaluator {
    */
   static findStepDependencies(template: string): string[] {
     const dependencies = new Set<string>();
-    const expressionRegex = /\$\{\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\}/g;
+    const expressionRegex = new RegExp(ExpressionEvaluator.EXPRESSION_REGEX.source, 'g');
     const matches = template.matchAll(expressionRegex);
 
     for (const match of matches) {

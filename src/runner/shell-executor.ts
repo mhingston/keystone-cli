@@ -60,23 +60,43 @@ export interface ShellResult {
  * Check if a command contains potentially dangerous shell metacharacters
  * Returns true if the command looks like it might contain unescaped user input
  */
-export function detectShellInjectionRisk(command: string): boolean {
-  // Common shell metacharacters that indicate potential injection
-  const dangerousPatterns = [
-    /;[\s]*\w/, // Command chaining with semicolon
-    /\|[\s]*\w/, // Piping (legitimate uses exist, but worth warning)
-    /&&[\s]*\w/, // AND chaining
-    /\|\|[\s]*\w/, // OR chaining
-    /`[^`]+`/, // Command substitution with backticks
-    /\$\([^)]+\)/, // Command substitution with $()
-    />\s*\/dev\/null/, // Output redirection (common in attacks)
-    /rm\s+-rf/, // Dangerous deletion command
-    />\s*[~\/]/, // File redirection to suspicious paths
-    /curl\s+.*\|\s*sh/, // Download and execute pattern
-    /wget\s+.*\|\s*sh/, // Download and execute pattern
-  ];
+// Pre-compiled dangerous patterns for performance
+// These patterns are designed to detect likely injection attempts while minimizing false positives
+const DANGEROUS_PATTERNS: RegExp[] = [
+  /;\s*\w/, // Command chaining with semicolon (e.g., `; rm -rf /`)
+  /\|\s*(?:sh|bash|zsh|ksh|dash|csh|python|python[23]?|node|ruby|perl|php|lua)\b/, // Piping to shell/interpreter (download-and-execute pattern)
+  /\|\s*(?:sudo|su)\b/, // Piping to privilege escalation
+  /&&\s*(?:rm|chmod|chown|mkfs|dd)\b/, // AND chaining with destructive commands
+  /\|\|\s*(?:rm|chmod|chown|mkfs|dd)\b/, // OR chaining with destructive commands
+  /`[^`]+`/, // Command substitution with backticks
+  /\$\([^)]+\)/, // Command substitution with $()
+  />\s*\/dev\/null\s*2>&1\s*&/, // Backgrounding with hidden output (often malicious)
+  /rm\s+(-rf?|--recursive)\s+[\/~]/, // Dangerous recursive deletion
+  />\s*\/etc\//, // Writing to /etc
+  /curl\s+.*\|\s*(?:sh|bash)/, // Download and execute pattern
+  /wget\s+.*\|\s*(?:sh|bash)/, // Download and execute pattern
+  // Additional patterns for more comprehensive detection
+  /base64\s+(-d|--decode)\s*\|/, // Base64 decode piped to another command
+  /\beval\s+["'\$]/, // eval with variable/string (likely injection)
+  /\bexec\s+\d+[<>]/, // exec with file descriptor redirection
+  /python[23]?\s+-c\s*["']/, // Python one-liner with quoted code
+  /node\s+(-e|--eval)\s*["']/, // Node.js one-liner with quoted code
+  /perl\s+-e\s*["']/, // Perl one-liner with quoted code
+  /ruby\s+-e\s*["']/, // Ruby one-liner with quoted code
+  /\bdd\s+.*\bof=\//, // dd write operation to root paths
+  /chmod\s+[0-7]{3,4}\s+\/(?!tmp)/, // chmod on root paths (except /tmp)
+  /mkfs\./, // Filesystem formatting commands
+  /\$\{[^}]+\}/, // Parameter expansion (can be used for obfuscation)
+  /\\x[0-9a-fA-F]{2}/, // Hex escaping attempts
+  /\\[0-7]{3}/, // Octal escaping attempts
+  /<<<\s*/, // Here-strings (can be used for injection)
+  /\d*<&\s*\d*/, // File descriptor duplication
+  /\d*>&-\s*/, // Closing file descriptors
+];
 
-  return dangerousPatterns.some((pattern) => pattern.test(command));
+export function detectShellInjectionRisk(command: string): boolean {
+  // Check against pre-compiled patterns
+  return DANGEROUS_PATTERNS.some((pattern) => pattern.test(command));
 }
 
 /**
@@ -91,9 +111,9 @@ export async function executeShell(
   const command = ExpressionEvaluator.evaluateString(step.run, context);
 
   // Check for potential shell injection risks
-  if (detectShellInjectionRisk(command)) {
-    logger.warn(
-      `\n⚠️  WARNING: Command contains shell metacharacters that may indicate injection risk:\n   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}\n   To safely interpolate user inputs, use the escape() function.\n   Example: run: echo \${{ escape(inputs.user_input) }}\n`
+  if (!step.allowInsecure && detectShellInjectionRisk(command)) {
+    throw new Error(
+      `Security Error: Command contains shell metacharacters that may indicate injection risk:\n   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}\n   To execute this command safely, ensure all user inputs are wrapped in \${{ escape(input) }}.\n\n   If you trust this workflow and its inputs, you may need to refactor the step to avoid complex shell chains or use a stricter input validation.\n   Or, if you really trust this command, you can set 'allowInsecure: true' in the step definition.`
     );
   }
 
@@ -107,31 +127,78 @@ export async function executeShell(
 
   // Set working directory if specified
   const cwd = step.dir ? ExpressionEvaluator.evaluateString(step.dir, context) : undefined;
+  const mergedEnv = Object.keys(env).length > 0 ? { ...Bun.env, ...env } : Bun.env;
+
+  // Safe Fast Path: If command contains only safe characters (alphanumeric, -, _, ., /) and spaces,
+  // we can split it and execute directly without a shell.
+  // This completely eliminates shell injection risks for simple commands.
+  const isSimpleCommand = /^[a-zA-Z0-9_\-./]+(?: [a-zA-Z0-9_\-./]+)*$/.test(command);
+
+  // Common shell builtins that must run in a shell
+  const splitArgs = command.split(/\s+/);
+  const cmd = splitArgs[0];
+  const isBuiltin = [
+    'exit',
+    'cd',
+    'export',
+    'unset',
+    'source',
+    '.',
+    'alias',
+    'unalias',
+    'eval',
+    'set',
+  ].includes(cmd);
 
   try {
-    // Execute command using sh -c to allow shell parsing
-    let proc = $`sh -c ${command}`.quiet();
+    let stdoutString = '';
+    let stderrString = '';
+    let exitCode = 0;
 
-    // Apply environment variables - merge with Bun.env to preserve system PATH and other variables
-    if (Object.keys(env).length > 0) {
-      proc = proc.env({ ...Bun.env, ...env });
+    if (isSimpleCommand && !isBuiltin) {
+      // split by spaces
+      const args = splitArgs.slice(1);
+      if (!cmd) throw new Error('Empty command');
+
+      const proc = Bun.spawn([cmd, ...args], {
+        cwd,
+        env: mergedEnv,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      const stdoutText = await new Response(proc.stdout).text();
+      const stderrText = await new Response(proc.stderr).text();
+
+      // Wait for exit
+      exitCode = await proc.exited;
+      stdoutString = stdoutText;
+      stderrString = stderrText;
+    } else {
+      // Fallback to sh -c for complex commands (pipes, redirects, quotes)
+      // Execute command using sh -c to allow shell parsing
+      let proc = $`sh -c ${command}`.quiet();
+
+      // Apply environment variables - merge with Bun.env to preserve system PATH and other variables
+      if (Object.keys(env).length > 0) {
+        proc = proc.env({ ...Bun.env, ...env });
+      }
+
+      // Apply working directory
+      if (cwd) {
+        proc = proc.cwd(cwd);
+      }
+
+      // Execute and capture result
+      const result = await proc;
+      stdoutString = await result.text();
+      stderrString = result.stderr ? result.stderr.toString() : '';
+      exitCode = result.exitCode;
     }
-
-    // Apply working directory
-    if (cwd) {
-      proc = proc.cwd(cwd);
-    }
-
-    // Execute and capture result
-    const result = await proc;
-
-    const stdout = await result.text();
-    const stderr = result.stderr ? result.stderr.toString() : '';
-    const exitCode = result.exitCode;
 
     return {
-      stdout,
-      stderr,
+      stdout: stdoutString,
+      stderr: stderrString,
       exitCode,
     };
   } catch (error) {

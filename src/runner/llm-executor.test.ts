@@ -146,7 +146,9 @@ describe('llm-executor', () => {
 
     try {
       mkdirSync(agentsDir, { recursive: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore error during cleanup
+    }
     const agentContent = `---
 name: test-agent
 model: gpt-4
@@ -196,6 +198,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'hello',
       needs: [],
+      maxIterations: 10,
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
@@ -216,6 +219,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'trigger tool',
       needs: [],
+      maxIterations: 10,
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
 
@@ -242,6 +246,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'give me json',
       needs: [],
+      maxIterations: 10,
       schema: {
         type: 'object',
         properties: {
@@ -268,6 +273,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'give me invalid json',
       needs: [],
+      maxIterations: 10,
       schema: { type: 'object' },
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
@@ -306,6 +312,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'trigger unknown tool',
       needs: [],
+      maxIterations: 10,
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
@@ -359,6 +366,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'hello',
       needs: [],
+      maxIterations: 10,
       mcpServers: [{ name: 'fail-mcp', command: 'node', args: [] }],
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
@@ -379,7 +387,7 @@ You are a test agent.`;
     );
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to connect to MCP server fail-mcp')
+      expect.stringContaining('Failed to list tools from MCP server fail-mcp')
     );
     createLocalSpy.mockRestore();
     consoleSpy.mockRestore();
@@ -392,6 +400,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'trigger mcp tool',
       needs: [],
+      maxIterations: 10,
       mcpServers: [{ name: 'test-mcp', command: 'node', args: [] }],
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
@@ -446,13 +455,15 @@ You are a test agent.`;
   it('should use global MCP servers when useGlobalMcp is true', async () => {
     ConfigLoader.setConfig({
       mcp_servers: {
-        'global-mcp': { command: 'node', args: ['server.js'] },
+        'global-mcp': { type: 'local', command: 'node', args: ['server.js'], timeout: 1000 },
       },
       providers: {
-        openai: { apiKey: 'test' },
+        openai: { type: 'openai', api_key_env: 'OPENAI_API_KEY' },
       },
       model_mappings: {},
       default_provider: 'openai',
+      storage: { retention_days: 30 },
+      workflows_directory: 'workflows',
     });
 
     const manager = new MCPManager();
@@ -462,6 +473,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'hello',
       needs: [],
+      maxIterations: 10,
       useGlobalMcp: true,
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
@@ -510,6 +522,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'trigger adhoc tool',
       needs: [],
+      maxIterations: 10,
       tools: [
         {
           name: 'adhoc-tool',
@@ -547,6 +560,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'hello',
       needs: [],
+      maxIterations: 10,
       mcpServers: ['some-global-server'],
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
@@ -571,11 +585,13 @@ You are a test agent.`;
   it('should not add global MCP server if already explicitly listed', async () => {
     ConfigLoader.setConfig({
       mcp_servers: {
-        'test-mcp': { command: 'node', args: ['server.js'] },
+        'test-mcp': { type: 'local', command: 'node', args: ['server.js'], timeout: 1000 },
       },
-      providers: { openai: { apiKey: 'test' } },
+      providers: { openai: { type: 'openai', api_key_env: 'OPENAI_API_KEY' } },
       model_mappings: {},
       default_provider: 'openai',
+      storage: { retention_days: 30 },
+      workflows_directory: 'workflows',
     });
 
     const manager = new MCPManager();
@@ -585,6 +601,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: 'hello',
       needs: [],
+      maxIterations: 10,
       useGlobalMcp: true,
       mcpServers: [{ name: 'test-mcp', command: 'node', args: ['local.js'] }],
     };
@@ -636,6 +653,7 @@ You are a test agent.`;
       agent: 'test-agent',
       prompt: '${{ steps.prev.output }}' as unknown as string,
       needs: [],
+      maxIterations: 10,
     };
     const context: ExpressionContext = {
       inputs: {},

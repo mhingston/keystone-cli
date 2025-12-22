@@ -26,6 +26,9 @@ export const COPILOT_HEADERS = {
 
 const GITHUB_CLIENT_ID = '013444988716b5155f4c'; // GitHub CLI Client ID
 
+/** Buffer time in seconds before token expiry to trigger refresh (5 minutes) */
+const TOKEN_REFRESH_BUFFER_SECONDS = 300;
+
 export class AuthManager {
   private static getAuthPath(): string {
     if (process.env.KEYSTONE_AUTH_PATH) {
@@ -53,7 +56,14 @@ export class AuthManager {
   static save(data: AuthData): void {
     const path = AuthManager.getAuthPath();
     const current = AuthManager.load();
-    writeFileSync(path, JSON.stringify({ ...current, ...data }, null, 2));
+    try {
+      writeFileSync(path, JSON.stringify({ ...current, ...data }, null, 2));
+    } catch (error) {
+      console.error(
+        'Failed to save auth data:',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   }
 
   static async initGitHubDeviceLogin(): Promise<{
@@ -156,7 +166,7 @@ export class AuthManager {
     if (
       auth.copilot_token &&
       auth.copilot_expires_at &&
-      auth.copilot_expires_at > Date.now() / 1000 + 300
+      auth.copilot_expires_at > Date.now() / 1000 + TOKEN_REFRESH_BUFFER_SECONDS
     ) {
       return auth.copilot_token;
     }

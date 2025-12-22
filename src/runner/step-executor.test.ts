@@ -49,13 +49,17 @@ describe('step-executor', () => {
   beforeAll(() => {
     try {
       mkdirSync(tempDir, { recursive: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore error
+    }
   });
 
   afterAll(() => {
     try {
       rmSync(tempDir, { recursive: true, force: true });
-    } catch (e) {}
+    } catch (e) {
+      // Ignore error
+    }
   });
 
   beforeEach(() => {
@@ -70,6 +74,7 @@ describe('step-executor', () => {
       const step: ShellStep = {
         id: 's1',
         type: 'shell',
+        needs: [],
         run: 'echo "hello"',
       };
       const result = await executeStep(step, context);
@@ -81,6 +86,7 @@ describe('step-executor', () => {
       const step: ShellStep = {
         id: 's1',
         type: 'shell',
+        needs: [],
         run: 'exit 1',
       };
       const result = await executeStep(step, context);
@@ -95,6 +101,7 @@ describe('step-executor', () => {
       const writeStep: FileStep = {
         id: 'w1',
         type: 'file',
+        needs: [],
         op: 'write',
         path: filePath,
         content: 'hello file',
@@ -105,6 +112,7 @@ describe('step-executor', () => {
       const readStep: FileStep = {
         id: 'r1',
         type: 'file',
+        needs: [],
         op: 'read',
         path: filePath,
       };
@@ -119,6 +127,7 @@ describe('step-executor', () => {
         {
           id: 'w1',
           type: 'file',
+          needs: [],
           op: 'write',
           path: filePath,
           content: 'line 1\n',
@@ -130,6 +139,7 @@ describe('step-executor', () => {
         {
           id: 'a1',
           type: 'file',
+          needs: [],
           op: 'append',
           path: filePath,
           content: 'line 2',
@@ -145,6 +155,7 @@ describe('step-executor', () => {
       const readStep: FileStep = {
         id: 'r1',
         type: 'file',
+        needs: [],
         op: 'read',
         path: join(tempDir, 'non-existent.txt'),
       };
@@ -183,6 +194,7 @@ describe('step-executor', () => {
       const step: SleepStep = {
         id: 'sl1',
         type: 'sleep',
+        needs: [],
         duration: 10,
       };
       const start = Date.now();
@@ -217,6 +229,7 @@ describe('step-executor', () => {
       const step: RequestStep = {
         id: 'req1',
         type: 'request',
+        needs: [],
         url: 'https://api.example.com/test',
         method: 'GET',
       };
@@ -233,6 +246,7 @@ describe('step-executor', () => {
       const step: RequestStep = {
         id: 'req1',
         type: 'request',
+        needs: [],
         url: 'https://api.example.com/post',
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -253,6 +267,7 @@ describe('step-executor', () => {
       const step: RequestStep = {
         id: 'req1',
         type: 'request',
+        needs: [],
         url: 'https://api.example.com/post',
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -273,6 +288,7 @@ describe('step-executor', () => {
       const step: RequestStep = {
         id: 'req1',
         type: 'request',
+        needs: [],
         url: 'https://api.example.com/post',
         method: 'POST',
         body: { foo: 'bar' },
@@ -298,6 +314,7 @@ describe('step-executor', () => {
       const step: RequestStep = {
         id: 'req1',
         type: 'request',
+        needs: [],
         url: 'https://api.example.com/text',
         method: 'GET',
       };
@@ -320,6 +337,7 @@ describe('step-executor', () => {
       const step: RequestStep = {
         id: 'req1',
         type: 'request',
+        needs: [],
         url: 'https://api.example.com/fail',
         method: 'POST',
       };
@@ -348,6 +366,7 @@ describe('step-executor', () => {
       const step: HumanStep = {
         id: 'h1',
         type: 'human',
+        needs: [],
         message: 'Proceed?',
         inputType: 'confirm',
       };
@@ -365,6 +384,7 @@ describe('step-executor', () => {
       const step: HumanStep = {
         id: 'h1',
         type: 'human',
+        needs: [],
         message: 'What is your name?',
         inputType: 'text',
       };
@@ -379,6 +399,7 @@ describe('step-executor', () => {
       const step: HumanStep = {
         id: 'h1',
         type: 'human',
+        needs: [],
         message: 'Proceed?',
         inputType: 'confirm',
       };
@@ -408,6 +429,7 @@ describe('step-executor', () => {
       const step: HumanStep = {
         id: 'h1',
         type: 'human',
+        needs: [],
         message: 'Proceed?',
         inputType: 'confirm',
       };
@@ -424,6 +446,7 @@ describe('step-executor', () => {
       const step: HumanStep = {
         id: 'h1',
         type: 'human',
+        needs: [],
         message: 'Proceed?',
         inputType: 'confirm',
       };
@@ -440,6 +463,7 @@ describe('step-executor', () => {
       const step: WorkflowStep = {
         id: 'w1',
         type: 'workflow',
+        needs: [],
         path: 'child.yaml',
       };
       // @ts-ignore
@@ -458,6 +482,7 @@ describe('step-executor', () => {
       const step: WorkflowStep = {
         id: 'w1',
         type: 'workflow',
+        needs: [],
         path: 'child.yaml',
       };
       const result = await executeStep(step, context);
@@ -485,6 +510,7 @@ describe('step-executor', () => {
       const step: ShellStep = {
         id: 's1',
         type: 'shell',
+        needs: [],
         run: 'echo "json string"',
         transform: 'output.stdout.toUpperCase().trim()',
       };
@@ -497,6 +523,7 @@ describe('step-executor', () => {
       const step: ShellStep = {
         id: 's1',
         type: 'shell',
+        needs: [],
         run: 'echo "hello"',
         transform: '${{ output.stdout.trim() + " world" }}',
       };
@@ -509,6 +536,7 @@ describe('step-executor', () => {
       const step: ShellStep = {
         id: 's1',
         type: 'shell',
+        needs: [],
         run: 'echo "hello"',
         transform: 'nonexistent.property',
       };

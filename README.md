@@ -247,6 +247,17 @@ steps:
       Result: ${{ steps.build.output }}
       Please write a concise 1-sentence summary for Slack.
 
+  - id: cleanup
+    type: shell
+    # Run whether previous steps succeeded or failed
+    if: true
+    run: rm -rf ./temp_build
+
+finally:
+  - id: final_cleanup
+    type: shell
+    run: echo "Workflow finished"
+
 outputs:
   slack_message: ${{ steps.notify.output }}
 ```
@@ -260,6 +271,7 @@ Keystone supports several specialized step types:
 - `shell`: Run arbitrary shell commands.
 - `llm`: Prompt an agent and get structured or unstructured responses. Supports `schema` (JSON Schema) for structured output.
   - `allowClarification`: Boolean (default `false`). If `true`, allows the LLM to ask clarifying questions back to the user or suspend the workflow if no human is available.
+  - `maxIterations`: Number (default `10`). Maximum number of tool-calling loops allowed for the agent.
 - `request`: Make HTTP requests (GET, POST, etc.).
 - `file`: Read, write, or append to files.
 - `human`: Pause execution for manual confirmation or text input.
@@ -267,9 +279,12 @@ Keystone supports several specialized step types:
   - `inputType: text`: Prompt for a string input, available via `${{ steps.id.output }}`.
 - `workflow`: Trigger another workflow as a sub-step.
 - `script`: Run arbitrary JavaScript in a secure sandbox (`isolated-vm` with fallback to `node:vm`).
+  - `allowInsecure`: Boolean (default `false`). If `true`, allows the use of `node:vm` if `isolated-vm` is unavailable or fails.
 - `sleep`: Pause execution for a specified duration.
 
-All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), and `transform` (post-process output using expressions).
+All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), `concurrency` (max parallel items for foreach), and `transform` (post-process output using expressions).
+
+Workflows also support a top-level `concurrency` field to limit how many steps can run in parallel across the entire workflow.
 
 #### Example: Transform & Foreach Concurrency
 ```yaml
@@ -284,6 +299,15 @@ All steps support common features like `needs` (dependencies), `if` (conditional
   foreach: ${{ steps.list_files.output }}
   concurrency: 5 # Process 5 files at a time
   run: echo "Processing ${{ item }}"
+
+#### Example: Script Step
+```yaml
+- id: calculate
+  type: script
+  run: |
+    const data = context.steps.fetch_data.output;
+    return data.map(i => i.value * 2).reduce((a, b) => a + b, 0);
+```
 ```
 
 ---
@@ -368,6 +392,7 @@ mcp_servers:
     type: local
     command: npx
     args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
+    timeout: 60000  # Optional connection timeout in ms
     oauth:
       scope: tools:read
 ```
@@ -402,7 +427,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | Command | Description |
 | :--- | :--- |
 | `init` | Initialize a new Keystone project |
-| `run <workflow>` | Execute a workflow (use `-i key=val` for inputs) |
+| `run <workflow>` | Execute a workflow (use `-i key=val` for inputs, `--dry-run` to test) |
 | `resume <run_id>` | Resume a failed or paused workflow |
 | `validate [path]` | Check workflow files for errors |
 | `workflows` | List available workflows |
