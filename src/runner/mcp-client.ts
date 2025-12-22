@@ -354,7 +354,7 @@ export class MCPClient {
       this.timeout = timeout;
     } else {
       this.transport = transportOrCommand;
-      this.timeout = (timeoutOrArgs as number) || 60000;
+      this.timeout = timeoutOrArgs as number;
     }
 
     this.transport.onMessage((response) => {

@@ -51,6 +51,7 @@ export const ConfigSchema = z.object({
           env: z.record(z.string()).optional(),
           url: z.string().url().optional(),
           oauth: z.union([z.object({ scope: z.string().optional() }), z.literal(false)]).optional(),
+          timeout: z.number().optional().default(60000),
         }),
         // Remote MCP server (URL-based)
         z.object({
@@ -58,6 +59,7 @@ export const ConfigSchema = z.object({
           url: z.string().url(),
           headers: z.record(z.string()).optional(),
           oauth: z.union([z.object({ scope: z.string().optional() }), z.literal(false)]).optional(),
+          timeout: z.number().optional().default(60000),
         }),
       ])
     )

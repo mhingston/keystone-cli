@@ -13,6 +13,7 @@ export interface MCPServerConfig {
   oauth?: {
     scope?: string;
   };
+  timeout?: number;
 }
 
 export class MCPManager {
@@ -90,7 +91,7 @@ export class MCPManager {
             headers.Authorization = `Bearer ${token}`;
           }
 
-          client = await MCPClient.createRemote(config.url, headers);
+          client = await MCPClient.createRemote(config.url, headers, config.timeout);
         } else {
           if (!config.command) throw new Error('Local MCP server missing command');
 
@@ -113,7 +114,12 @@ export class MCPManager {
             env.MCP_TOKEN = token;
           }
 
-          client = await MCPClient.createLocal(config.command, config.args || [], env);
+          client = await MCPClient.createLocal(
+            config.command,
+            config.args || [],
+            env,
+            config.timeout
+          );
         }
 
         await client.initialize();
