@@ -58,15 +58,44 @@ describe('Redactor', () => {
     expect(redactor.redact(123)).toBe(123);
   });
 
-  it('should ignore secrets shorter than 3 characters', () => {
-    const shortRedactor = new Redactor({ S1: 'a', S2: '12', S3: 'abc' });
+  it('should ignore secrets shorter than 3 characters for sensitive keys', () => {
+    const shortRedactor = new Redactor({ S1: 'a', S2: '12', TOKEN: 'abc' });
     const text = 'a and 12 are safe, but abc is a secret';
     expect(shortRedactor.redact(text)).toBe('a and 12 are safe, but ***REDACTED*** is a secret');
   });
 
   it('should not redact substrings of larger words when using alphanumeric secrets', () => {
-    const wordRedactor = new Redactor({ USER: 'mark' });
-    const text = 'mark went to the marketplace';
+    const wordRedactor = new Redactor({ USER: 'mark-long-enough' });
+    const text = 'mark-long-enough went to the marketplace';
     expect(wordRedactor.redact(text)).toBe('***REDACTED*** went to the marketplace');
+  });
+
+  it('should NOT redact common words in the blocklist', () => {
+    const blocklistRedactor = new Redactor({
+      STATUS: 'success',
+      DEBUG: 'true',
+      LEVEL: 'info',
+    });
+    const text = 'Operation was a success with info level and true flag';
+    expect(blocklistRedactor.redact(text)).toBe(text);
+  });
+
+  it('should redact short values only for sensitive keys', () => {
+    const mixedRedactor = new Redactor({
+      PASSWORD: 'abc', // sensitive key, short value
+      OTHER: 'def', // non-sensitive key, short value
+      LONG: 'this-is-long-enough', // non-sensitive, long value
+    });
+    const text = 'pwd: abc, other: def, long: this-is-long-enough';
+    expect(mixedRedactor.redact(text)).toBe('pwd: ***REDACTED***, other: def, long: ***REDACTED***');
+  });
+
+  it('should ignore non-sensitive values shorter than 10 characters', () => {
+    const thresholdRedactor = new Redactor({
+      S1: '123456789', // 9 chars
+      S2: '1234567890', // 10 chars
+    });
+    const text = 'S1 is 123456789 and S2 is 1234567890';
+    expect(thresholdRedactor.redact(text)).toBe('S1 is 123456789 and S2 is ***REDACTED***');
   });
 });

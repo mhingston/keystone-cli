@@ -25,7 +25,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) {}
+  ) { }
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -400,6 +400,20 @@ export class WorkflowRunner {
       'TERM_PROGRAM',
       'TERM_PROGRAM_VERSION',
       'COLORTERM',
+      'LC_TERMINAL',
+      'LC_TERMINAL_VERSION',
+      'PWD',
+      'OLDPWD',
+      'HOME',
+      'USER',
+      'SHELL',
+      'PATH',
+      'LOGNAME',
+      'TMPDIR',
+      'XDG_CONFIG_HOME',
+      'XDG_DATA_HOME',
+      'XDG_CACHE_HOME',
+      'XDG_RUNTIME_DIR',
     ]);
 
     // Bun automatically loads .env file
@@ -927,7 +941,7 @@ export class WorkflowRunner {
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-        '   Workflows can execute arbitrary shell commands and access your environment.\n'
+      '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     // Apply defaults and validate inputs

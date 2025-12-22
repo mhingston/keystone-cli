@@ -28,17 +28,47 @@ export class Redactor {
     // Extract all secret values
     // We filter based on:
     // 1. Value must be a string and not empty
-    // 2. Either the key indicates high sensitivity OR length >= 3
+    // 2. Value must not be in the blocklist of common words
+    // 3. Either the key indicates high sensitivity OR length >= 10 (conservative limit for unknown values)
     const secretsToRedact = new Set<string>();
 
+    const valueBlocklist = new Set([
+      'true',
+      'false',
+      'null',
+      'undefined',
+      'info',
+      'warn',
+      'error',
+      'debug',
+      'success',
+      'pending',
+      'failed',
+      'skipped',
+      'suspended',
+      'default',
+      'public',
+      'private',
+      'protected',
+    ]);
+
     for (const [key, value] of Object.entries(secrets)) {
-      if (!value) continue;
+      if (!value || typeof value !== 'string') continue;
+
+      const lowerValue = value.toLowerCase();
+      if (valueBlocklist.has(lowerValue)) continue;
 
       const lowerKey = key.toLowerCase();
       // Check if key contains any sensitive term
       const isSensitiveKey = Array.from(sensitiveKeys).some((k) => lowerKey.includes(k));
 
-      if (isSensitiveKey || value.length >= 3) {
+      // If it's a sensitive key, redact it even if short (>=3)
+      // Otherwise, only redact if it's long enough to be likely a real secret
+      if (isSensitiveKey) {
+        if (value.length >= 3) {
+          secretsToRedact.add(value);
+        }
+      } else if (value.length >= 10) {
         secretsToRedact.add(value);
       }
     }

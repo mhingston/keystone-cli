@@ -239,6 +239,42 @@ You are a test agent.`;
     expect(result.output).toBe('LLM Response');
   });
 
+  it('should log tool call arguments', async () => {
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'trigger tool',
+      needs: [],
+      maxIterations: 10,
+    };
+    const context: ExpressionContext = { inputs: {}, steps: {} };
+
+    const executeStepFn = async (s: Step) => {
+      if (s.type === 'shell') {
+        return { status: 'success' as const, output: { stdout: 'tool result' } };
+      }
+      return { status: 'success' as const, output: 'ok' };
+    };
+
+    const logger = {
+      log: mock(() => { }),
+      error: mock(() => { }),
+      warn: mock(() => { }),
+    };
+
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      logger as any
+    );
+
+    // Check if logger.log was called with arguments
+    // The tool call from mockChat is { name: 'test-tool', arguments: '{"val": 123}' }
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining('🛠️  Tool Call: test-tool {"val":123}'));
+  });
+
   it('should support schema for JSON output', async () => {
     const step: LlmStep = {
       id: 'l1',

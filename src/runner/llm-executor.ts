@@ -269,7 +269,20 @@ export async function executeLlmStep(
 
       // Execute tools
       for (const toolCall of message.tool_calls) {
-        logger.log(`  🛠️  Tool Call: ${toolCall.function.name}`);
+        const argsStr = toolCall.function.arguments;
+        let displayArgs = '';
+        try {
+          const parsedArgs = JSON.parse(argsStr);
+          const keys = Object.keys(parsedArgs);
+          if (keys.length > 0) {
+            const formatted = JSON.stringify(parsedArgs);
+            displayArgs = formatted.length > 100 ? `${formatted.substring(0, 100)}...` : formatted;
+          }
+        } catch (e) {
+          displayArgs = argsStr.length > 100 ? `${argsStr.substring(0, 100)}...` : argsStr;
+        }
+
+        logger.log(`  🛠️  Tool Call: ${toolCall.function.name}${displayArgs ? ` ${displayArgs}` : ''}`);
         const toolInfo = allTools.find((t) => t.name === toolCall.function.name);
 
         if (!toolInfo) {
