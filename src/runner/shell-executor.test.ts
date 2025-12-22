@@ -137,5 +137,18 @@ describe('shell-executor', () => {
 
       await expect(executeShell(step, context)).rejects.toThrow(/Security Error/);
     });
+    it('should allow flow control with semicolons', async () => {
+      const step: ShellStep = {
+        id: 'test',
+        type: 'shell',
+        needs: [],
+        run: 'if [ "1" = "1" ]; then echo "match"; fi',
+      };
+
+      const result = await executeShell(step, context);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('match');
+    });
+
   });
 });

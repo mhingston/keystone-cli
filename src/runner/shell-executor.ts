@@ -63,7 +63,7 @@ export interface ShellResult {
 // Pre-compiled dangerous patterns for performance
 // These patterns are designed to detect likely injection attempts while minimizing false positives
 const DANGEROUS_PATTERNS: RegExp[] = [
-  /;\s*\w/, // Command chaining with semicolon (e.g., `; rm -rf /`)
+  /;\s*(?:rm|chmod|chown|mkfs|dd)\b/, // Command chaining with destructive commands
   /\|\s*(?:sh|bash|zsh|ksh|dash|csh|python|python[23]?|node|ruby|perl|php|lua)\b/, // Piping to shell/interpreter (download-and-execute pattern)
   /\|\s*(?:sudo|su)\b/, // Piping to privilege escalation
   /&&\s*(?:rm|chmod|chown|mkfs|dd)\b/, // AND chaining with destructive commands
