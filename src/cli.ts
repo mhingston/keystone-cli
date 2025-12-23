@@ -9,7 +9,7 @@ import architectAgent from './templates/agents/keystone-architect.md' with { typ
 // Default templates
 import scaffoldWorkflow from './templates/scaffold-feature.yaml' with { type: 'text' };
 
-import { WorkflowDb } from './db/workflow-db.ts';
+import { WorkflowDb, type WorkflowRun } from './db/workflow-db.ts';
 import { WorkflowParser } from './parser/workflow-parser.ts';
 import { ConfigLoader } from './utils/config-loader.ts';
 import { ConsoleLogger } from './utils/logger.ts';
@@ -279,7 +279,79 @@ program
     }
   });
 
-// ... (optimize command remains here) ...
+// ===== keystone workflows =====
+program
+  .command('workflows')
+  .description('List available workflows')
+  .action(() => {
+    const workflows = WorkflowRegistry.listWorkflows();
+    if (workflows.length === 0) {
+      console.log('No workflows found. Run "keystone init" to seed default workflows.');
+      return;
+    }
+
+    console.log('\n🏛️  Available Workflows:');
+    for (const w of workflows) {
+      console.log(`\n  ${w.name}`);
+      if (w.description) {
+        console.log(`    ${w.description}`);
+      }
+    }
+    console.log('');
+  });
+
+// ===== keystone optimize =====
+program
+  .command('optimize')
+  .description('Optimize a specific step in a workflow using iterative evaluation')
+  .argument('<workflow>', 'Workflow name or path to workflow file')
+  .requiredOption('-t, --target <step_id>', 'Target step ID to optimize')
+  .option('-n, --iterations <number>', 'Number of optimization iterations', '5')
+  .option('-i, --input <key=value...>', 'Input values for evaluation')
+  .action(async (workflowPath, options) => {
+    try {
+      const { OptimizationRunner } = await import('./runner/optimization-runner.ts');
+      const resolvedPath = WorkflowRegistry.resolvePath(workflowPath);
+      const workflow = WorkflowParser.loadWorkflow(resolvedPath);
+
+      // Parse inputs
+      const inputs: Record<string, unknown> = {};
+      if (options.input) {
+        for (const pair of options.input) {
+          const index = pair.indexOf('=');
+          if (index > 0) {
+            const key = pair.slice(0, index);
+            const value = pair.slice(index + 1);
+            try {
+              inputs[key] = JSON.parse(value);
+            } catch {
+              inputs[key] = value;
+            }
+          }
+        }
+      }
+
+      const runner = new OptimizationRunner(workflow, {
+        workflowPath: resolvedPath,
+        targetStepId: options.target,
+        iterations: Number.parseInt(options.iterations, 10),
+        inputs,
+      });
+
+      console.log('🏛️  Keystone Prompt Optimization');
+      const { bestPrompt, bestScore } = await runner.optimize();
+
+      console.log('\n✨ Optimization Complete!');
+      console.log(`🏆 Best Score: ${bestScore}/100`);
+      console.log('\nBest Prompt/Command:');
+      console.log(''.padEnd(80, '-'));
+      console.log(bestPrompt);
+      console.log(''.padEnd(80, '-'));
+    } catch (error) {
+      console.error('✗ Optimization failed:', error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
 
 // ===== keystone resume =====
 program
@@ -347,38 +419,176 @@ program
     }
   });
 
-// ... (other commands) ...
+// ===== keystone history =====
+program
+  .command('history')
+  .description('Show recent workflow runs')
+  .option('-l, --limit <number>', 'Limit the number of runs to show', '50')
+  .action(async (options) => {
+    try {
+      const db = new WorkflowDb();
+      const limit = Number.parseInt(options.limit, 10);
+      const runs = await db.listRuns(limit);
+      db.close();
 
-// ===== keystone maintenance =====
+      if (runs.length === 0) {
+        console.log('No workflow runs found.');
+        return;
+      }
+
+      console.log('\n🏛️  Workflow Run History:');
+      console.log(''.padEnd(100, '-'));
+      console.log(
+        `${'ID'.padEnd(10)} ${'Workflow'.padEnd(25)} ${'Status'.padEnd(15)} ${'Started At'}`
+      );
+      console.log(''.padEnd(100, '-'));
+
+      for (const run of runs) {
+        const id = run.id.slice(0, 8);
+        const status = run.status;
+        const color =
+          status === 'success' ? '\x1b[32m' : status === 'failed' ? '\x1b[31m' : '\x1b[33m';
+        const reset = '\x1b[0m';
+
+        console.log(
+          `${id.padEnd(10)} ${run.workflow_name.padEnd(25)} ${color}${status.padEnd(
+            15
+          )}${reset} ${new Date(run.started_at).toLocaleString()}`
+        );
+      }
+      console.log('');
+    } catch (error) {
+      console.error('✗ Failed to list runs:', error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+
+// ===== keystone logs =====
+program
+  .command('logs')
+  .description('Show logs for a specific workflow run')
+  .argument('<run_id>', 'Run ID to show logs for')
+  .option('-v, --verbose', 'Show detailed step outputs')
+  .action(async (runId, options) => {
+    try {
+      const db = new WorkflowDb();
+      const run = await db.getRun(runId);
+
+      if (!run) {
+        // Try searching by short ID
+        const allRuns = await db.listRuns(200);
+        const matching = allRuns.find((r) => r.id.startsWith(runId));
+        if (matching) {
+          const detailedRun = await db.getRun(matching.id);
+          if (detailedRun) {
+            await showRunLogs(detailedRun, db, !!options.verbose);
+            db.close();
+            return;
+          }
+        }
+
+        console.error(`✗ Run not found: ${runId}`);
+        db.close();
+        process.exit(1);
+      }
+
+      await showRunLogs(run, db, !!options.verbose);
+      db.close();
+    } catch (error) {
+      console.error('✗ Failed to show logs:', error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
+  });
+
+async function showRunLogs(run: WorkflowRun, db: WorkflowDb, verbose: boolean) {
+  console.log(`\n🏛️  Run: ${run.workflow_name} (${run.id})`);
+  console.log(`   Status: ${run.status}`);
+  console.log(`   Started: ${new Date(run.started_at).toLocaleString()}`);
+  if (run.completed_at) {
+    console.log(`   Completed: ${new Date(run.completed_at).toLocaleString()}`);
+  }
+
+  const steps = await db.getStepsByRun(run.id);
+  console.log(`\nSteps (${steps.length}):`);
+  console.log(''.padEnd(100, '-'));
+
+  for (const step of steps) {
+    const statusColor =
+      step.status === 'success' ? '\x1b[32m' : step.status === 'failed' ? '\x1b[31m' : '\x1b[33m';
+    const reset = '\x1b[0m';
+
+    let label = step.step_id;
+    if (step.iteration_index !== null) {
+      label += ` [${step.iteration_index}]`;
+    }
+
+    console.log(`${statusColor}${step.status.toUpperCase().padEnd(10)}${reset} ${label}`);
+
+    if (step.error) {
+      console.log(`           \x1b[31mError: ${step.error}\x1b[0m`);
+    }
+
+    if (verbose && step.output) {
+      try {
+        const output = JSON.parse(step.output);
+        console.log(`           Output: ${JSON.stringify(output, null, 2).replace(/\n/g, '\n           ')}`);
+      } catch {
+        console.log(`           Output: ${step.output}`);
+      }
+    }
+  }
+
+  if (run.outputs) {
+    console.log('\nFinal Outputs:');
+    try {
+      const parsed = JSON.parse(run.outputs);
+      console.log(JSON.stringify(parsed, null, 2));
+    } catch {
+      console.log(run.outputs);
+    }
+  }
+
+  if (run.error) {
+    console.log(`\n\x1b[31mWorkflow Error:\x1b[0m ${run.error}`);
+  }
+}
+
+// ===== keystone prune / maintenance =====
+async function performMaintenance(days: number) {
+  try {
+    console.log(`🧹 Starting maintenance (pruning runs older than ${days} days)...`);
+    const db = new WorkflowDb();
+    const count = await db.pruneRuns(days);
+    console.log(`   ✓ Pruned ${count} old run(s)`);
+
+    console.log('   Vacuuming database (reclaiming space)...');
+    await db.vacuum();
+    console.log('   ✓ Vacuum complete');
+
+    db.close();
+    console.log('\n✨ Maintenance completed successfully!');
+  } catch (error) {
+    console.error('✗ Maintenance failed:', error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
+}
+
+program
+  .command('prune')
+  .description('Delete old workflow runs from the database (alias for maintenance)')
+  .option('--days <number>', 'Days to keep', '30')
+  .action(async (options) => {
+    const days = Number.parseInt(options.days, 10);
+    await performMaintenance(days);
+  });
+
 program
   .command('maintenance')
   .description('Perform database maintenance (prune old runs and vacuum)')
   .option('--days <days>', 'Delete runs older than this many days', '30')
   .action(async (options) => {
-    try {
-      const days = Number.parseInt(options.days, 10);
-      if (Number.isNaN(days) || days < 0) {
-        console.error('✗ Invalid days value. Must be a positive number.');
-        process.exit(1);
-      }
-
-      console.log('🧹 Starting maintenance...');
-      const db = new WorkflowDb();
-
-      console.log(`   Pruning runs older than ${days} days...`);
-      const deleted = await db.pruneRuns(days);
-      console.log(`   ✓ Deleted ${deleted} run(s)`);
-
-      console.log('   Vacuuming database (reclaiming space)...');
-      await db.vacuum();
-      console.log('   ✓ Vacuum complete');
-
-      db.close();
-      console.log('\n✨ Maintenance completed successfully!');
-    } catch (error) {
-      console.error('✗ Maintenance failed:', error instanceof Error ? error.message : error);
-      process.exit(1);
-    }
+    const days = Number.parseInt(options.days, 10);
+    await performMaintenance(days);
   });
 
 // ===== keystone ui =====
