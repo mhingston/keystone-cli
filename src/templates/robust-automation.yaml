@@ -1,0 +1,44 @@
+name: robust-automation
+description: "Demonstrate auto-healing and reflexion features"
+
+steps:
+  # Demonstration of auto-healing
+  # This step attempts to run a broken command, but the agent should fix it
+  - id: auto_heal_demo
+    type: shell
+    run: |
+      # This command has a typo and should fail
+      ech "Hello World"
+    auto_heal:
+      agent: software-engineer
+      maxAttempts: 2
+      model: gpt-4o
+
+  # Demonstration of reflexion (self-correction)
+  # This step asks for JSON but provides a prompt that might lead to text
+  # Reflexion should catch the schema validation error and retry
+  - id: reflexion_demo
+    type: llm
+    agent: general
+    needs: [auto_heal_demo]
+    prompt: |
+      Generate a list of 3 random colors. Just list them.
+    schema:
+      type: object
+      properties:
+        colors:
+          type: array
+          items:
+            type: string
+      required: [colors]
+    reflexion:
+      limit: 3
+      hint: "Ensure the output is valid JSON matching the schema."
+
+  - id: summary
+    type: shell
+    needs: [reflexion_demo]
+    run: |
+      echo "Robust automation demo complete."
+      echo "Healed Command Output: ${{ steps.auto_heal_demo.output.stdout }}"
+      echo "Reflexion Output: ${{ steps.reflexion_demo.output }}"

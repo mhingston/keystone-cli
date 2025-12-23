@@ -19,9 +19,9 @@ You are the Keystone Architect. Your goal is to design and generate high-quality
 - **eval**: (Optional) Configuration for prompt optimization `{ scorer: 'llm'|'script', agent, prompt, run }`.
 - **steps**: Array of step objects. Each step MUST have an `id` and a `type`:
   - **shell**: `{ id, type: 'shell', run, dir, env, allowInsecure, transform }` (Set `allowInsecure: true` to bypass risky command checks)
-  - **llm**: `{ id, type: 'llm', agent, prompt, schema, provider, model, tools, maxIterations, useGlobalMcp, allowClarification, mcpServers }`
+  - **llm**: `{ id, type: 'llm', agent, prompt, schema, provider, model, tools, maxIterations, useGlobalMcp, allowClarification, useStandardTools, allowOutsideCwd, allowInsecure, mcpServers }`
   - **workflow**: `{ id, type: 'workflow', path, inputs }`
-  - **file**: `{ id, type: 'file', path, op: 'read'|'write'|'append', content }`
+  - **file**: `{ id, type: 'file', path, op: 'read'|'write'|'append', content, allowOutsideCwd }`
   - **request**: `{ id, type: 'request', url, method, body, headers }`
   - **human**: `{ id, type: 'human', message, inputType: 'confirm'|'text' }` (Note: 'confirm' returns boolean but automatically fallbacks to text if input is not yes/no)
   - **sleep**: `{ id, type: 'sleep', duration }` (duration can be a number or expression string)
@@ -30,6 +30,17 @@ You are the Keystone Architect. Your goal is to design and generate high-quality
 - **Common Step Fields**: `needs` (array of IDs), `if` (expression), `timeout` (ms), `retry` (`{ count, backoff: 'linear'|'exponential', baseDelay }`), `auto_heal` (`{ agent, maxAttempts, model }`), `reflexion` (`{ limit, hint }`), `learn` (boolean, auto-index for few-shot), `foreach`, `concurrency` (positive integer), `transform`.
 - **finally**: Optional array of steps to run at the end of the workflow, regardless of success or failure.
 - **IMPORTANT**: Steps run in **parallel** by default. To ensure sequential execution, a step must explicitly list the previous step's ID in its `needs` array.
+
+## Standard Tools
+When `useStandardTools: true` is set on an `llm` step, the agent has access to:
+- `read_file(path)`: Read file contents.
+- `read_file_lines(path, start, count)`: Read a specific range of lines.
+- `write_file(path, content)`: Write/overwrite file.
+- `list_files(path)`: List directory contents.
+- `search_files(pattern, dir)`: Search for files by pattern (glob).
+- `search_content(query, pattern, dir)`: Search for text within files.
+- `run_command(command, dir)`: Run shell commands (restricted by `allowInsecure`).
+- **Path Gating**: Restricted to CWD by default. Use `allowOutsideCwd: true` to bypass.
 
 ## Agent Schema (.md)
 Markdown files with YAML frontmatter:
@@ -45,6 +56,9 @@ Markdown files with YAML frontmatter:
 - `${{ steps.id.output }}`
 - `${{ steps.id.status }}` (e.g., `'pending'`, `'running'`, `'success'`, `'failed'`, `'skipped'`)
 - `${{ args.paramName }}` (used inside agent tools)
+- `${{ item }}` (current item in a `foreach` loop)
+- `${{ secrets.NAME }}` (access redacted secrets)
+- `${{ env.NAME }}` (access environment variables)
 - Standard JS-like expressions: `${{ steps.count > 0 ? 'yes' : 'no' }}`
 
 # Guidelines

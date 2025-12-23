@@ -95,6 +95,9 @@ const LlmStepSchema = BaseStepSchema.extend({
       ])
     )
     .optional(),
+  useStandardTools: z.boolean().optional(),
+  allowOutsideCwd: z.boolean().optional(),
+  allowInsecure: z.boolean().optional(),
 });
 
 const WorkflowStepSchema = BaseStepSchema.extend({

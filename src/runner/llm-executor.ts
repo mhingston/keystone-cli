@@ -9,13 +9,14 @@ import { RedactionBuffer, Redactor } from '../utils/redactor';
 import { type LLMMessage, getAdapter } from './llm-adapter';
 import { MCPClient } from './mcp-client';
 import type { MCPManager, MCPServerConfig } from './mcp-manager';
+import { STANDARD_TOOLS, validateStandardToolSecurity } from './standard-tools';
 import type { StepResult } from './step-executor';
 
 interface ToolDefinition {
   name: string;
   description?: string;
   parameters: unknown;
-  source: 'agent' | 'step' | 'mcp';
+  source: 'agent' | 'step' | 'mcp' | 'standard';
   execution?: Step;
   mcpClient?: MCPClient;
 }
@@ -105,7 +106,24 @@ export async function executeLlmStep(
       }
     }
 
-    // 3. Add MCP tools
+    // 3. Add Standard tools
+    if (step.useStandardTools) {
+      for (const tool of STANDARD_TOOLS) {
+        allTools.push({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters || {
+            type: 'object',
+            properties: {},
+            additionalProperties: true,
+          },
+          source: 'standard',
+          execution: tool.execution,
+        });
+      }
+    }
+
+    // 4. Add MCP tools
     const mcpServersToConnect: (string | MCPServerConfig)[] = [...(step.mcpServers || [])];
     if (step.useGlobalMcp && mcpManager) {
       const globalServers = mcpManager.getGlobalServers();
@@ -374,10 +392,28 @@ export async function executeLlmStep(
             });
           }
         } else if (toolInfo.execution) {
+          // Security validation for standard tools
+          if (toolInfo.source === 'standard') {
+            try {
+              validateStandardToolSecurity(toolInfo.name, args, {
+                allowOutsideCwd: step.allowOutsideCwd,
+                allowInsecure: step.allowInsecure,
+              });
+            } catch (error) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: toolCall.function.name,
+                content: `Security Error: ${error instanceof Error ? error.message : String(error)}`,
+              });
+              continue;
+            }
+          }
+
           // Execute the tool as a step
           const toolContext: ExpressionContext = {
             ...context,
-            item: args, // Use item to pass args to tool execution
+            args, // Use args to pass parameters to tool execution
           };
 
           const result = await executeStepFn(toolInfo.execution, toolContext);

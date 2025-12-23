@@ -29,6 +29,7 @@ export interface ExpressionContext {
   secrets?: Record<string, string>;
   steps?: Record<string, { output?: unknown; outputs?: Record<string, unknown>; status?: string }>;
   item?: unknown;
+  args?: unknown;
   index?: number;
   env?: Record<string, string>;
   output?: unknown;
@@ -295,6 +296,7 @@ export class ExpressionEvaluator {
           secrets: context.secrets || {},
           steps: context.steps || {},
           item: context.item,
+          args: context.args,
           index: context.index,
           env: context.env || {},
           stdout: contextAsRecord.stdout, // For transform expressions

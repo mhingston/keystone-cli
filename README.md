@@ -260,6 +260,23 @@ finally:
     type: shell
     run: echo "Workflow finished"
 
+### Expression Syntax
+
+Keystone uses `${{ }}` syntax for dynamic values. Expressions are evaluated using a safe AST parser.
+
+- `${{ inputs.name }}`: Access workflow inputs.
+- `${{ steps.id.output }}`: Access the raw output of a previous step.
+- `${{ steps.id.outputs.field }}`: Access specific fields if the output is an object.
+- `${{ steps.id.status }}`: Get the execution status of a step (`'success'`, `'failed'`, etc.).
+- `${{ item }}`: Access the current item in a `foreach` loop.
+- `${{ args.name }}`: Access tool arguments (available ONLY inside agent tool execution steps).
+- `${{ secrets.NAME }}`: Access redacted secrets.
+- `${{ env.NAME }}`: Access environment variables.
+
+Standard JavaScript-like expressions are supported: `${{ steps.build.status == 'success' ? '🚀' : '❌' }}`.
+
+---
+
 outputs:
   slack_message: ${{ steps.notify.output }}
 ```
@@ -274,8 +291,11 @@ Keystone supports several specialized step types:
 - `llm`: Prompt an agent and get structured or unstructured responses. Supports `schema` (JSON Schema) for structured output.
   - `allowClarification`: Boolean (default `false`). If `true`, allows the LLM to ask clarifying questions back to the user or suspend the workflow if no human is available.
   - `maxIterations`: Number (default `10`). Maximum number of tool-calling loops allowed for the agent.
+  - `allowInsecure`: Boolean (default `false`). Set `true` to allow risky tool execution.
+  - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow tools to access files outside of the current working directory.
 - `request`: Make HTTP requests (GET, POST, etc.).
 - `file`: Read, write, or append to files.
+  - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow reading/writing files outside of the current working directory.
 - `human`: Pause execution for manual confirmation or text input.
   - `inputType: confirm`: Simple Enter-to-continue prompt.
   - `inputType: text`: Prompt for a string input, available via `${{ steps.id.output }}`.
@@ -352,6 +372,8 @@ You are a technical communications expert. Your goal is to take technical output
 
 Agents can be equipped with tools, which are essentially workflow steps they can choose to execute. You can define tools in the agent definition, or directly in an LLM step within a workflow.
 
+Tool arguments are passed to the tool's execution step via the `args` variable.
+
 **`.keystone/workflows/agents/developer.md`**
 ```markdown
 ---
@@ -363,6 +385,18 @@ tools:
       id: list-files-tool
       type: shell
       run: ls -F
+  - name: read_file
+    description: Read a specific file
+    parameters:
+      type: object
+      properties:
+        path: { type: string }
+      required: [path]
+    execution:
+      id: read-file-tool
+      type: file
+      op: read
+      path: ${{ args.path }}
 ---
 You are a software developer. You can use tools to explore the codebase.
 ```

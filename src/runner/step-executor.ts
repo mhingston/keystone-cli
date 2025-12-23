@@ -402,7 +402,13 @@ async function executeRequestStep(
     output: {
       status: response.status,
       statusText: response.statusText,
-      headers: Object.fromEntries(response.headers as unknown as Iterable<[string, string]>),
+      headers: (() => {
+        const h: Record<string, string> = {};
+        response.headers.forEach((v, k) => {
+          h[k] = v;
+        });
+        return h;
+      })(),
       data: responseData,
     },
     status: response.ok ? 'success' : 'failed',
@@ -435,7 +441,11 @@ async function executeHumanStep(
     return {
       output:
         step.inputType === 'confirm'
-          ? answer === true || answer === 'true' || answer === 'yes' || answer === 'y'
+          ? answer === true ||
+            (typeof answer === 'string' &&
+              (answer.toLowerCase() === 'true' ||
+                answer.toLowerCase() === 'yes' ||
+                answer.toLowerCase() === 'y'))
           : answer,
       status: 'success',
     };

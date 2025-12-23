@@ -136,14 +136,11 @@ export async function executeShell(
   const cwd = step.dir ? ExpressionEvaluator.evaluateString(step.dir, context) : undefined;
   const mergedEnv = Object.keys(env).length > 0 ? { ...Bun.env, ...env } : Bun.env;
 
-  // Safe Fast Path: If command contains only safe characters (alphanumeric, -, _, ., /) and spaces,
-  // we can split it and execute directly without a shell.
-  // This completely eliminates shell injection risks for simple commands.
-  const isSimpleCommand = /^[a-zA-Z0-9_\-./]+(?: [a-zA-Z0-9_\-./]+)*$/.test(command);
+  // Shell metacharacters that require a real shell
+  const hasShellMetas = /[|&;<>`$!]/.test(command);
 
   // Common shell builtins that must run in a shell
-  const splitArgs = command.split(/\s+/);
-  const cmd = splitArgs[0];
+  const firstWord = command.trim().split(/\s+/)[0];
   const isBuiltin = [
     'exit',
     'cd',
@@ -155,19 +152,50 @@ export async function executeShell(
     'unalias',
     'eval',
     'set',
-  ].includes(cmd);
+    'true',
+    'false',
+  ].includes(firstWord);
+
+  const canUseSpawn = !hasShellMetas && !isBuiltin;
 
   try {
     let stdoutString = '';
     let stderrString = '';
     let exitCode = 0;
 
-    if (isSimpleCommand && !isBuiltin) {
-      // split by spaces
-      const args = splitArgs.slice(1);
-      if (!cmd) throw new Error('Empty command');
+    if (canUseSpawn) {
+      // Robust splitting that handles single and double quotes
+      const args: string[] = [];
+      let current = '';
+      let inQuote = false;
+      let quoteChar = '';
 
-      const proc = Bun.spawn([cmd, ...args], {
+      for (let i = 0; i < command.length; i++) {
+        const char = command[i];
+        if ((char === "'" || char === '"') && (i === 0 || command[i - 1] !== '\\')) {
+          if (inQuote && char === quoteChar) {
+            inQuote = false;
+            quoteChar = '';
+          } else if (!inQuote) {
+            inQuote = true;
+            quoteChar = char;
+          } else {
+            current += char;
+          }
+        } else if (/\s/.test(char) && !inQuote) {
+          if (current) {
+            args.push(current);
+            current = '';
+          }
+        } else {
+          current += char;
+        }
+      }
+      if (current) args.push(current);
+
+      if (args.length === 0) throw new Error('Empty command');
+
+      const proc = Bun.spawn(args, {
         cwd,
         env: mergedEnv,
         stdout: 'pipe',
