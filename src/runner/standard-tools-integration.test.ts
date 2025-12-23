@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from 'bun:test';
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ExpressionContext } from '../expression/evaluator';
 import type { LlmStep, Step } from '../parser/schema';
 import { ConsoleLogger } from '../utils/logger';
@@ -10,10 +12,30 @@ describe('Standard Tools Integration', () => {
 
   beforeAll(() => {
     // Mocking OpenAI Adapter
+    // Ensure .keystone/workflows/agents exists
+    const agentsDir = join(process.cwd(), '.keystone', 'workflows', 'agents');
+    if (!existsSync(agentsDir)) {
+      mkdirSync(agentsDir, { recursive: true });
+    }
+    // Create test-agent.md
+    writeFileSync(
+      join(agentsDir, 'test-agent.md'),
+      `---
+name: test-agent
+model: gpt-4o
+---
+System prompt`,
+      'utf8'
+    );
   });
 
   afterAll(() => {
     OpenAIAdapter.prototype.chat = originalOpenAIChat;
+    // Cleanup test-agent.md
+    const agentPath = join(process.cwd(), '.keystone', 'workflows', 'agents', 'test-agent.md');
+    if (existsSync(agentPath)) {
+      rmSync(agentPath);
+    }
   });
 
   it('should inject standard tools when useStandardTools is true', async () => {
