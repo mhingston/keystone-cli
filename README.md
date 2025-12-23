@@ -372,6 +372,16 @@ You are a technical communications expert. Your goal is to take technical output
 
 Agents can be equipped with tools, which are essentially workflow steps they can choose to execute. You can define tools in the agent definition, or directly in an LLM step within a workflow.
 
+Keystone comes with a set of **Standard Tools** that can be enabled for any agent by setting `useStandardTools: true` in the step definition:
+
+- `read_file`: Read the contents of a file (arguments: `path`)
+- `read_file_lines`: Read a specific range of lines from a file (arguments: `path`, `start`, `count`)
+- `write_file`: Write or overwrite a file (arguments: `path`, `content`)
+- `list_files`: List files in a directory (arguments: `path`)
+- `search_files`: Search for files by glob pattern (arguments: `pattern`, `dir`)
+- `search_content`: Search for string or regex within files (arguments: `query`, `dir`, `pattern`)
+- `run_command`: Run a shell command (arguments: `command`, `dir`). Requires `allowInsecure: true` on the step unless whitelisted.
+
 Tool arguments are passed to the tool's execution step via the `args` variable.
 
 **`.keystone/workflows/agents/developer.md`**
@@ -379,26 +389,23 @@ Tool arguments are passed to the tool's execution step via the `args` variable.
 ---
 name: developer
 tools:
-  - name: list_files
-    description: List files in the current directory
+  - name: custom_tool
+    description: A custom tool definition
     execution:
-      id: list-files-tool
       type: shell
-      run: ls -F
-  - name: read_file
-    description: Read a specific file
-    parameters:
-      type: object
-      properties:
-        path: { type: string }
-      required: [path]
-    execution:
-      id: read-file-tool
-      type: file
-      op: read
-      path: ${{ args.path }}
+      run: echo "custom"
 ---
 You are a software developer. You can use tools to explore the codebase.
+```
+
+To enable standard tools in a workflow step:
+
+```yaml
+- id: explore
+  type: llm
+  agent: developer
+  useStandardTools: true
+  prompt: "Explore the src directory"
 ```
 
 ### Keystone as an MCP Server
