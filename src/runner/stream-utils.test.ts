@@ -4,16 +4,24 @@ import { processOpenAIStream } from './stream-utils';
 const encoder = new TextEncoder();
 
 function responseFromChunks(chunks: string[]): Response {
-  const stream = new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(encoder.encode(chunk));
+  let index = 0;
+  const reader = {
+    async read(): Promise<{ done: boolean; value?: Uint8Array }> {
+      if (index >= chunks.length) {
+        return { done: true, value: undefined };
       }
-      controller.close();
+      const value = encoder.encode(chunks[index]);
+      index += 1;
+      return { done: false, value };
     },
-  });
+    async cancel(): Promise<void> {},
+  };
 
-  return new Response(stream);
+  return {
+    body: {
+      getReader: () => reader,
+    },
+  } as Response;
 }
 
 describe('processOpenAIStream', () => {
