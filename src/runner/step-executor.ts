@@ -18,10 +18,10 @@ import { getAdapter } from './llm-adapter.ts';
 import { detectShellInjectionRisk, executeShell } from './shell-executor.ts';
 
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline/promises';
-import { createRequire } from 'node:module';
 import { SafeSandbox } from '../utils/sandbox.ts';
 import { executeLlmStep } from './llm-executor.ts';
 import { validateRemoteUrl } from './mcp-client.ts';
@@ -415,10 +415,11 @@ async function executeRequestStep(
     status: response.ok ? 'success' : 'failed',
     error: response.ok
       ? undefined
-      : `HTTP ${response.status}: ${response.statusText}${responseText
-        ? `\nResponse Body: ${responseText.substring(0, 500)}${responseText.length > 500 ? '...' : ''}`
-        : ''
-      }`,
+      : `HTTP ${response.status}: ${response.statusText}${
+          responseText
+            ? `\nResponse Body: ${responseText.substring(0, 500)}${responseText.length > 500 ? '...' : ''}`
+            : ''
+        }`,
   };
 }
 
@@ -442,10 +443,10 @@ async function executeHumanStep(
       output:
         step.inputType === 'confirm'
           ? answer === true ||
-          (typeof answer === 'string' &&
-            (answer.toLowerCase() === 'true' ||
-              answer.toLowerCase() === 'yes' ||
-              answer.toLowerCase() === 'y'))
+            (typeof answer === 'string' &&
+              (answer.toLowerCase() === 'true' ||
+                answer.toLowerCase() === 'yes' ||
+                answer.toLowerCase() === 'y'))
           : answer,
       status: 'success',
     };
@@ -539,7 +540,7 @@ async function executeScriptStep(
     if (!step.allowInsecure) {
       throw new Error(
         'Script execution is disabled by default because Bun uses an insecure VM sandbox. ' +
-        "Set 'allowInsecure: true' on the script step to run it anyway."
+          "Set 'allowInsecure: true' on the script step to run it anyway."
       );
     }
 
@@ -607,7 +608,7 @@ async function executeMemoryStep(
       const embedding = await adapter.embed(text, resolvedModel);
       const metadata = step.metadata
         ? // biome-ignore lint/suspicious/noExplicitAny: metadata typing
-        (ExpressionEvaluator.evaluateObject(step.metadata, context) as Record<string, any>)
+          (ExpressionEvaluator.evaluateObject(step.metadata, context) as Record<string, any>)
         : {};
 
       const id = await memoryDb.store(text, embedding, metadata);
