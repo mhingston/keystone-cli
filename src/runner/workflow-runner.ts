@@ -929,6 +929,77 @@ export class WorkflowRunner {
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          const outputRetries = stepToExecute.outputRetries || 0;
+          const currentAttempt = (context.outputRepairAttempts as number) || 0;
+
+          // Only attempt repair for LLM steps with outputRetries configured
+          if (stepToExecute.type === 'llm' && outputRetries > 0 && currentAttempt < outputRetries) {
+            const strategy = stepToExecute.repairStrategy || 'reask';
+            this.logger.log(
+              `  🔄 Output validation failed, attempting ${strategy} repair (${currentAttempt + 1}/${outputRetries})`
+            );
+
+            // Build repair context with validation errors
+            const repairPrompt = this.buildOutputRepairPrompt(
+              stepToExecute,
+              result.output,
+              message,
+              strategy
+            );
+
+            // Create a modified step with repair context
+            const repairStep = {
+              ...stepToExecute,
+              prompt: repairPrompt,
+            };
+
+            // Recursively execute with incremented repair attempt count
+            const repairContext = {
+              ...context,
+              outputRepairAttempts: currentAttempt + 1,
+            };
+
+            // Execute the repair step
+            const repairResult = await executeStep(repairStep, repairContext, this.logger, {
+              executeWorkflowFn: this.executeSubWorkflow.bind(this),
+              mcpManager: this.mcpManager,
+              memoryDb: this.memoryDb,
+              workflowDir: this.options.workflowDir,
+              dryRun: this.options.dryRun,
+            });
+
+            if (repairResult.status === 'failed') {
+              throw new StepExecutionError(repairResult);
+            }
+
+            // Validate the repaired output
+            try {
+              this.validateSchema(
+                'output',
+                stepToExecute.outputSchema,
+                repairResult.output,
+                stepToExecute.id
+              );
+              this.logger.log(
+                `  ✓ Output repair successful after ${currentAttempt + 1} attempt(s)`
+              );
+              return repairResult;
+            } catch (repairError) {
+              // If still failing, either retry again or give up
+              if (currentAttempt + 1 < outputRetries) {
+                // Try again with updated context
+                return operation();
+              }
+              const repairMessage =
+                repairError instanceof Error ? repairError.message : String(repairError);
+              throw new StepExecutionError({
+                ...repairResult,
+                status: 'failed',
+                error: `Output validation failed after ${outputRetries} repair attempts: ${repairMessage}`,
+              });
+            }
+          }
+
           throw new StepExecutionError({
             ...result,
             status: 'failed',
@@ -1351,6 +1422,51 @@ Please provide the fixed step configuration as JSON.`;
     } catch (err) {
       throw new Error(`Mechanic unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  /**
+   * Build a repair prompt for output validation failures
+   */
+  private buildOutputRepairPrompt(
+    step: Step,
+    output: unknown,
+    validationError: string,
+    strategy: 'reask' | 'repair' | 'hybrid'
+  ): string {
+    const llmStep = step as import('../parser/schema.ts').LlmStep;
+    const originalPrompt = llmStep.prompt;
+    const outputSchema = step.outputSchema;
+
+    const strategyInstructions = {
+      reask: `Please try again, carefully following the output format requirements.`,
+      repair: `Please fix the output to match the required schema. You may need to restructure, add missing fields, or correct data types.`,
+      hybrid: `Please fix the output to match the required schema. If you cannot fix it, regenerate a completely new response.`,
+    };
+
+    return `${originalPrompt}
+
+---
+
+**OUTPUT REPAIR REQUIRED**
+
+Your previous response failed validation. Here are the details:
+
+**Your Previous Output:**
+\`\`\`json
+${typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
+\`\`\`
+
+**Validation Error:**
+${validationError}
+
+**Required Output Schema:**
+\`\`\`json
+${JSON.stringify(outputSchema, null, 2)}
+\`\`\`
+
+${strategyInstructions[strategy]}
+
+Please provide a corrected response that exactly matches the required schema.`;
   }
 
   /**

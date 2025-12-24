@@ -39,6 +39,7 @@ export interface ExpressionContext {
   output?: unknown;
   autoHealAttempts?: number;
   reflexionAttempts?: number;
+  outputRepairAttempts?: number;
   last_failed_step?: { id: string; error: string };
 }
 

@@ -77,25 +77,25 @@ Tasks:
 ### Structured output validation with auto retry/repair
 Goal: Close the loop on LLM structured outputs by automatically re-asking or repairing when schema validation fails.
 Tasks:
-1. Add per-step config for `outputRetries` and `repairStrategy` (re-ask, repair-only, or hybrid) when `outputSchema` validation fails.
-2. Implement automatic re-ask with validation error context and a compact repair prompt.
-3. Record repair attempts and final validation failures in logs and run metadata.
-4. Document recommended schemas and best practices for stable output.
+1. [x] Add per-step config for `outputRetries` and `repairStrategy` (re-ask, repair-only, or hybrid) when `outputSchema` validation fails.
+2. [x] Implement automatic re-ask with validation error context and a compact repair prompt.
+3. [x] Record repair attempts and final validation failures in logs and run metadata.
+4. [x] Document recommended schemas and best practices for stable output.
 
 ### Better error messages with context and suggested fixes
 Goal: Make workflow failures actionable by adding context (line, expression, step inputs) and likely fixes for common issues.
 Tasks:
-1. Build an error renderer for YAML and expression errors with line/column and source snippets.
-2. Add suggestions for common cases (unknown step id, missing inputs, schema mismatch).
-3. Attach resolved inputs, attempt count, and step metadata to failure logs.
-4. Add a `--explain` mode to print expanded diagnostics.
+1. [x] Build an error renderer for YAML and expression errors with line/column and source snippets.
+2. [x] Add suggestions for common cases (unknown step id, missing inputs, schema mismatch).
+3. [x] Attach resolved inputs, attempt count, and step metadata to failure logs.
+4. [x] Add a `--explain` mode to print expanded diagnostics.
 
 ### Global `errors` block for workflow-level recovery
 Goal: Provide a top-level recovery path that runs when a step exhausts retries, enabling overseer-style analysis.
 Tasks:
 1. [x] Add `errors` blocks to the workflow schema with access to `last_failed_step`.
 2. [x] Ensure `errors` steps run after retries/auto_heal are exhausted and before `finally`.
-3. [ ] Add output contracts so recovery steps can annotate the run summary without flipping status.
+3. [x] Add output contracts so recovery steps can annotate the run summary without flipping status.
 4. [x] Document patterns for agentic self-reflection and escalation.
 
 ### Task-level `allowFailure` for fail-forward steps

@@ -200,6 +200,7 @@ program
   .description('Validate workflow files')
   .argument('[path]', 'Workflow file or directory to validate (default: .keystone/workflows/)')
   .option('--strict', 'Enable strict validation (schemas, enums)')
+  .option('--explain', 'Show detailed error context with suggestions')
   .action(async (pathArg, options) => {
     const path = pathArg || '.keystone/workflows/';
 
@@ -241,9 +242,28 @@ program
           console.log(`  ✓ ${file.padEnd(40)} ${workflow.name} (${workflow.steps.length} steps)`);
           successCount++;
         } catch (error) {
-          console.error(
-            `  ✗ ${file.padEnd(40)} ${error instanceof Error ? error.message : String(error)}`
-          );
+          if (options.explain) {
+            const { readFileSync } = await import('node:fs');
+            const { formatYamlError, renderError, formatError } = await import(
+              './utils/error-renderer.ts'
+            );
+            try {
+              const source = readFileSync(file, 'utf-8');
+              const formatted = formatYamlError(error as Error, source, file);
+              console.error(renderError({ message: formatted.summary, source, filePath: file }));
+            } catch {
+              console.error(
+                renderError({
+                  message: error instanceof Error ? error.message : String(error),
+                  filePath: file,
+                })
+              );
+            }
+          } else {
+            console.error(
+              `  ✗ ${file.padEnd(40)} ${error instanceof Error ? error.message : String(error)}`
+            );
+          }
           failCount++;
         }
       }
@@ -291,6 +311,7 @@ program
   .option('--dry-run', 'Show what would be executed without actually running it')
   .option('--debug', 'Enable interactive debug mode on failure')
   .option('--resume', 'Resume the last run of this workflow if it failed or was paused')
+  .option('--explain', 'Show detailed error context with suggestions on failure')
   .action(async (workflowPathArg, options) => {
     const inputs = parseInputs(options.input);
 

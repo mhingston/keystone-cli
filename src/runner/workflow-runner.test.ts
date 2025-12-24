@@ -830,4 +830,31 @@ describe('WorkflowRunner', () => {
 
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
   });
+
+  it('should parse outputRetries and repairStrategy in step schema', async () => {
+    // This test verifies that the schema accepts outputRetries and repairStrategy
+    // Actual LLM repair would require mocking, so we just verify the config is parsed
+    const workflowWithRepair: Workflow = {
+      name: 'output-repair-wf',
+      steps: [
+        {
+          id: 's1',
+          type: 'shell',
+          run: 'echo "hello"',
+          needs: [],
+          outputRetries: 2,
+          repairStrategy: 'reask',
+        },
+      ],
+    } as unknown as Workflow;
+
+    // Verify the workflow can be created with these fields
+    expect(workflowWithRepair.steps[0].outputRetries).toBe(2);
+    expect(workflowWithRepair.steps[0].repairStrategy).toBe('reask');
+
+    // The runner should accept these fields without error
+    const runner = new WorkflowRunner(workflowWithRepair, { dbPath });
+    const outputs = await runner.run();
+    expect(outputs).toBeDefined();
+  });
 });

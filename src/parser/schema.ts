@@ -120,6 +120,8 @@ const BaseStepSchema = z.object({
   learn: z.boolean().optional(),
   inputSchema: z.any().optional(),
   outputSchema: z.any().optional(),
+  outputRetries: z.number().int().min(0).optional(), // Max retries for output validation failures
+  repairStrategy: z.enum(['reask', 'repair', 'hybrid']).optional(), // Strategy for output repair
 });
 
 // ===== Step Type Schemas =====
