@@ -118,6 +118,7 @@ const BaseStepSchema = z.object({
   foreach: z.string().optional(),
   // Accept both number and string (for expressions or YAML number-as-string)
   concurrency: z.union([z.number().int().positive(), z.string()]).optional(),
+  pool: z.string().optional(), // Resource pool to use for this step
   transform: z.string().optional(),
   learn: z.boolean().optional(),
   inputSchema: z.any().optional(),
@@ -280,6 +281,7 @@ export const WorkflowSchema = z.object({
   outputSchema: z.any().optional(), // JSON Schema for final workflow outputs
   env: z.record(z.string()).optional(),
   concurrency: z.union([z.number().int().positive(), z.string()]).optional(),
+  pools: z.record(z.union([z.number().int().positive(), z.string()])).optional(), // Resource pool overrides
   steps: z.array(StepSchema),
   errors: z.array(StepSchema).optional(),
   finally: z.array(StepSchema).optional(),

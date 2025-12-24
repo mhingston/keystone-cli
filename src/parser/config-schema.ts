@@ -64,6 +64,16 @@ export const ConfigSchema = z.object({
       ])
     )
     .default({}),
+  concurrency: z
+    .object({
+      default: z.number().int().positive().default(10),
+      pools: z.record(z.number().int().positive()).default({
+        llm: 2,
+        shell: 5,
+        http: 10,
+      }),
+    })
+    .default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

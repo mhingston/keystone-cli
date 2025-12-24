@@ -6,7 +6,11 @@ import { MemoryDb } from '../db/memory-db.ts';
 import { type RunStatus, WorkflowDb } from '../db/workflow-db.ts';
 import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
-import type { Step, Workflow, WorkflowStep } from '../parser/schema.ts';
+import {
+  type Step,
+  type Workflow,
+  type WorkflowStep,
+} from '../parser/schema.ts';
 import { WorkflowParser } from '../parser/workflow-parser.ts';
 import { StepStatus, type StepStatusType, WorkflowStatus } from '../types/status.ts';
 import { ConfigLoader } from '../utils/config-loader.ts';
@@ -17,6 +21,7 @@ import { WorkflowRegistry } from '../utils/workflow-registry.ts';
 import { ForeachExecutor } from './foreach-executor.ts';
 import { type LLMMessage, getAdapter } from './llm-adapter.ts';
 import { MCPManager } from './mcp-manager.ts';
+import { ResourcePoolManager } from './resource-pool.ts';
 import { withRetry } from './retry.ts';
 import { type StepResult, WorkflowSuspendedError, WorkflowWaitingError, executeStep } from './step-executor.ts';
 import { withTimeout } from './timeout.ts';
@@ -78,6 +83,7 @@ export interface RunOptions {
   getAdapter?: typeof getAdapter;
   depth?: number;
   allowSuccessResume?: boolean;
+  resourcePoolManager?: ResourcePoolManager;
 }
 
 export interface StepContext {
@@ -129,6 +135,7 @@ export class WorkflowRunner {
   private depth = 0;
   private lastFailedStep?: { id: string; error: string };
   private abortController = new AbortController();
+  private resourcePool: ResourcePoolManager;
 
   /**
    * Get the abort signal for cancellation checks
@@ -164,6 +171,32 @@ export class WorkflowRunner {
     this.rawLogger = rawLogger;
     this.logger = new RedactingLogger(rawLogger, this.redactor);
     this.mcpManager = options.mcpManager || new MCPManager();
+
+    // Initialize resource pool manager
+    if (options.resourcePoolManager) {
+      this.resourcePool = options.resourcePoolManager;
+    } else {
+      const config = ConfigLoader.load();
+      const globalPools = config.concurrency?.pools || {};
+      const workflowPools: Record<string, number> = {};
+
+      // Parse workflow-level pool overrides
+      if (this.workflow.pools) {
+        const baseContext = this.buildContext();
+        for (const [name, limit] of Object.entries(this.workflow.pools)) {
+          if (typeof limit === 'string') {
+            workflowPools[name] = Number(ExpressionEvaluator.evaluate(limit, baseContext));
+          } else {
+            workflowPools[name] = limit;
+          }
+        }
+      }
+
+      this.resourcePool = new ResourcePoolManager(this.logger, {
+        defaultLimit: config.concurrency?.default || 10,
+        pools: { ...globalPools, ...workflowPools },
+      });
+    }
 
     if (options.resumeRunId) {
       // Resume existing run
@@ -1876,7 +1909,8 @@ Please provide a corrected response that exactly matches the required schema.`;
         this.db,
         this.logger,
         this.executeStepInternal.bind(this),
-        this.abortSignal
+        this.abortSignal,
+        this.resourcePool
       );
 
       const existingContext = this.stepContexts.get(step.id) as ForeachStepContext;
@@ -2120,21 +2154,32 @@ Please provide a corrected response that exactly matches the required schema.`;
             if (dependenciesMet && runningPromises.size < globalConcurrencyLimit) {
               pendingSteps.delete(stepId);
 
+              // Determine pool for this step
+              const poolName = step.pool || step.type;
+
               // Start execution
               const stepIndex = stepIndices.get(stepId);
-              this.logger.log(
-                `[${stepIndex}/${totalSteps}] ▶ Executing step: ${step.id} (${step.type})`
-              );
-              const promise = this.executeStepWithForeach(step)
-                .then(() => {
+
+              const promise = (async () => {
+                let release: (() => void) | undefined;
+                try {
+                  this.logger.debug(`[${stepIndex}/${totalSteps}] ⏳ Waiting for pool: ${poolName}`);
+                  release = await this.resourcePool.acquire(poolName, { signal: this.abortSignal });
+
+                  this.logger.log(
+                    `[${stepIndex}/${totalSteps}] ▶ Executing step: ${step.id} (${step.type})`
+                  );
+
+                  await this.executeStepWithForeach(step);
                   completedSteps.add(stepId);
-                  runningPromises.delete(stepId);
                   this.logger.log(`[${stepIndex}/${totalSteps}] ✓ Step ${step.id} completed\n`);
-                })
-                .catch((err) => {
+                } finally {
+                  if (typeof release === 'function') {
+                    release();
+                  }
                   runningPromises.delete(stepId);
-                  throw err; // Fail fast
-                });
+                }
+              })();
 
               runningPromises.set(stepId, promise);
             }
@@ -2503,6 +2548,7 @@ Please provide a corrected response that exactly matches the required schema.`;
         workflowDir: dirname(workflowPath),
         depth: this.depth + 1,
         allowSuccessResume: true,
+        resourcePoolManager: this.resourcePool,
       });
 
       // Restore sub-workflow state

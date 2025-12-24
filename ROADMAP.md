@@ -159,18 +159,18 @@ Tasks:
 4. [x] Add validation for missing outputs and type mismatches with path-level errors.
 5. [x] Document patterns for contract-first subflows and migration guidance.
 
-### Concurrency limits and backpressure management
+### [x] Concurrency limits and backpressure management
 Goal: Avoid overload by introducing global and per-resource concurrency pools with fair scheduling.
 Notes:
 1. Pools should be global by default with per-workflow overrides.
 2. Queueing should be fair and cancel-aware to avoid starvation.
 3. Backpressure should interact cleanly with timeouts and retries.
 Tasks:
-1. Add resource pools by step type and optional tags (e.g., `llm`, `http`, `shell`).
-2. Implement queueing with priority, fairness, and cancel-aware removal.
-3. Expose queue depth, wait time, and utilization metrics per pool.
-4. Add config for defaults and per-workflow overrides, including caps per run.
-5. Add tests for fairness, starvation prevention, and timeout interactions.
+1. [x] Add resource pools by step type and optional tags (e.g., `llm`, `http`, `shell`).
+2. [x] Implement queueing with priority, fairness, and cancel-aware removal.
+3. [x] Expose queue depth, wait time, and utilization metrics per pool.
+4. [x] Add config for defaults and per-workflow overrides, including caps per run.
+5. [x] Add tests for fairness, starvation prevention, and timeout interactions.
 
 ### Engine step for external autonomous tools
 Goal: Allow workflows to hand off tasks to autonomous CLIs as first-class steps and capture their structured summary.

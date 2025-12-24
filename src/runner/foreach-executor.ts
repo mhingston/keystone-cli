@@ -5,6 +5,7 @@ import type { Step } from '../parser/schema.ts';
 import { StepStatus, WorkflowStatus } from '../types/status.ts';
 import type { Logger } from '../utils/logger.ts';
 import { WorkflowSuspendedError } from './step-executor.ts';
+import { ResourcePoolManager } from './resource-pool.ts';
 import type { ForeachStepContext, StepContext } from './workflow-runner.ts';
 
 export type ExecuteStepCallback = (
@@ -21,8 +22,9 @@ export class ForeachExecutor {
     private db: WorkflowDb,
     private logger: Logger,
     private executeStepFn: ExecuteStepCallback,
-    private abortSignal?: AbortSignal
-  ) {}
+    private abortSignal?: AbortSignal,
+    private resourcePool?: ResourcePoolManager
+  ) { }
 
   /**
    * Aggregate outputs from multiple iterations of a foreach step
@@ -222,13 +224,25 @@ export class ForeachExecutor {
             // Execute and store result
             try {
               if (aborted || this.abortSignal?.aborted) break;
-              this.logger.log(`  ⤷ [${i + 1}/${items.length}] Executing iteration...`);
-              itemResults[i] = await this.executeStepFn(step, itemContext, stepExecId);
-              if (
-                itemResults[i].status === StepStatus.FAILED ||
-                itemResults[i].status === StepStatus.SUSPENDED
-              ) {
-                aborted = true;
+
+              const poolName = step.pool || step.type;
+              let release: (() => void) | undefined;
+
+              try {
+                if (this.resourcePool) {
+                  release = await this.resourcePool.acquire(poolName, { signal: this.abortSignal });
+                }
+
+                this.logger.log(`  ⤷ [${i + 1}/${items.length}] Executing iteration...`);
+                itemResults[i] = await this.executeStepFn(step, itemContext, stepExecId);
+                if (
+                  itemResults[i].status === StepStatus.FAILED ||
+                  itemResults[i].status === StepStatus.SUSPENDED
+                ) {
+                  aborted = true;
+                }
+              } finally {
+                release?.();
               }
             } catch (error) {
               aborted = true;
