@@ -358,7 +358,7 @@ describe('WorkflowRunner', () => {
     expect(String(outputs.error || '')).toMatch(/exit 1|Step failed|Shell command exited/);
   });
 
-  it('should deduplicate steps using idempotencyKey', async () => {
+  it('should deduplicate steps using idempotencyKey within a run', async () => {
     const idempotencyDbPath = 'test-idempotency.db';
     if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
 
@@ -385,29 +385,97 @@ describe('WorkflowRunner', () => {
           needs: [],
           idempotencyKey: '"fixed-key-123"',
         },
+        {
+          id: 's2',
+          type: 'shell',
+          run: 'echo "second"',
+          needs: ['s1'],
+          idempotencyKey: '"fixed-key-123"',
+        },
       ],
       outputs: {
-        out: '${{ steps.s1.output.stdout.trim() }}',
+        out1: '${{ steps.s1.output.stdout.trim() }}',
+        out2: '${{ steps.s2.output.stdout.trim() }}',
       },
     } as unknown as Workflow;
 
-    // First run - should execute (no idempotency hit)
-    const runner1 = new WorkflowRunner(idempotencyWorkflow, {
+    const runner = new WorkflowRunner(idempotencyWorkflow, {
       dbPath: idempotencyDbPath,
       logger: runnerLogger,
     });
-    const outputs1 = await runner1.run();
-    expect(outputs1.out).toBe('executed');
-    expect(idempotencyHitCount).toBe(0);
-
-    // Second run - should hit idempotency cache
-    const runner2 = new WorkflowRunner(idempotencyWorkflow, {
-      dbPath: idempotencyDbPath,
-      logger: runnerLogger,
-    });
-    const outputs2 = await runner2.run();
-    expect(outputs2.out).toBe('executed');
+    const outputs = await runner.run();
+    expect(outputs.out1).toBe('executed');
+    expect(outputs.out2).toBe('executed');
     expect(idempotencyHitCount).toBe(1);
+
+    if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
+  });
+
+  it('should allow disabling idempotency deduplication', async () => {
+    const idempotencyDbPath = 'test-idempotency-disabled.db';
+    if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
+
+    const idempotencyWorkflow: Workflow = {
+      name: 'idempotency-disabled-wf',
+      steps: [
+        {
+          id: 's1',
+          type: 'shell',
+          run: 'echo "first"',
+          needs: [],
+          idempotencyKey: '"fixed-key-123"',
+        },
+        {
+          id: 's2',
+          type: 'shell',
+          run: 'echo "second"',
+          needs: ['s1'],
+          idempotencyKey: '"fixed-key-123"',
+        },
+      ],
+      outputs: {
+        out1: '${{ steps.s1.output.stdout.trim() }}',
+        out2: '${{ steps.s2.output.stdout.trim() }}',
+      },
+    } as unknown as Workflow;
+
+    const runner = new WorkflowRunner(idempotencyWorkflow, {
+      dbPath: idempotencyDbPath,
+      dedup: false,
+    });
+    const outputs = await runner.run();
+    expect(outputs.out1).toBe('first');
+    expect(outputs.out2).toBe('second');
+
+    if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
+  });
+
+  it('should detect in-flight idempotency keys', async () => {
+    const idempotencyDbPath = 'test-idempotency-inflight.db';
+    if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
+
+    const idempotencyWorkflow: Workflow = {
+      name: 'idempotency-inflight-wf',
+      steps: [
+        {
+          id: 's1',
+          type: 'sleep',
+          duration: 50,
+          needs: [],
+          idempotencyKey: '"same-key"',
+        },
+        {
+          id: 's2',
+          type: 'sleep',
+          duration: 50,
+          needs: [],
+          idempotencyKey: '"same-key"',
+        },
+      ],
+    } as unknown as Workflow;
+
+    const runner = new WorkflowRunner(idempotencyWorkflow, { dbPath: idempotencyDbPath });
+    await expect(runner.run()).rejects.toThrow(/Idempotency key already in-flight/);
 
     if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
   });

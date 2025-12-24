@@ -72,6 +72,7 @@ export interface RunOptions {
   resumeInputs?: Record<string, unknown>;
   dryRun?: boolean;
   debug?: boolean;
+  dedup?: boolean;
   getAdapter?: typeof getAdapter;
   depth?: number;
 }
@@ -391,6 +392,10 @@ export class WorkflowRunner {
               effectiveStatus = StepStatus.SUCCESS;
             }
           }
+          let effectiveError = exec.error || undefined;
+          if (exec.status === StepStatus.WAITING && effectiveStatus === StepStatus.SUCCESS) {
+            effectiveError = undefined;
+          }
 
           this.stepContexts.set(stepId, {
             output,
@@ -399,7 +404,7 @@ export class WorkflowRunner {
                 ? (output as Record<string, unknown>)
                 : {},
             status: effectiveStatus,
-            error: exec.error || undefined,
+            error: effectiveError,
           });
           if (effectiveStatus !== StepStatus.SUSPENDED && effectiveStatus !== StepStatus.WAITING) {
             completedStepIds.add(stepId);
@@ -884,6 +889,104 @@ export class WorkflowRunner {
     }
   }
 
+  private async claimIdempotencyRecord(
+    scopedKey: string,
+    stepId: string,
+    ttlSeconds?: number
+  ): Promise<
+    | { status: 'hit'; output: unknown; error?: string }
+    | { status: 'claimed' }
+    | { status: 'in-flight' }
+  > {
+    try {
+      await this.db.clearExpiredIdempotencyRecord(scopedKey);
+
+      const existing = await this.db.getIdempotencyRecord(scopedKey);
+      if (existing) {
+        if (existing.status === StepStatus.SUCCESS) {
+          let output: unknown = null;
+          try {
+            output = existing.output ? JSON.parse(existing.output) : null;
+          } catch (parseError) {
+            this.logger.warn(
+              `  ⚠️ Failed to parse idempotency output for ${stepId}: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+            );
+          }
+          return { status: 'hit', output, error: existing.error || undefined };
+        }
+        if (existing.status === StepStatus.RUNNING) {
+          return { status: 'in-flight' };
+        }
+
+        const claimed = await this.db.markIdempotencyRecordRunning(
+          scopedKey,
+          this.runId,
+          stepId,
+          ttlSeconds
+        );
+        if (claimed) {
+          return { status: 'claimed' };
+        }
+      }
+
+      const inserted = await this.db.insertIdempotencyRecordIfAbsent(
+        scopedKey,
+        this.runId,
+        stepId,
+        StepStatus.RUNNING,
+        ttlSeconds
+      );
+      if (inserted) {
+        return { status: 'claimed' };
+      }
+
+      const current = await this.db.getIdempotencyRecord(scopedKey);
+      if (current?.status === StepStatus.SUCCESS) {
+        let output: unknown = null;
+        try {
+          output = current.output ? JSON.parse(current.output) : null;
+        } catch (parseError) {
+          this.logger.warn(
+            `  ⚠️ Failed to parse idempotency output for ${stepId}: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+          );
+        }
+        return { status: 'hit', output, error: current.error || undefined };
+      }
+      return { status: 'in-flight' };
+    } catch (error) {
+      this.logger.warn(
+        `  ⚠️ Failed to claim idempotency key for ${stepId}: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return { status: 'claimed' };
+    }
+  }
+
+  private async recordIdempotencyResult(
+    scopedKey: string | undefined,
+    stepId: string,
+    status: StepStatusType,
+    output: unknown,
+    error?: string,
+    ttlSeconds?: number
+  ): Promise<void> {
+    if (!scopedKey) return;
+    try {
+      await this.db.storeIdempotencyRecord(
+        scopedKey,
+        this.runId,
+        stepId,
+        status,
+        output,
+        error,
+        ttlSeconds
+      );
+    } catch (err) {
+      this.logger.warn(
+        `  ⚠️ Failed to store idempotency record: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
   /**
    * Execute a single step instance and return the result
    * Does NOT update global stepContexts
@@ -891,35 +994,80 @@ export class WorkflowRunner {
   private async executeStepInternal(
     step: Step,
     context: ExpressionContext,
-    stepExecId: string
+    stepExecId: string,
+    idempotencyContext?: {
+      rawKey: string;
+      scopedKey: string;
+      ttlSeconds?: number;
+      claimed: boolean;
+    }
   ): Promise<StepContext> {
-    // Check idempotency key for dedup
-    let idempotencyKey: string | undefined;
-    if (step.idempotencyKey) {
+    // Check idempotency key for dedup (scoped per run by default)
+    const dedupEnabled = this.options.dedup !== false;
+    let idempotencyKey: string | undefined = idempotencyContext?.rawKey;
+    let scopedIdempotencyKey: string | undefined = idempotencyContext?.scopedKey;
+    let idempotencyTtlSeconds: number | undefined = idempotencyContext?.ttlSeconds;
+    let idempotencyClaimed = idempotencyContext?.claimed ?? false;
+    if (dedupEnabled && !idempotencyClaimed && step.idempotencyKey) {
       try {
         idempotencyKey = ExpressionEvaluator.evaluateString(step.idempotencyKey, context);
-        if (idempotencyKey) {
-          const existing = await this.db.getIdempotencyRecord(idempotencyKey);
-          if (existing && existing.status === 'success') {
-            this.logger.log(`  ⟳ Step ${step.id} skipped (idempotency hit: ${idempotencyKey})`);
-            const output = existing.output ? JSON.parse(existing.output) : null;
-            await this.db.completeStep(stepExecId, 'success', output, undefined);
-            return {
-              output,
-              outputs:
-                typeof output === 'object' && output !== null && !Array.isArray(output)
-                  ? (output as Record<string, unknown>)
-                  : {},
-              status: 'success',
-            };
-          }
-        }
       } catch (error) {
         this.logger.warn(
           `  ⚠️ Failed to evaluate idempotencyKey for ${step.id}: ${error instanceof Error ? error.message : String(error)}`
         );
       }
+      if (idempotencyKey) {
+        const scope = step.idempotencyScope || 'run';
+        scopedIdempotencyKey = scope === 'run' ? `${this.runId}:${idempotencyKey}` : idempotencyKey;
+        idempotencyTtlSeconds = step.idempotencyTtlSeconds;
+
+          const claim = await this.claimIdempotencyRecord(
+            scopedIdempotencyKey,
+            step.id,
+            idempotencyTtlSeconds
+          );
+        if (claim.status === 'hit') {
+          this.logger.log(`  ⟳ Step ${step.id} skipped (idempotency hit: ${idempotencyKey})`);
+          const output = claim.output;
+          await this.db.completeStep(stepExecId, 'success', output, claim.error || undefined);
+          return {
+            output,
+            outputs:
+              typeof output === 'object' && output !== null && !Array.isArray(output)
+                ? (output as Record<string, unknown>)
+                : {},
+            status: 'success',
+            error: claim.error || undefined,
+          };
+        }
+        if (claim.status === 'in-flight') {
+          const errorMsg = `Idempotency key already in-flight: ${idempotencyKey}`;
+          await this.db.completeStep(
+            stepExecId,
+            StepStatus.FAILED,
+            null,
+            this.redactAtRest ? this.redactor.redact(errorMsg) : errorMsg
+          );
+          return {
+            output: null,
+            outputs: {},
+            status: StepStatus.FAILED,
+            error: errorMsg,
+          };
+        }
+        idempotencyClaimed = true;
+      }
     }
+
+    const idempotencyContextForRetry =
+      idempotencyClaimed && scopedIdempotencyKey
+        ? {
+            rawKey: idempotencyKey || scopedIdempotencyKey,
+            scopedKey: scopedIdempotencyKey,
+            ttlSeconds: idempotencyTtlSeconds,
+            claimed: true,
+          }
+        : undefined;
 
     let stepToExecute = step;
 
@@ -944,13 +1092,14 @@ export class WorkflowRunner {
       await this.db.startStep(stepExecId);
     }
 
-    const operation = async () => {
-      const result = await executeStep(stepToExecute, context, this.logger, {
+    const operation = async (attemptContext: ExpressionContext) => {
+      const result = await executeStep(stepToExecute, attemptContext, this.logger, {
         executeWorkflowFn: this.executeSubWorkflow.bind(this),
         mcpManager: this.mcpManager,
         memoryDb: this.memoryDb,
         workflowDir: this.options.workflowDir,
         dryRun: this.options.dryRun,
+        abortSignal: this.abortSignal,
       });
       if (result.status === 'failed') {
         throw new StepExecutionError(result);
@@ -966,7 +1115,7 @@ export class WorkflowRunner {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const outputRetries = stepToExecute.outputRetries || 0;
-          const currentAttempt = (context.outputRepairAttempts as number) || 0;
+          const currentAttempt = (attemptContext.outputRepairAttempts as number) || 0;
 
           // Only attempt repair for LLM steps with outputRetries configured
           if (stepToExecute.type === 'llm' && outputRetries > 0 && currentAttempt < outputRetries) {
@@ -991,7 +1140,7 @@ export class WorkflowRunner {
 
             // Recursively execute with incremented repair attempt count
             const repairContext = {
-              ...context,
+              ...attemptContext,
               outputRepairAttempts: currentAttempt + 1,
             };
 
@@ -1002,6 +1151,7 @@ export class WorkflowRunner {
               memoryDb: this.memoryDb,
               workflowDir: this.options.workflowDir,
               dryRun: this.options.dryRun,
+              abortSignal: this.abortSignal,
             });
 
             if (repairResult.status === 'failed') {
@@ -1024,7 +1174,10 @@ export class WorkflowRunner {
               // If still failing, either retry again or give up
               if (currentAttempt + 1 < outputRetries) {
                 // Try again with updated context
-                return operation();
+                return operation({
+                  ...attemptContext,
+                  outputRepairAttempts: currentAttempt + 1,
+                });
               }
               const repairMessage =
                 repairError instanceof Error ? repairError.message : String(repairError);
@@ -1059,9 +1212,9 @@ export class WorkflowRunner {
 
       const operationWithTimeout = async () => {
         if (step.timeout) {
-          return await withTimeout(operation(), step.timeout, `Step ${step.id}`);
+          return await withTimeout(operation(context), step.timeout, `Step ${step.id}`);
         }
-        return await operation();
+        return await operation(context);
       };
 
       const result = await withRetry(operationWithTimeout, step.retry, async (attempt, error) => {
@@ -1077,6 +1230,23 @@ export class WorkflowRunner {
         : result.error;
 
       if (result.status === StepStatus.SUSPENDED) {
+        if (step.type === 'human') {
+          const existingTimer = await this.db.getTimerByStep(this.runId, step.id);
+          if (!existingTimer) {
+            const timerId = randomUUID();
+            await this.db.createTimer(timerId, this.runId, step.id, 'human');
+          }
+        }
+        if (dedupEnabled && idempotencyClaimed) {
+          await this.recordIdempotencyResult(
+            scopedIdempotencyKey,
+            step.id,
+            StepStatus.SUSPENDED,
+            result.output,
+            result.error,
+            idempotencyTtlSeconds
+          );
+        }
         await this.db.completeStep(
           stepExecId,
           StepStatus.SUSPENDED,
@@ -1091,6 +1261,7 @@ export class WorkflowRunner {
 
       if (result.status === StepStatus.WAITING) {
         const wakeAt = (result.output as any)?.wakeAt;
+        const waitError = `Waiting until ${wakeAt}`;
         // Avoid creating duplicate timers for the same step execution
         const existingTimer = await this.db.getTimerByStep(this.runId, step.id);
         if (!existingTimer) {
@@ -1103,16 +1274,26 @@ export class WorkflowRunner {
             wakeAt
           );
         }
+        if (dedupEnabled && idempotencyClaimed) {
+          await this.recordIdempotencyResult(
+            scopedIdempotencyKey,
+            step.id,
+            StepStatus.WAITING,
+            result.output,
+            waitError,
+            idempotencyTtlSeconds
+          );
+        }
         await this.db.completeStep(
           stepExecId,
           StepStatus.WAITING,
           persistedOutput,
           this.redactAtRest
-            ? this.redactor.redact(`Waiting until ${wakeAt}`)
-            : `Waiting until ${wakeAt}`,
+            ? this.redactor.redact(waitError)
+            : waitError,
           result.usage
         );
-        result.error = `Waiting until ${wakeAt}`;
+        result.error = waitError;
         return result;
       }
 
@@ -1123,6 +1304,12 @@ export class WorkflowRunner {
         persistedError,
         result.usage
       );
+      if (step.type === 'human') {
+        const existingTimer = await this.db.getTimerByStep(this.runId, step.id);
+        if (existingTimer) {
+          await this.db.completeTimer(existingTimer.id);
+        }
+      }
 
       // Auto-Learning logic
       if (step.learn && result.status === StepStatus.SUCCESS) {
@@ -1149,23 +1336,15 @@ export class WorkflowRunner {
         outputs = {};
       }
 
-      // Store idempotency record for successful steps
-      if (idempotencyKey && result.status === 'success') {
-        try {
-          await this.db.storeIdempotencyRecord(
-            idempotencyKey,
-            this.runId,
-            step.id,
-            'success',
-            result.output,
-            undefined,
-            undefined // TTL in seconds (undefined = no expiry)
-          );
-        } catch (error) {
-          this.logger.warn(
-            `  ⚠️ Failed to store idempotency record for ${step.id}: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
+      if (dedupEnabled && idempotencyClaimed) {
+        await this.recordIdempotencyResult(
+          scopedIdempotencyKey,
+          step.id,
+          result.status,
+          result.output,
+          result.error,
+          idempotencyTtlSeconds
+        );
       }
 
       return {
@@ -1200,7 +1379,7 @@ export class WorkflowRunner {
               reflexionAttempts: currentAttempt + 1,
             };
 
-            return this.executeStepInternal(newStep, nextContext, stepExecId);
+            return this.executeStepInternal(newStep, nextContext, stepExecId, idempotencyContextForRetry);
           } catch (healError) {
             this.logger.error(
               `  ✗ Reflexion failed: ${healError instanceof Error ? healError.message : String(healError)}`
@@ -1236,7 +1415,7 @@ export class WorkflowRunner {
               autoHealAttempts: currentAttempt + 1,
             };
 
-            return this.executeStepInternal(newStep, nextContext, stepExecId);
+            return this.executeStepInternal(newStep, nextContext, stepExecId, idempotencyContextForRetry);
           } catch (healError) {
             this.logger.error(
               `  ✗ Auto-heal failed: ${healError instanceof Error ? healError.message : String(healError)}`
@@ -1257,7 +1436,7 @@ export class WorkflowRunner {
             this.logger.log(`  ↻ Retrying step ${step.id} after manual intervention`);
             // We use the modified step if provided, else original
             const stepToRun = action.modifiedStep || step;
-            return this.executeStepInternal(stepToRun, context, stepExecId);
+            return this.executeStepInternal(stepToRun, context, stepExecId, idempotencyContextForRetry);
           }
           if (action.type === 'skip') {
             this.logger.log(`  ⏭️ Skipping step ${step.id} manually`);
@@ -1294,6 +1473,16 @@ export class WorkflowRunner {
           this.redactForStorage(failureOutput),
           this.redactAtRest ? redactedErrorMsg : errorMsg
         );
+        if (dedupEnabled && idempotencyClaimed) {
+          await this.recordIdempotencyResult(
+            scopedIdempotencyKey,
+            step.id,
+            StepStatus.SUCCESS,
+            failureOutput,
+            errorMsg,
+            idempotencyTtlSeconds
+          );
+        }
         return {
           output: failureOutput,
           outputs: failureOutputs,
@@ -1309,6 +1498,16 @@ export class WorkflowRunner {
         this.redactForStorage(failureOutput),
         this.redactAtRest ? redactedErrorMsg : errorMsg
       );
+      if (dedupEnabled && idempotencyClaimed) {
+        await this.recordIdempotencyResult(
+          scopedIdempotencyKey,
+          step.id,
+          StepStatus.FAILED,
+          failureOutput,
+          errorMsg,
+          idempotencyTtlSeconds
+        );
+      }
 
       // Return failed context
       return {
@@ -1592,7 +1791,8 @@ Please provide a corrected response that exactly matches the required schema.`;
       }
 
       if (result.status === 'failed') {
-        throw new Error(`Step ${step.id} failed`);
+        const suffix = result.error ? `: ${result.error}` : '';
+        throw new Error(`Step ${step.id} failed${suffix}`);
       }
     }
   }
@@ -1625,6 +1825,7 @@ Please provide a corrected response that exactly matches the required schema.`;
       mcpManager: this.mcpManager,
       workflowDir: subWorkflowDir,
       depth: this.depth + 1,
+      dedup: this.options.dedup,
     });
 
     try {

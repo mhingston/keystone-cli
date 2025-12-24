@@ -48,6 +48,7 @@ export interface LLMAdapter {
       model?: string;
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
+      signal?: AbortSignal;
     }
   ): Promise<LLMResponse>;
   embed?(text: string, model?: string): Promise<number[]>;
@@ -72,6 +73,7 @@ export class OpenAIAdapter implements LLMAdapter {
       model?: string;
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
+      signal?: AbortSignal;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -88,6 +90,7 @@ export class OpenAIAdapter implements LLMAdapter {
         tools: options?.tools,
         stream: isStreaming,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -163,6 +166,7 @@ export class AnthropicAdapter implements LLMAdapter {
       model?: string;
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
+      signal?: AbortSignal;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -263,6 +267,7 @@ export class AnthropicAdapter implements LLMAdapter {
         max_tokens: 4096,
         stream: isStreaming,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -418,6 +423,7 @@ export class CopilotAdapter implements LLMAdapter {
       model?: string;
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
+      signal?: AbortSignal;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -441,6 +447,7 @@ export class CopilotAdapter implements LLMAdapter {
         tools: options?.tools,
         stream: isStreaming,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -476,7 +483,15 @@ export class LocalEmbeddingAdapter implements LLMAdapter {
   // biome-ignore lint/suspicious/noExplicitAny: transformers pipeline type
   private static extractor: any = null;
 
-  async chat(): Promise<LLMResponse> {
+  async chat(
+    _messages: LLMMessage[],
+    _options?: {
+      model?: string;
+      tools?: LLMTool[];
+      onStream?: (chunk: string) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<LLMResponse> {
     throw new Error(
       'Local models in Keystone currently only support memory/embedding operations. ' +
         'To use a local LLM for chat/generation, please use an OpenAI-compatible local server ' +

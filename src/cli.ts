@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 
@@ -238,7 +238,8 @@ program
         try {
           const workflow = WorkflowParser.loadWorkflow(file);
           if (options.strict) {
-            WorkflowParser.validateStrict(workflow);
+            const source = readFileSync(file, 'utf-8');
+            WorkflowParser.validateStrict(workflow, source);
           }
           console.log(`  ✓ ${file.padEnd(40)} ${workflow.name} (${workflow.steps.length} steps)`);
           successCount++;
@@ -311,14 +312,16 @@ program
   .option('-i, --input <key=value...>', 'Input values')
   .option('--dry-run', 'Show what would be executed without actually running it')
   .option('--debug', 'Enable interactive debug mode on failure')
+  .option('--no-dedup', 'Disable idempotency/deduplication')
   .option('--resume', 'Resume the last run of this workflow if it failed or was paused')
   .option('--explain', 'Show detailed error context with suggestions on failure')
   .action(async (workflowPathArg, options) => {
     const inputs = parseInputs(options.input);
+    let resolvedPath: string | undefined;
 
     // Load and validate workflow
     try {
-      const resolvedPath = WorkflowRegistry.resolvePath(workflowPathArg);
+      resolvedPath = WorkflowRegistry.resolvePath(workflowPathArg);
       const workflow = WorkflowParser.loadWorkflow(resolvedPath);
 
       // Import WorkflowRunner dynamically
@@ -359,6 +362,7 @@ program
         workflowDir: dirname(resolvedPath),
         dryRun: !!options.dryRun,
         debug: !!options.debug,
+        dedup: options.dedup,
         resumeRunId,
         logger,
       });
@@ -371,10 +375,28 @@ program
       }
       process.exit(0);
     } catch (error) {
-      console.error(
-        '✗ Failed to execute workflow:',
-        error instanceof Error ? error.message : error
-      );
+      if (options.explain) {
+        const message = error instanceof Error ? error.message : String(error);
+        try {
+          const { readFileSync } = await import('node:fs');
+          const { renderError } = await import('./utils/error-renderer.ts');
+          const source = resolvedPath ? readFileSync(resolvedPath, 'utf-8') : undefined;
+          console.error(
+            renderError({
+              message,
+              source,
+              filePath: resolvedPath,
+            })
+          );
+        } catch {
+          console.error('✗ Failed to execute workflow:', message);
+        }
+      } else {
+        console.error(
+          '✗ Failed to execute workflow:',
+          error instanceof Error ? error.message : error
+        );
+      }
       process.exit(1);
     }
   });
@@ -773,7 +795,7 @@ program
 
     const poll = async () => {
       try {
-        const pending = await db.getPendingTimers();
+        const pending = await db.getPendingTimers(undefined, 'sleep');
         if (pending.length > 0) {
           console.log(`\n⏰ Found ${pending.length} ready timer(s)`);
 

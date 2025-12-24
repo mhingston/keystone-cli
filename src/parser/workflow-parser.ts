@@ -273,21 +273,73 @@ export class WorkflowParser {
   /**
    * Strict validation for schema definitions and enums.
    */
-  static validateStrict(workflow: Workflow): void {
+  static validateStrict(workflow: Workflow, source?: string): void {
     const errors: string[] = [];
+
+    const locateSchema = (
+      stepId: string,
+      field: 'inputSchema' | 'outputSchema'
+    ): { line: number; column: number } | null => {
+      if (!source) return null;
+      const lines = source.split('\n');
+      const escaped = stepId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const inlineId = new RegExp(`^\\s*-\\s*id:\\s*['"]?${escaped}['"]?\\s*(#.*)?$`);
+      const idLine = new RegExp(`^\\s*id:\\s*['"]?${escaped}['"]?\\s*(#.*)?$`);
+
+      let inStep = false;
+      let stepIndent = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        const indent = line.match(/^\s*/)?.[0].length ?? 0;
+
+        if (!inStep) {
+          if (inlineId.test(line) || idLine.test(line)) {
+            inStep = true;
+            stepIndent = indent;
+          }
+          continue;
+        }
+
+        if (trimmed.startsWith('- ') && indent <= stepIndent) {
+          inStep = false;
+          if (inlineId.test(line) || idLine.test(line)) {
+            inStep = true;
+            stepIndent = indent;
+          }
+          continue;
+        }
+
+        if (trimmed.startsWith(`${field}:`)) {
+          const column = line.indexOf(field) + 1;
+          return { line: i + 1, column: column > 0 ? column : 1 };
+        }
+      }
+
+      return null;
+    };
 
     const allSteps = [...workflow.steps, ...(workflow.errors || []), ...(workflow.finally || [])];
     for (const step of allSteps) {
       if (step.inputSchema) {
         const result = validateJsonSchemaDefinition(step.inputSchema);
         if (!result.valid) {
-          errors.push(`step "${step.id}" inputSchema: ${result.error}`);
+          const location = locateSchema(step.id, 'inputSchema');
+          const locSuffix = location
+            ? ` (at line ${location.line}, column ${location.column})`
+            : '';
+          errors.push(`step "${step.id}" inputSchema${locSuffix}: ${result.error}`);
         }
       }
       if (step.outputSchema) {
         const result = validateJsonSchemaDefinition(step.outputSchema);
         if (!result.valid) {
-          errors.push(`step "${step.id}" outputSchema: ${result.error}`);
+          const location = locateSchema(step.id, 'outputSchema');
+          const locSuffix = location
+            ? ` (at line ${location.line}, column ${location.column})`
+            : '';
+          errors.push(`step "${step.id}" outputSchema${locSuffix}: ${result.error}`);
         }
       }
     }

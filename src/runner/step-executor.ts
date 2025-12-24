@@ -69,6 +69,7 @@ export interface StepExecutorOptions {
   memoryDb?: MemoryDb;
   workflowDir?: string;
   dryRun?: boolean;
+  abortSignal?: AbortSignal;
   // Dependency injection for testing
   getAdapter?: typeof getAdapter;
   sandbox?: typeof SafeSandbox;
@@ -89,11 +90,15 @@ export async function executeStep(
     memoryDb,
     workflowDir,
     dryRun,
+    abortSignal,
     getAdapter: injectedGetAdapter,
     sandbox: injectedSandbox,
   } = options;
 
   try {
+    if (abortSignal?.aborted) {
+      throw new Error('Step canceled');
+    }
     if (dryRun && step.type !== 'shell') {
       logger.log(`[DRY RUN] Skipping ${step.type} step: ${step.id}`);
       return {
@@ -105,19 +110,19 @@ export async function executeStep(
     let result: StepResult;
     switch (step.type) {
       case 'shell':
-        result = await executeShellStep(step, context, logger, dryRun);
+        result = await executeShellStep(step, context, logger, dryRun, abortSignal);
         break;
       case 'file':
         result = await executeFileStep(step, context, logger, dryRun);
         break;
       case 'request':
-        result = await executeRequestStep(step, context, logger);
+        result = await executeRequestStep(step, context, logger, abortSignal);
         break;
       case 'human':
-        result = await executeHumanStep(step, context, logger);
+        result = await executeHumanStep(step, context, logger, abortSignal);
         break;
       case 'sleep':
-        result = await executeSleepStep(step, context, logger);
+        result = await executeSleepStep(step, context, logger, abortSignal);
         break;
       case 'llm':
         result = await executeLlmStep(
@@ -126,7 +131,8 @@ export async function executeStep(
           (s, c) => executeStep(s, c, logger, options),
           logger,
           mcpManager,
-          workflowDir
+          workflowDir,
+          abortSignal
         );
         break;
       case 'memory':
@@ -139,7 +145,7 @@ export async function executeStep(
         result = await executeWorkflowFn(step, context);
         break;
       case 'script':
-        result = await executeScriptStep(step, context, logger, injectedSandbox);
+        result = await executeScriptStep(step, context, logger, injectedSandbox, abortSignal);
         break;
       default:
         throw new Error(`Unknown step type: ${(step as Step).type}`);
@@ -187,8 +193,12 @@ async function executeShellStep(
   step: ShellStep,
   context: ExpressionContext,
   logger: Logger,
-  dryRun?: boolean
+  dryRun?: boolean,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
+  if (abortSignal?.aborted) {
+    throw new Error('Step canceled');
+  }
   if (dryRun) {
     const command = ExpressionEvaluator.evaluateString(step.run, context);
     logger.log(`[DRY RUN] Would execute shell command: ${command}`);
@@ -207,7 +217,7 @@ async function executeShellStep(
     );
   }
 
-  const result = await executeShell(step, context, logger);
+  const result = await executeShell(step, context, logger, abortSignal);
 
   if (result.stdout) {
     logger.log(result.stdout.trim());
@@ -358,8 +368,12 @@ async function executeFileStep(
 async function executeRequestStep(
   step: RequestStep,
   context: ExpressionContext,
-  _logger: Logger
+  _logger: Logger,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
+  if (abortSignal?.aborted) {
+    throw new Error('Step canceled');
+  }
   const url = ExpressionEvaluator.evaluateString(step.url, context);
 
   // Validate URL to prevent SSRF
@@ -424,6 +438,7 @@ async function executeRequestStep(
       headers: currentHeaders,
       body: currentBody,
       redirect: 'manual',
+      signal: abortSignal,
     });
 
     if (response.status >= 300 && response.status < 400) {
@@ -506,8 +521,12 @@ async function executeRequestStep(
 async function executeHumanStep(
   step: HumanStep,
   context: ExpressionContext,
-  logger: Logger
+  logger: Logger,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
+  if (abortSignal?.aborted) {
+    throw new Error('Step canceled');
+  }
   const message = ExpressionEvaluator.evaluateString(step.message, context);
 
   // Check if we have a resume answer
@@ -588,8 +607,12 @@ async function executeHumanStep(
 async function executeSleepStep(
   step: SleepStep,
   context: ExpressionContext,
-  _logger: Logger
+  _logger: Logger,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
+  if (abortSignal?.aborted) {
+    throw new Error('Step canceled');
+  }
   const evaluated = ExpressionEvaluator.evaluate(step.duration.toString(), context);
   const duration = Number(evaluated);
 
@@ -607,7 +630,30 @@ async function executeSleepStep(
     };
   }
 
-  await new Promise((resolve) => setTimeout(resolve, duration));
+  await new Promise((resolve, reject) => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      reject(new Error('Step canceled'));
+    };
+    const cleanup = () => {
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', onAbort);
+      }
+    };
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve(undefined);
+    }, duration);
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        onAbort();
+        cleanup();
+        return;
+      }
+      abortSignal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
 
   return {
     output: { slept: duration },
@@ -621,9 +667,13 @@ async function executeScriptStep(
   step: ScriptStep,
   context: ExpressionContext,
   _logger: Logger,
-  sandbox = SafeSandbox
+  sandbox = SafeSandbox,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
   try {
+    if (abortSignal?.aborted) {
+      throw new Error('Step canceled');
+    }
     if (!step.allowInsecure) {
       throw new Error(
         'Script execution is disabled by default because Bun uses an insecure VM sandbox. ' +

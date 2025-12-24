@@ -34,6 +34,18 @@ describe('Durable Timers Integration', () => {
         ],
     };
 
+    const humanWorkflow: Workflow = {
+        name: 'human-test',
+        steps: [
+            {
+                id: 'approve',
+                type: 'human',
+                message: 'Approve?',
+                needs: [],
+            } as any,
+        ],
+    };
+
     it('should suspend a durable sleep step and create a timer', async () => {
         const runner = new WorkflowRunner(sleepWorkflow, { dbPath });
         const runId = runner.getRunId();
@@ -58,6 +70,32 @@ describe('Durable Timers Integration', () => {
 
         const wakeAt = new Date(timer!.wake_at!);
         expect(wakeAt.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('should persist human waits without scheduling', async () => {
+        const runner = new WorkflowRunner(humanWorkflow, { dbPath });
+        const runId = runner.getRunId();
+
+        try {
+            await runner.run();
+        } catch (error: any) {
+            expect(error.name).toBe('WorkflowSuspendedError');
+            expect(error.stepId).toBe('approve');
+        }
+
+        const run = await db.getRun(runId);
+        expect(run?.status).toBe(WorkflowStatus.PAUSED);
+
+        const steps = await db.getStepsByRun(runId);
+        expect(steps[0].status).toBe(StepStatus.SUSPENDED);
+
+        const timer = await db.getTimerByStep(runId, 'approve');
+        expect(timer).toBeDefined();
+        expect(timer?.timer_type).toBe('human');
+        expect(timer?.wake_at).toBeNull();
+
+        const pending = await db.getPendingTimers();
+        expect(pending.find((t) => t.step_id === 'approve')).toBeUndefined();
     });
 
     it('should resume a waiting run if the timer has NOT elapsed', async () => {

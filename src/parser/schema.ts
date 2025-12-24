@@ -113,6 +113,8 @@ const BaseStepSchema = z.object({
   reflexion: ReflexionSchema.optional(),
   allowFailure: z.boolean().optional(),
   idempotencyKey: z.string().optional(), // Expression for dedup key (evaluated at runtime)
+  idempotencyScope: z.enum(['run', 'global']).optional(), // Default: run
+  idempotencyTtlSeconds: z.number().int().positive().optional(),
   foreach: z.string().optional(),
   // Accept both number and string (for expressions or YAML number-as-string)
   concurrency: z.union([z.number().int().positive(), z.string()]).optional(),

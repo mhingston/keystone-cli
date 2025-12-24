@@ -333,6 +333,7 @@ Keystone supports several specialized step types:
 - `script`: Run arbitrary JavaScript in a sandbox. On Bun, uses `node:vm` (since `isolated-vm` requires V8).
   - ⚠️ **Security Note:** The `node:vm` sandbox is not secure against malicious code. Only run scripts from trusted sources.
 - `sleep`: Pause execution for a specified duration.
+  - `durable`: Boolean (default `false`). If `true` and duration >= 60s, the wait is persisted and can resume after restarts.
 - `memory`: Store or retrieve information from the semantic memory vector database.
 
 ### Human Steps in Non-Interactive Mode
@@ -341,6 +342,24 @@ If stdin is not a TTY (CI, piped input), `human` steps suspend. Resume by provid
 ```bash
 keystone run my-workflow --resume -i approve='{"__answer":true}'
 keystone resume <run_id> -i ask='{"__answer":"hello"}'
+```
+
+Human steps remain suspended until they receive an answer; the scheduler only resumes sleep timers.
+
+### Durable Sleeps and Scheduler
+For long waits, set `durable: true` on `sleep` steps (>=60s) to persist across restarts:
+
+```yaml
+- id: wait_for_window
+  type: sleep
+  duration: 900000 # 15 minutes
+  durable: true
+```
+
+Run the scheduler to resume runs when timers elapse:
+
+```bash
+keystone scheduler --interval 30
 ```
 
 All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), `concurrency` (max parallel items for foreach), `transform` (post-process output using expressions), `learn` (auto-index for few-shot), and `reflexion` (self-correction loop).
@@ -402,7 +421,12 @@ Make retries and resume operations safe for side-effecting steps by specifying a
   body: { amount: 100, customer: ${{ inputs.customer_id }} }
   # Expression that evaluates to a unique key for this operation
   idempotencyKey: '"charge-" + inputs.customer_id + "-" + inputs.order_id'
+  # Optional: dedupe across runs and expire after a TTL
+  idempotencyScope: global
+  idempotencyTtlSeconds: 86400
 ```
+
+If a key is already in-flight, the step fails with an in-flight error to avoid duplicate side effects. To bypass deduplication for a run, use `keystone run --no-dedup`.
 
 Manage idempotency records via CLI:
 - `keystone dedup list` - View all idempotency records
@@ -632,7 +656,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | Command | Description |
 | :--- | :--- |
 | `init` | Initialize a new Keystone project |
-| `run <workflow>` | Execute a workflow (use `-i key=val`, `--resume` to auto-resume, `--dry-run`, `--debug`) |
+| `run <workflow>` | Execute a workflow (use `-i key=val`, `--resume` to auto-resume, `--dry-run`, `--debug`, `--no-dedup`, `--explain`) |
 | `optimize <workflow>` | Optimize a specific step in a workflow (requires --target) |
 | `resume <run_id>` | Resume a failed/paused/crashed workflow by ID (use `-i key=val` to answer human steps) |
 | `validate [path]` | Check workflow files for errors |
@@ -647,6 +671,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | `ui` | Open the interactive TUI dashboard |
 | `mcp start` | Start the Keystone MCP server |
 | `mcp login <server>` | Login to a remote MCP server |
+| `scheduler` | Run the durable timer scheduler to resume sleep timers |
 | `dedup list [run_id]` | List idempotency records (optionally filter by run) |
 | `dedup clear <target>` | Clear idempotency records by run ID or `--all` |
 | `dedup prune` | Remove expired idempotency records |

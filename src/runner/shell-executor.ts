@@ -112,8 +112,12 @@ export function detectShellInjectionRisk(command: string): boolean {
 export async function executeShell(
   step: ShellStep,
   context: ExpressionContext,
-  logger: Logger = new ConsoleLogger()
+  logger: Logger = new ConsoleLogger(),
+  abortSignal?: AbortSignal
 ): Promise<ShellResult> {
+  if (abortSignal?.aborted) {
+    throw new Error('Step canceled');
+  }
   // Evaluate the command string
   const command = ExpressionEvaluator.evaluateString(step.run, context);
 
@@ -201,6 +205,14 @@ export async function executeShell(
         stdout: 'pipe',
         stderr: 'pipe',
       });
+      const abortHandler = () => {
+        try {
+          proc.kill();
+        } catch {}
+      };
+      if (abortSignal) {
+        abortSignal.addEventListener('abort', abortHandler, { once: true });
+      }
 
       const stdoutText = await new Response(proc.stdout).text();
       const stderrText = await new Response(proc.stderr).text();
@@ -209,10 +221,23 @@ export async function executeShell(
       exitCode = await proc.exited;
       stdoutString = stdoutText;
       stderrString = stderrText;
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', abortHandler);
+      }
     } else {
       // Fallback to sh -c for complex commands (pipes, redirects, quotes)
       // Execute command using sh -c to allow shell parsing
       let proc = $`sh -c ${command}`.quiet();
+      const abortHandler = () => {
+        try {
+          if (typeof (proc as unknown as { kill?: () => void }).kill === 'function') {
+            (proc as unknown as { kill: () => void }).kill();
+          }
+        } catch {}
+      };
+      if (abortSignal) {
+        abortSignal.addEventListener('abort', abortHandler, { once: true });
+      }
 
       // Apply environment variables - merge with Bun.env to preserve system PATH and other variables
       if (Object.keys(env).length > 0) {
@@ -229,6 +254,9 @@ export async function executeShell(
       stdoutString = await result.text();
       stderrString = result.stderr ? result.stderr.toString() : '';
       exitCode = result.exitCode;
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', abortHandler);
+      }
     }
 
     return {

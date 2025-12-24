@@ -414,6 +414,74 @@ export class WorkflowDb {
   }
 
   /**
+   * Remove an expired idempotency record by key
+   */
+  async clearExpiredIdempotencyRecord(key: string): Promise<number> {
+    return await this.withRetry(() => {
+      const stmt = this.db.prepare(`
+        DELETE FROM idempotency_records
+        WHERE idempotency_key = ?
+        AND expires_at IS NOT NULL
+        AND expires_at < datetime('now')
+      `);
+      const result = stmt.run(key);
+      return result.changes;
+    });
+  }
+
+  /**
+   * Insert an idempotency record only if it doesn't exist
+   */
+  async insertIdempotencyRecordIfAbsent(
+    key: string,
+    runId: string,
+    stepId: string,
+    status: StepStatus,
+    ttlSeconds?: number
+  ): Promise<boolean> {
+    return await this.withRetry(() => {
+      const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null;
+      const stmt = this.db.prepare(`
+        INSERT OR IGNORE INTO idempotency_records
+        (idempotency_key, run_id, step_id, status, output, error, created_at, expires_at)
+        VALUES (?, ?, ?, ?, NULL, NULL, datetime('now'), ?)
+      `);
+      const result = stmt.run(key, runId, stepId, status, expiresAt);
+      return result.changes > 0;
+    });
+  }
+
+  /**
+   * Mark an idempotency record as running if it's not already running or successful
+   */
+  async markIdempotencyRecordRunning(
+    key: string,
+    runId: string,
+    stepId: string,
+    ttlSeconds?: number
+  ): Promise<boolean> {
+    return await this.withRetry(() => {
+      const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null;
+      const stmt = this.db.prepare(`
+        UPDATE idempotency_records
+        SET status = ?, run_id = ?, step_id = ?, output = NULL, error = NULL, created_at = datetime('now'), expires_at = ?
+        WHERE idempotency_key = ?
+        AND status NOT IN (?, ?)
+      `);
+      const result = stmt.run(
+        StepStatusConst.RUNNING,
+        runId,
+        stepId,
+        expiresAt,
+        key,
+        StepStatusConst.RUNNING,
+        StepStatusConst.SUCCESS
+      );
+      return result.changes > 0;
+    });
+  }
+
+  /**
    * Store an idempotency record
    * If a record with the same key exists, it will be replaced
    */
@@ -553,16 +621,21 @@ export class WorkflowDb {
    * Get pending timers that are ready to fire
    * @param before Optional cutoff time (defaults to now)
    */
-  async getPendingTimers(before?: Date): Promise<DurableTimer[]> {
+  async getPendingTimers(
+    before?: Date,
+    timerType: 'sleep' | 'human' | 'all' = 'sleep'
+  ): Promise<DurableTimer[]> {
     return this.withRetry(() => {
       const cutoff = (before || new Date()).toISOString();
+      const filterType = timerType !== 'all';
       const stmt = this.db.prepare(`
         SELECT * FROM durable_timers
         WHERE completed_at IS NULL
         AND (wake_at IS NULL OR wake_at <= ?)
+        ${filterType ? 'AND timer_type = ?' : ''}
         ORDER BY wake_at ASC
       `);
-      return stmt.all(cutoff) as DurableTimer[];
+      return (filterType ? stmt.all(cutoff, timerType) : stmt.all(cutoff)) as DurableTimer[];
     });
   }
 

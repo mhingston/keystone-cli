@@ -27,7 +27,8 @@ export async function executeLlmStep(
   executeStepFn: (step: Step, context: ExpressionContext) => Promise<StepResult>,
   logger: Logger = new ConsoleLogger(),
   mcpManager?: MCPManager,
-  workflowDir?: string
+  workflowDir?: string,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
   const agentPath = resolveAgentPath(step.agent, workflowDir);
   const agent = parseAgent(agentPath);
@@ -247,6 +248,9 @@ export async function executeLlmStep(
 
     while (iterations < maxIterations) {
       iterations++;
+      if (abortSignal?.aborted) {
+        throw new Error('Step canceled');
+      }
 
       const response = await adapter.chat(messages, {
         model: resolvedModel,
@@ -256,6 +260,7 @@ export async function executeLlmStep(
             process.stdout.write(redactionBuffer.process(chunk));
           }
         },
+        signal: abortSignal,
       });
 
       if (!step.outputSchema) {
@@ -299,6 +304,9 @@ export async function executeLlmStep(
 
       // Execute tools
       for (const toolCall of message.tool_calls) {
+        if (abortSignal?.aborted) {
+          throw new Error('Step canceled');
+        }
         const argsStr = toolCall.function.arguments;
         let displayArgs = '';
         try {
