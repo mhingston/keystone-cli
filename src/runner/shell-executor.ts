@@ -125,7 +125,7 @@ export async function executeShell(
   }
 
   // Evaluate environment variables
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = context.env ? { ...context.env } : {};
   if (step.env) {
     for (const [key, value] of Object.entries(step.env)) {
       env[key] = ExpressionEvaluator.evaluateString(value, context);

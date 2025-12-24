@@ -1,0 +1,36 @@
+name: scaffold-generate
+description: "Generate file contents from a file plan"
+
+inputs:
+  requirements: { type: string }
+  files: { type: array }
+
+outputs:
+  files: ${{ steps.generate.output }}
+
+steps:
+  - id: generate
+    type: llm
+    agent: software-engineer
+    allowClarification: true
+    useStandardTools: true
+    foreach: ${{ inputs.files }}
+    prompt: |
+      You are generating the content for a single file.
+
+      Overall requirements:
+      ${{ inputs.requirements }}
+
+      File spec:
+      ${{ item }}
+
+      Produce the full file content for the given path.
+      Return only JSON with fields: path, content.
+    schema:
+      type: object
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+      required: [path, content]

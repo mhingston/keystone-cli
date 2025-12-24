@@ -47,6 +47,30 @@ describe('WorkflowDb', () => {
     expect(steps[0].status).toBe('success');
   });
 
+  it('should persist falsy outputs', async () => {
+    const runId = 'run-falsy';
+    await db.createRun(runId, 'test-wf', {});
+
+    await db.createStep('exec-false', runId, 'step-false');
+    await db.startStep('exec-false');
+    await db.completeStep('exec-false', 'success', false);
+
+    await db.createStep('exec-zero', runId, 'step-zero');
+    await db.startStep('exec-zero');
+    await db.completeStep('exec-zero', 'success', 0);
+
+    await db.createStep('exec-empty', runId, 'step-empty');
+    await db.startStep('exec-empty');
+    await db.completeStep('exec-empty', 'success', '');
+
+    const steps = await db.getStepsByRun(runId);
+    const outputsById = Object.fromEntries(steps.map((step) => [step.step_id, step.output]));
+
+    expect(JSON.parse(outputsById['step-false'] || 'null')).toBe(false);
+    expect(JSON.parse(outputsById['step-zero'] || 'null')).toBe(0);
+    expect(JSON.parse(outputsById['step-empty'] || 'null')).toBe('');
+  });
+
   it('should handle iterations in steps', async () => {
     const runId = 'run-4';
     await db.createRun(runId, 'test-wf', {});

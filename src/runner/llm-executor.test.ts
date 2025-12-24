@@ -548,7 +548,6 @@ You are a test agent.`;
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30 },
-      workflows_directory: 'workflows',
     });
 
     const manager = new MCPManager();
@@ -676,7 +675,6 @@ You are a test agent.`;
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30 },
-      workflows_directory: 'workflows',
     });
 
     const manager = new MCPManager();

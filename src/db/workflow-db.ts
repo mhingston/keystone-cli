@@ -274,10 +274,10 @@ export class WorkflowDb {
       `);
       stmt.run(
         status,
-        output ? JSON.stringify(output) : null,
+        output === undefined ? null : JSON.stringify(output),
         error || null,
         new Date().toISOString(),
-        usage ? JSON.stringify(usage) : null,
+        usage === undefined ? null : JSON.stringify(usage),
         id
       );
     });

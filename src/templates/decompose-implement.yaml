@@ -1,0 +1,53 @@
+name: decompose-implement
+description: "Implementation task sub-workflow for a decomposed problem"
+
+inputs:
+  problem: { type: string }
+  context: { type: string, default: "" }
+  constraints: { type: string, default: "" }
+  task: { type: object }
+  research: { type: object, default: {} }
+
+outputs:
+  summary: ${{ steps.implement.output.summary }}
+  files_changed: ${{ steps.implement.output.files_changed }}
+  open_questions: ${{ steps.implement.output.open_questions }}
+
+steps:
+  - id: implement
+    type: llm
+    agent: software-engineer
+    allowClarification: true
+    useStandardTools: true
+    prompt: |
+      You are implementing a task for a larger problem.
+
+      Problem:
+      ${{ inputs.problem }}
+
+      Context:
+      ${{ inputs.context }}
+
+      Constraints:
+      ${{ inputs.constraints }}
+
+      Task:
+      ${{ inputs.task }}
+
+      Research findings:
+      ${{ inputs.research }}
+
+      If code changes are needed, use available tools to make them.
+      Return only the structured JSON required by the schema.
+    schema:
+      type: object
+      properties:
+        summary:
+          type: string
+        files_changed:
+          type: array
+          items: { type: string }
+        open_questions:
+          type: array
+          items: { type: string }
+      required: [summary]

@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { AuthManager } from '../utils/auth-manager';
 import { ConfigLoader } from '../utils/config-loader';
-import { AnthropicAdapter, CopilotAdapter, OpenAIAdapter, getAdapter } from './llm-adapter';
+import {
+  AnthropicAdapter,
+  CopilotAdapter,
+  LocalEmbeddingAdapter,
+  OpenAIAdapter,
+  getAdapter,
+} from './llm-adapter';
 
 interface MockFetch {
   mock: {
@@ -64,6 +70,34 @@ describe('OpenAIAdapter', () => {
 
     const adapter = new OpenAIAdapter('fake-key');
     await expect(adapter.chat([])).rejects.toThrow(/OpenAI API error: 400 Bad Request/);
+  });
+
+  it('should call the embeddings endpoint', async () => {
+    const mockResponse = {
+      data: [{ embedding: [0.1, 0.2, 0.3] }],
+    };
+
+    // @ts-ignore
+    global.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(mockResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    );
+
+    const adapter = new OpenAIAdapter('fake-key');
+    const embedding = await adapter.embed('hello');
+    expect(embedding).toEqual([0.1, 0.2, 0.3]);
+
+    // @ts-ignore
+    const fetchMock = global.fetch as MockFetch;
+    // @ts-ignore
+    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
+    const [url, init] = fetchMock.mock.calls[0] as [string, any];
+    expect(url).toBe('https://api.openai.com/v1/embeddings');
+    expect(init.headers.Authorization).toBe('Bearer fake-key');
   });
 });
 
@@ -276,6 +310,13 @@ describe('CopilotAdapter', () => {
   });
 });
 
+describe('LocalEmbeddingAdapter', () => {
+  it('should throw on chat', async () => {
+    const adapter = new LocalEmbeddingAdapter();
+    await expect(adapter.chat()).rejects.toThrow(/Local models in Keystone currently only support/);
+  });
+});
+
 describe('getAdapter', () => {
   beforeEach(() => {
     // Setup a clean config for each test
@@ -292,7 +333,6 @@ describe('getAdapter', () => {
         'copilot:*': 'copilot',
       },
       storage: { retention_days: 30 },
-      workflows_directory: 'workflows',
       mcp_servers: {},
     });
   });
@@ -324,6 +364,12 @@ describe('getAdapter', () => {
     expect(resolvedModel).toBe('gpt-4');
   });
 
+  it('should return LocalEmbeddingAdapter for local models', () => {
+    const { adapter, resolvedModel } = getAdapter('local');
+    expect(adapter).toBeInstanceOf(LocalEmbeddingAdapter);
+    expect(resolvedModel).toBe('Xenova/all-MiniLM-L6-v2');
+  });
+
   it('should throw error for unknown provider', () => {
     // Set config with empty providers to force error
     ConfigLoader.setConfig({
@@ -331,7 +377,6 @@ describe('getAdapter', () => {
       providers: {}, // No providers configured
       model_mappings: {},
       storage: { retention_days: 30 },
-      workflows_directory: 'workflows',
       mcp_servers: {},
     });
 

@@ -39,7 +39,6 @@ export const ConfigSchema = z.object({
       retention_days: z.number().default(30),
     })
     .default({}),
-  workflows_directory: z.string().default('workflows'),
   mcp_servers: z
     .record(
       z.union([

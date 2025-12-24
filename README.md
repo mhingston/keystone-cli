@@ -74,7 +74,7 @@ source <(keystone completion bash)
 ```bash
 keystone init
 ```
-This creates the `.keystone/` directory for configuration and seeds `.keystone/workflows/` with default automation files and agents (like `scaffold-feature` and `keystone-architect`).
+This creates the `.keystone/` directory for configuration and seeds `.keystone/workflows/` plus `.keystone/workflows/agents/` with bundled workflows and agents (see "Bundled Workflows" below).
 
 ### 2. Configure your Environment
 Add your API keys to the generated `.env` file:
@@ -98,6 +98,28 @@ Keystone automatically looks in `.keystone/workflows/` (locally and in your home
 ```bash
 keystone ui
 ```
+
+---
+
+## 🧰 Bundled Workflows
+
+`keystone init` seeds these workflows under `.keystone/workflows/` (and the agents they rely on under `.keystone/workflows/agents/`):
+
+- `scaffold-feature`: Interactive workflow scaffolder. Prompts for requirements, plans files, generates content, and writes them.
+- `scaffold-plan`: Generates a file plan from `requirements` input.
+- `scaffold-generate`: Generates file contents from `requirements` plus a `files` plan.
+- `decompose-problem`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
+- `decompose-research`: Runs a single research task (`task`) with optional `context`/`constraints`.
+- `decompose-implement`: Runs a single implementation task (`task`) with optional `research` findings.
+- `decompose-review`: Reviews a single implementation task (`task`) with optional `implementation` results.
+
+Example runs:
+```bash
+keystone run scaffold-feature
+keystone run decompose-problem -i problem="Add caching to the API" -i context="Node/Bun service"
+```
+
+The sub-workflows are used by the top-level workflows, but can be run directly if you want just one phase.
 
 ---
 
@@ -145,6 +167,8 @@ storage:
 
   retention_days: 30
 ```
+
+`storage.retention_days` sets the default window used by `keystone maintenance` / `keystone prune`.
 
 ### Model & Provider Resolution
 
@@ -271,7 +295,8 @@ Keystone uses `${{ }}` syntax for dynamic values. Expressions are evaluated usin
 - `${{ item }}`: Access the current item in a `foreach` loop.
 - `${{ args.name }}`: Access tool arguments (available ONLY inside agent tool execution steps).
 - `${{ secrets.NAME }}`: Access redacted secrets.
-- `${{ env.NAME }}`: Access environment variables.
+- `${{ env.NAME }}`: Access environment variables (process env merged with workflow-level `env`).
+  Workflow-level `env` is evaluated per step; if an expression cannot be resolved yet, the variable is skipped with a warning.
 
 Standard JavaScript-like expressions are supported: `${{ steps.build.status == 'success' ? '🚀' : '❌' }}`.
 
@@ -294,6 +319,7 @@ Keystone supports several specialized step types:
   - `allowInsecure`: Boolean (default `false`). Set `true` to allow risky tool execution.
   - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow tools to access files outside of the current working directory.
 - `request`: Make HTTP requests (GET, POST, etc.).
+  - `allowInsecure`: Boolean (default `false`). If `true`, skips SSRF protections and allows non-HTTPS/local URLs.
 - `file`: Read, write, or append to files.
   - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow reading/writing files outside of the current working directory.
 - `human`: Pause execution for manual confirmation or text input.
@@ -304,6 +330,14 @@ Keystone supports several specialized step types:
   - ⚠️ **Security Note:** The `node:vm` sandbox is not secure against malicious code. Only run scripts from trusted sources.
 - `sleep`: Pause execution for a specified duration.
 - `memory`: Store or retrieve information from the semantic memory vector database.
+
+### Human Steps in Non-Interactive Mode
+If stdin is not a TTY (CI, piped input), `human` steps suspend. Resume by providing an answer via inputs using the step id and `__answer`:
+
+```bash
+keystone run my-workflow --resume -i approve='{"__answer":true}'
+keystone resume <run_id> -i ask='{"__answer":"hello"}'
+```
 
 All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), `concurrency` (max parallel items for foreach), `transform` (post-process output using expressions), `learn` (auto-index for few-shot), and `reflexion` (self-correction loop).
 
@@ -489,7 +523,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | `init` | Initialize a new Keystone project |
 | `run <workflow>` | Execute a workflow (use `-i key=val`, `--resume` to auto-resume, `--dry-run`, `--debug`) |
 | `optimize <workflow>` | Optimize a specific step in a workflow (requires --target) |
-| `resume <run_id>` | Resume a failed/paused/crashed workflow by ID |
+| `resume <run_id>` | Resume a failed/paused/crashed workflow by ID (use `-i key=val` to answer human steps) |
 | `validate [path]` | Check workflow files for errors |
 | `workflows` | List available workflows |
 | `history` | Show recent workflow runs |
@@ -506,6 +540,9 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | `maintenance [--days N]` | Perform database maintenance (prune old runs and vacuum) |
 
 ---
+
+### Dry Run
+`keystone run --dry-run` prints shell commands without executing them and skips non-shell steps (including human prompts). Outputs from skipped steps are empty, so conditional branches may differ from a real run.
  
  ## 🛡️ Security
  

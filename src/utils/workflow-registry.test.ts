@@ -75,6 +75,42 @@ steps:
     }
   });
 
+  it('should resolve a workflow by internal name when filename differs', () => {
+    const keystoneWorkflowsDir = join(tempWorkflowsDir, '.keystone', 'workflows');
+    mkdirSync(keystoneWorkflowsDir, { recursive: true });
+
+    const filePath = join(keystoneWorkflowsDir, 'alias.yaml');
+    writeFileSync(filePath, 'name: internal-name\nsteps: []\n');
+
+    const cwdSpy = spyOn(process, 'cwd').mockReturnValue(tempWorkflowsDir);
+
+    try {
+      const resolved = WorkflowRegistry.resolvePath('internal-name');
+      expect(resolved).toBe(filePath);
+    } finally {
+      cwdSpy.mockRestore();
+    }
+  });
+
+  it('should skip directories when scanning for workflow names', () => {
+    const keystoneWorkflowsDir = join(tempWorkflowsDir, '.keystone', 'workflows');
+    mkdirSync(keystoneWorkflowsDir, { recursive: true });
+
+    const fakeDir = join(keystoneWorkflowsDir, 'folder.yaml');
+    mkdirSync(fakeDir, { recursive: true });
+
+    const cwdSpy = spyOn(process, 'cwd').mockReturnValue(tempWorkflowsDir);
+
+    try {
+      expect(() => WorkflowRegistry.resolvePath('missing-name')).toThrow(
+        /Workflow "missing-name" not found/
+      );
+    } finally {
+      cwdSpy.mockRestore();
+      rmSync(fakeDir, { recursive: true, force: true });
+    }
+  });
+
   it('should resolve an absolute or relative path directly', () => {
     const filePath = join(tempWorkflowsDir, 'direct-path.yaml');
     writeFileSync(filePath, 'name: direct\nsteps: []');
@@ -101,6 +137,27 @@ steps:
       expect(workflows.some((w) => w.name === 'home-test')).toBe(true);
     } finally {
       homedirSpy.mockRestore();
+    }
+  });
+
+  it('should warn and continue when workflow directory cannot be read', () => {
+    const baseDir = join(tempWorkflowsDir, 'bad-workflows-dir');
+    const keystoneDir = join(baseDir, '.keystone');
+    mkdirSync(keystoneDir, { recursive: true });
+    writeFileSync(join(keystoneDir, 'workflows'), 'not-a-directory');
+
+    const homedirSpy = spyOn(os, 'homedir').mockReturnValue(baseDir);
+    const cwdSpy = spyOn(process, 'cwd').mockReturnValue(baseDir);
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const workflows = WorkflowRegistry.listWorkflows();
+      expect(workflows).toEqual([]);
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+      homedirSpy.mockRestore();
+      cwdSpy.mockRestore();
     }
   });
 

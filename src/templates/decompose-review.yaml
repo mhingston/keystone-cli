@@ -1,0 +1,51 @@
+name: decompose-review
+description: "Review task sub-workflow for a decomposed problem"
+
+inputs:
+  problem: { type: string }
+  context: { type: string, default: "" }
+  constraints: { type: string, default: "" }
+  task: { type: object }
+  implementation: { type: object, default: {} }
+
+outputs:
+  approved: ${{ steps.review.output.approved }}
+  issues: ${{ steps.review.output.issues }}
+  suggestions: ${{ steps.review.output.suggestions }}
+
+steps:
+  - id: review
+    type: llm
+    agent: general
+    prompt: |
+      Review the implementation results for the task.
+
+      Problem:
+      ${{ inputs.problem }}
+
+      Context:
+      ${{ inputs.context }}
+
+      Constraints:
+      ${{ inputs.constraints }}
+
+      Task:
+      ${{ inputs.task }}
+
+      Implementation results:
+      ${{ inputs.implementation }}
+
+      Identify issues, risks, and missing tests. Be direct and specific.
+      Return only the structured JSON required by the schema.
+    schema:
+      type: object
+      properties:
+        approved:
+          type: boolean
+        issues:
+          type: array
+          items: { type: string }
+        suggestions:
+          type: array
+          items: { type: string }
+      required: [approved]

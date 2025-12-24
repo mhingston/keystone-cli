@@ -1,0 +1,47 @@
+name: scaffold-plan
+description: "Plan the files for a new workflow and optional agents"
+
+inputs:
+  requirements: { type: string }
+
+outputs:
+  files: ${{ steps.plan.output.files }}
+
+steps:
+  - id: plan
+    type: llm
+    agent: keystone-architect
+    allowClarification: true
+    useStandardTools: true
+    prompt: |
+      The user wants to build the following:
+      <user_requirements>
+        ${{ inputs.requirements }}
+      </user_requirements>
+
+      Create a file plan. Use paths under:
+      - .keystone/workflows/ for workflows
+      - .keystone/workflows/agents/ for agents
+
+      Each file should include:
+      - path: relative path
+      - purpose: short purpose statement
+      - notes: optional implementation guidance
+
+      Return only the structured JSON required by the schema.
+    schema:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              purpose:
+                type: string
+              notes:
+                type: string
+            required: [path, purpose]
+      required: [files]

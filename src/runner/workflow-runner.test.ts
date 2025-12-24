@@ -49,6 +49,63 @@ describe('WorkflowRunner', () => {
     expect(outputs.final).toBe('hello world');
   });
 
+  it('should expose workflow env to shell steps', async () => {
+    const envWorkflow: Workflow = {
+      name: 'env-workflow',
+      inputs: {
+        token: { type: 'string', default: 'env-token' },
+      },
+      env: {
+        TOKEN: '${{ inputs.token }}',
+      },
+      steps: [
+        {
+          id: 'print',
+          type: 'shell',
+          run: 'echo $TOKEN',
+          needs: [],
+        },
+      ],
+      outputs: {
+        token: '${{ steps.print.output.stdout.trim() }}',
+      },
+    } as unknown as Workflow;
+
+    const runner = new WorkflowRunner(envWorkflow, { dbPath });
+    const outputs = await runner.run();
+    expect(outputs.token).toBe('env-token');
+  });
+
+  it('should skip workflow env entries that fail to evaluate', async () => {
+    const envWorkflow: Workflow = {
+      name: 'env-skip-workflow',
+      env: {
+        LATER: '${{ steps.after.output.stdout.trim() }}',
+      },
+      steps: [
+        {
+          id: 'before',
+          type: 'shell',
+          run: 'echo "start"',
+          needs: [],
+        },
+        {
+          id: 'after',
+          type: 'shell',
+          run: 'echo "later"',
+          needs: ['before'],
+        },
+      ],
+      outputs: {
+        first: '${{ steps.before.output.stdout.trim() }}',
+      },
+    } as unknown as Workflow;
+
+    const runner = new WorkflowRunner(envWorkflow, { dbPath });
+    const outputs = await runner.run();
+    expect(outputs.first).toBe('start');
+  });
+
   it('should handle foreach steps', async () => {
     const foreachWorkflow: Workflow = {
       name: 'foreach-workflow',

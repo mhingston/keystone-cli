@@ -1,0 +1,52 @@
+name: decompose-research
+description: "Research task sub-workflow for a decomposed problem"
+
+inputs:
+  problem: { type: string }
+  context: { type: string, default: "" }
+  constraints: { type: string, default: "" }
+  task: { type: object }
+
+outputs:
+  summary: ${{ steps.research.output.summary }}
+  findings: ${{ steps.research.output.findings }}
+  assumptions: ${{ steps.research.output.assumptions }}
+  open_questions: ${{ steps.research.output.open_questions }}
+
+steps:
+  - id: research
+    type: llm
+    agent: explore
+    useStandardTools: true
+    prompt: |
+      You are researching a task for a larger problem.
+
+      Problem:
+      ${{ inputs.problem }}
+
+      Context:
+      ${{ inputs.context }}
+
+      Constraints:
+      ${{ inputs.constraints }}
+
+      Task:
+      ${{ inputs.task }}
+
+      Provide concise, actionable research.
+      Return only the structured JSON required by the schema.
+    schema:
+      type: object
+      properties:
+        summary:
+          type: string
+        findings:
+          type: array
+          items: { type: string }
+        assumptions:
+          type: array
+          items: { type: string }
+        open_questions:
+          type: array
+          items: { type: string }
+      required: [summary]

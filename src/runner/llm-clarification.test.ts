@@ -26,7 +26,6 @@ describe('LLM Clarification', () => {
       default_provider: 'openai',
       model_mappings: {},
       storage: { retention_days: 30 },
-      workflows_directory: 'workflows',
       mcp_servers: {},
     } as unknown as Config);
   });
@@ -139,19 +138,41 @@ describe('LLM Clarification', () => {
       output: {
         messages: [
           { role: 'system', content: 'system prompt' },
-          { role: 'user', content: 'test prompt' },
+          { role: 'user', content: 'wrong prompt' },
           {
             role: 'assistant',
             content: null,
             tool_calls: [
               {
-                id: 'call-ask',
+                id: 'call-wrong',
                 type: 'function',
-                function: { name: 'ask', arguments: '{"question": "What is your name?"}' },
+                function: { name: 'ask', arguments: '{"question": "Wrong question"}' },
               },
             ],
           },
         ] as LLMMessage[],
+      },
+      steps: {
+        'test-step': {
+          output: {
+            messages: [
+              { role: 'system', content: 'system prompt' },
+              { role: 'user', content: 'test prompt' },
+              {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call-ask',
+                    type: 'function',
+                    function: { name: 'ask', arguments: '{"question": "What is your name?"}' },
+                  },
+                ],
+              },
+            ],
+          },
+          status: 'suspended',
+        },
       },
     };
 
@@ -174,9 +195,9 @@ describe('LLM Clarification', () => {
       tool_call_id?: string;
     }[];
 
-    const toolMsg = messages[messages.length - 2];
-    expect(toolMsg.role).toBe('tool');
-    expect(toolMsg.content).toBe('My name is Keystone');
-    expect(toolMsg.tool_call_id).toBe('call-ask');
+    const toolMsg = messages.find((msg) => msg.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg?.content).toBe('My name is Keystone');
+    expect(toolMsg?.tool_call_id).toBe('call-ask');
   });
 });

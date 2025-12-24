@@ -48,8 +48,18 @@ export async function executeLlmStep(
   const messages: LLMMessage[] = [];
 
   // Resume from state if provided
-  if (context.output && typeof context.output === 'object' && 'messages' in context.output) {
-    messages.push(...(context.output.messages as LLMMessage[]));
+  const stepState =
+    context.steps && typeof context.steps === 'object'
+      ? (context.steps as Record<string, { output?: unknown }>)[step.id]
+      : undefined;
+  const stepOutput = stepState?.output;
+  const resumeOutput =
+    stepOutput && typeof stepOutput === 'object' && 'messages' in stepOutput
+      ? stepOutput
+      : context.output;
+
+  if (resumeOutput && typeof resumeOutput === 'object' && 'messages' in resumeOutput) {
+    messages.push(...(resumeOutput.messages as LLMMessage[]));
 
     // If we have an answer in inputs, add it as a tool result for the last tool call
     const stepInputs = context.inputs?.[step.id] as Record<string, unknown> | undefined;

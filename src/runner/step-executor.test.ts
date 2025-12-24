@@ -585,6 +585,51 @@ describe('step-executor', () => {
       expect(result.error).toContain('HTTP 400: Bad Request');
       expect(result.error).toContain('Response Body: {"error": "bad request details"}');
     });
+
+    it('should drop auth headers on cross-origin redirects', async () => {
+      // @ts-ignore
+      global.fetch
+        .mockResolvedValueOnce(
+          new Response('', {
+            status: 302,
+            headers: { Location: 'https://other.example.com/next' },
+          })
+        )
+        .mockResolvedValueOnce(new Response('ok'));
+
+      const step: RequestStep = {
+        id: 'req-redirect',
+        type: 'request',
+        needs: [],
+        url: 'https://api.example.com/start',
+        method: 'GET',
+        headers: { Authorization: 'Bearer token' },
+      };
+
+      const result = await executeStep(step, context);
+      expect(result.status).toBe('success');
+
+      // @ts-ignore
+      const secondCall = global.fetch.mock.calls[1][1];
+      expect(secondCall.headers.Authorization).toBeUndefined();
+    });
+
+    it('should allow insecure request when allowInsecure is true', async () => {
+      // @ts-ignore
+      global.fetch.mockResolvedValue(new Response('ok'));
+
+      const step: RequestStep = {
+        id: 'req-insecure',
+        type: 'request',
+        needs: [],
+        url: 'http://localhost/test',
+        method: 'GET',
+        allowInsecure: true,
+      };
+
+      const result = await executeStep(step, context);
+      expect(result.status).toBe('success');
+    });
   });
 
   describe('human', () => {

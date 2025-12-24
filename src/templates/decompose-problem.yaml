@@ -1,0 +1,159 @@
+name: decompose-problem
+description: "Decompose a complex problem into research, implementation, and review sub-workflows"
+
+inputs:
+  problem: { type: string }
+  context: { type: string, default: "" }
+  constraints: { type: string, default: "" }
+  max_parallel: { type: number, default: 3 }
+
+outputs:
+  plan: ${{ steps.plan.output }}
+  research: ${{ steps.research.output }}
+  implementation: ${{ steps.implementation.output }}
+  review: ${{ steps.review.output }}
+  summary: ${{ steps.summary.output }}
+
+steps:
+  - id: plan
+    type: llm
+    agent: general
+    allowClarification: true
+    prompt: |
+      You are a planner. Decompose the problem into research, implementation,
+      and review tasks. Keep tasks small, specific, and measurable.
+
+      Problem:
+      ${{ inputs.problem }}
+
+      Context:
+      ${{ inputs.context }}
+
+      Constraints:
+      ${{ inputs.constraints }}
+
+      Return empty arrays if a category is not needed.
+      Return only the structured JSON required by the schema.
+    schema:
+      type: object
+      properties:
+        research:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              details: { type: string }
+              acceptance:
+                type: array
+                items: { type: string }
+            required: [id, title, details]
+        implementation:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              details: { type: string }
+              acceptance:
+                type: array
+                items: { type: string }
+            required: [id, title, details]
+        review:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              title: { type: string }
+              details: { type: string }
+              acceptance:
+                type: array
+                items: { type: string }
+            required: [id, title, details]
+        success_criteria:
+          type: array
+          items: { type: string }
+        notes:
+          type: string
+      required: [research, implementation, review]
+
+  - id: approve_plan
+    type: human
+    needs: [plan]
+    inputType: confirm
+    message: "Approve the plan and run sub-workflows?"
+
+  - id: research
+    type: workflow
+    needs: [approve_plan]
+    foreach: ${{ steps.plan.output.research }}
+    concurrency: ${{ inputs.max_parallel }}
+    path: decompose-research
+    inputs:
+      problem: ${{ inputs.problem }}
+      context: ${{ inputs.context }}
+      constraints: ${{ inputs.constraints }}
+      task: ${{ item }}
+
+  - id: implementation
+    type: workflow
+    needs: [research]
+    foreach: ${{ steps.plan.output.implementation }}
+    concurrency: ${{ inputs.max_parallel }}
+    path: decompose-implement
+    inputs:
+      problem: ${{ inputs.problem }}
+      context: ${{ inputs.context }}
+      constraints: ${{ inputs.constraints }}
+      research: ${{ steps.research.outputs }}
+      task: ${{ item }}
+
+  - id: review
+    type: workflow
+    needs: [implementation]
+    foreach: ${{ steps.plan.output.review }}
+    concurrency: ${{ inputs.max_parallel }}
+    path: decompose-review
+    inputs:
+      problem: ${{ inputs.problem }}
+      context: ${{ inputs.context }}
+      constraints: ${{ inputs.constraints }}
+      implementation: ${{ steps.implementation.outputs }}
+      task: ${{ item }}
+
+  - id: summary
+    type: llm
+    agent: summarizer
+    needs: [review]
+    prompt: |
+      Summarize the results of the workflow.
+
+      Problem:
+      ${{ inputs.problem }}
+
+      Plan:
+      ${{ steps.plan.output }}
+
+      Research results:
+      ${{ steps.research.outputs }}
+
+      Implementation results:
+      ${{ steps.implementation.outputs }}
+
+      Review results:
+      ${{ steps.review.outputs }}
+    schema:
+      type: object
+      properties:
+        summary:
+          type: string
+        open_questions:
+          type: array
+          items: { type: string }
+        risks:
+          type: array
+          items: { type: string }
+      required: [summary]

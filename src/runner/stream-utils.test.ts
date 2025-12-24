@@ -52,6 +52,20 @@ describe('processOpenAIStream', () => {
     expect(onStream).toHaveBeenCalledTimes(1);
   });
 
+  it('handles tool calls in a final line without a newline', async () => {
+    const response = responseFromChunks([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"final_tool","arguments":"{\\"x\\":1}"}}]}}]}',
+    ]);
+
+    const result = await processOpenAIStream(response);
+
+    expect(result.message.tool_calls?.[0]).toEqual({
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'final_tool', arguments: '{"x":1}' },
+    });
+  });
+
   it('logs malformed JSON and continues processing', async () => {
     const logger = {
       log: mock(() => {}),

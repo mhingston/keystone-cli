@@ -120,6 +120,7 @@ const RequestStepSchema = BaseStepSchema.extend({
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).default('GET'),
   body: z.any().optional(),
   headers: z.record(z.string()).optional(),
+  allowInsecure: z.boolean().optional(),
 });
 
 const HumanStepSchema = BaseStepSchema.extend({

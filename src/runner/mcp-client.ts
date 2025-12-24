@@ -80,7 +80,7 @@ export async function validateRemoteUrl(
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error(`Invalid MCP server URL: ${url}`);
+    throw new Error(`Invalid URL: ${url}`);
   }
 
   // Skip all security checks if allowInsecure is set (for development/testing)
@@ -91,7 +91,7 @@ export async function validateRemoteUrl(
   // Require HTTPS in production
   if (parsed.protocol !== 'https:') {
     throw new Error(
-      `SSRF Protection: MCP remote URL must use HTTPS. Got: ${parsed.protocol}. Set allowInsecure option to true if you trust this server.`
+      `SSRF Protection: URL must use HTTPS. Got: ${parsed.protocol}. Set allowInsecure option to true if you trust this server.`
     );
   }
 

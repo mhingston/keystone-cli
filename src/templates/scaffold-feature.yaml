@@ -7,37 +7,25 @@ steps:
     message: "Describe the workflow you want to build:"
     inputType: text
 
-  - id: design
-    type: llm
-    agent: keystone-architect
+  - id: plan
+    type: workflow
     needs: [get_requirements]
-    allowClarification: true
-    useStandardTools: true
-    prompt: |
-      The user wants to build the following:
-      <user_requirements>
-        ${{ steps.get_requirements.output }}
-      </user_requirements>
-      Generate the necessary Keystone workflow and optionally create an agent where appropriate.
-    schema:
-      type: object
-      properties:
-        files:
-          type: array
-          items:
-            type: object
-            properties:
-              path:
-                type: string
-              content:
-                type: string
-            required: [path, content]
-      required: [files]
+    path: scaffold-plan
+    inputs:
+      requirements: ${{ steps.get_requirements.output }}
+
+  - id: generate
+    type: workflow
+    needs: [plan]
+    path: scaffold-generate
+    inputs:
+      requirements: ${{ steps.get_requirements.output }}
+      files: ${{ steps.plan.outputs.files }}
 
   - id: write_files
     type: file
-    needs: [design]
-    foreach: ${{ steps.design.output.files }}
+    needs: [generate]
+    foreach: ${{ steps.generate.outputs.files }}
     op: write
     path: ${{ item.path }}
     content: ${{ item.content }}
@@ -47,4 +35,4 @@ steps:
     needs: [write_files]
     run: |
       echo "Scaffolding complete. Files created:"
-      echo "${{ steps.design.output.files.map(f => f.path).join('\n') }}"
+      echo "${{ steps.generate.outputs.files.map(f => f.path).join('\n') }}"

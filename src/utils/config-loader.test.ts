@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Config } from '../parser/config-schema';
 import { ConfigLoader } from './config-loader';
 
@@ -15,7 +17,6 @@ describe('ConfigLoader', () => {
       },
       model_mappings: {},
       storage: { retention_days: 30 },
-      workflows_directory: 'workflows',
       mcp_servers: {},
     };
 
@@ -41,7 +42,6 @@ describe('ConfigLoader', () => {
         'claude-v1': 'anthropic',
       },
       storage: { retention_days: 30 },
-      workflows_directory: 'workflows',
       mcp_servers: {},
     };
     ConfigLoader.setConfig(mockConfig);
@@ -53,15 +53,33 @@ describe('ConfigLoader', () => {
   });
 
   it('should interpolate environment variables in config', () => {
-    // We can't easily mock the file system for ConfigLoader without changing its implementation
-    // or using a proper mocking library. But we can test the regex/replacement logic if we exposed it.
-    // For now, let's just trust the implementation or add a small integration test if needed.
+    const originalCwd = process.cwd();
+    const tempDir = mkdtempSync(join(originalCwd, 'temp-config-'));
+    const keystoneDir = join(tempDir, '.keystone');
+    mkdirSync(keystoneDir, { recursive: true });
 
-    // Testing the interpolation logic by setting an env var and checking if it's replaced
-    process.env.TEST_VAR = 'interpolated-value';
+    process.env.TEST_PROVIDER = 'interpolated-provider';
+    process.env.TEST_MODEL = 'interpolated-model';
 
-    // This is a bit tricky since ConfigLoader.load() uses process.cwd()
-    // but we can verify the behavior if we could point it to a temp file.
-    // Given the constraints, I'll assume the implementation is correct based on the regex.
+    const configPath = join(keystoneDir, 'config.yaml');
+    writeFileSync(
+      configPath,
+      'default_provider: ${TEST_PROVIDER}\n' + 'default_model: $TEST_MODEL\n'
+    );
+
+    const cwdSpy = spyOn(process, 'cwd').mockReturnValue(tempDir);
+
+    try {
+      ConfigLoader.clear();
+      const config = ConfigLoader.load();
+      expect(config.default_provider).toBe('interpolated-provider');
+      expect(config.default_model).toBe('interpolated-model');
+    } finally {
+      cwdSpy.mockRestore();
+      process.env.TEST_PROVIDER = undefined;
+      process.env.TEST_MODEL = undefined;
+      rmSync(tempDir, { recursive: true, force: true });
+      ConfigLoader.clear();
+    }
   });
 });

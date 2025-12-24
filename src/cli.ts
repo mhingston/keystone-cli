@@ -6,8 +6,16 @@ import { Command } from 'commander';
 import exploreAgent from './templates/agents/explore.md' with { type: 'text' };
 import generalAgent from './templates/agents/general.md' with { type: 'text' };
 import architectAgent from './templates/agents/keystone-architect.md' with { type: 'text' };
+import softwareEngineerAgent from './templates/agents/software-engineer.md' with { type: 'text' };
+import summarizerAgent from './templates/agents/summarizer.md' with { type: 'text' };
+import decomposeImplementWorkflow from './templates/decompose-implement.yaml' with { type: 'text' };
+import decomposeWorkflow from './templates/decompose-problem.yaml' with { type: 'text' };
+import decomposeResearchWorkflow from './templates/decompose-research.yaml' with { type: 'text' };
+import decomposeReviewWorkflow from './templates/decompose-review.yaml' with { type: 'text' };
 // Default templates
 import scaffoldWorkflow from './templates/scaffold-feature.yaml' with { type: 'text' };
+import scaffoldGenerateWorkflow from './templates/scaffold-generate.yaml' with { type: 'text' };
+import scaffoldPlanWorkflow from './templates/scaffold-plan.yaml' with { type: 'text' };
 
 import { WorkflowDb, type WorkflowRun } from './db/workflow-db.ts';
 import { WorkflowParser } from './parser/workflow-parser.ts';
@@ -19,11 +27,30 @@ import { WorkflowRegistry } from './utils/workflow-registry.ts';
 import pkg from '../package.json' with { type: 'json' };
 
 const program = new Command();
+const defaultRetentionDays = ConfigLoader.load().storage?.retention_days ?? 30;
 
 program
   .name('keystone')
   .description('A local-first, declarative, agentic workflow orchestrator')
   .version(pkg.version);
+
+const parseInputs = (pairs?: string[]): Record<string, unknown> => {
+  const inputs: Record<string, unknown> = {};
+  if (!pairs) return inputs;
+  for (const pair of pairs) {
+    const index = pair.indexOf('=');
+    if (index > 0) {
+      const key = pair.slice(0, index);
+      const value = pair.slice(index + 1);
+      try {
+        inputs[key] = JSON.parse(value);
+      } catch {
+        inputs[key] = value;
+      }
+    }
+  }
+  return inputs;
+};
 
 // ===== keystone init =====
 program
@@ -79,7 +106,6 @@ model_mappings:
 
 storage:
   retention_days: 30
-workflows_directory: workflows
 `;
       writeFileSync(configPath, defaultConfig);
       console.log(`✓ Created ${configPath}`);
@@ -107,6 +133,30 @@ workflows_directory: workflows
         content: scaffoldWorkflow,
       },
       {
+        path: '.keystone/workflows/scaffold-plan.yaml',
+        content: scaffoldPlanWorkflow,
+      },
+      {
+        path: '.keystone/workflows/scaffold-generate.yaml',
+        content: scaffoldGenerateWorkflow,
+      },
+      {
+        path: '.keystone/workflows/decompose-problem.yaml',
+        content: decomposeWorkflow,
+      },
+      {
+        path: '.keystone/workflows/decompose-research.yaml',
+        content: decomposeResearchWorkflow,
+      },
+      {
+        path: '.keystone/workflows/decompose-implement.yaml',
+        content: decomposeImplementWorkflow,
+      },
+      {
+        path: '.keystone/workflows/decompose-review.yaml',
+        content: decomposeReviewWorkflow,
+      },
+      {
         path: '.keystone/workflows/agents/keystone-architect.md',
         content: architectAgent,
       },
@@ -117,6 +167,14 @@ workflows_directory: workflows
       {
         path: '.keystone/workflows/agents/explore.md',
         content: exploreAgent,
+      },
+      {
+        path: '.keystone/workflows/agents/software-engineer.md',
+        content: softwareEngineerAgent,
+      },
+      {
+        path: '.keystone/workflows/agents/summarizer.md',
+        content: summarizerAgent,
       },
     ];
 
@@ -230,23 +288,7 @@ program
   .option('--debug', 'Enable interactive debug mode on failure')
   .option('--resume', 'Resume the last run of this workflow if it failed or was paused')
   .action(async (workflowPathArg, options) => {
-    // Parse inputs
-    const inputs: Record<string, unknown> = {};
-    if (options.input) {
-      for (const pair of options.input) {
-        const index = pair.indexOf('=');
-        if (index > 0) {
-          const key = pair.slice(0, index);
-          const value = pair.slice(index + 1);
-          // Try to parse as JSON, otherwise use as string
-          try {
-            inputs[key] = JSON.parse(value);
-          } catch {
-            inputs[key] = value;
-          }
-        }
-      }
-    }
+    const inputs = parseInputs(options.input);
 
     // Load and validate workflow
     try {
@@ -286,7 +328,8 @@ program
       }
 
       const runner = new WorkflowRunner(workflow, {
-        inputs,
+        inputs: resumeRunId ? undefined : inputs,
+        resumeInputs: resumeRunId ? inputs : undefined,
         workflowDir: dirname(resolvedPath),
         dryRun: !!options.dryRun,
         debug: !!options.debug,
@@ -345,22 +388,7 @@ program
       const resolvedPath = WorkflowRegistry.resolvePath(workflowPath);
       const workflow = WorkflowParser.loadWorkflow(resolvedPath);
 
-      // Parse inputs
-      const inputs: Record<string, unknown> = {};
-      if (options.input) {
-        for (const pair of options.input) {
-          const index = pair.indexOf('=');
-          if (index > 0) {
-            const key = pair.slice(0, index);
-            const value = pair.slice(index + 1);
-            try {
-              inputs[key] = JSON.parse(value);
-            } catch {
-              inputs[key] = value;
-            }
-          }
-        }
-      }
+      const inputs = parseInputs(options.input);
 
       const runner = new OptimizationRunner(workflow, {
         workflowPath: resolvedPath,
@@ -390,6 +418,7 @@ program
   .description('Resume a paused or failed workflow run')
   .argument('<run_id>', 'Run ID to resume')
   .option('-w, --workflow <path>', 'Path to workflow file (auto-detected if not specified)')
+  .option('-i, --input <key=value...>', 'Input values for resume')
   .action(async (runId, options) => {
     try {
       const db = new WorkflowDb();
@@ -431,8 +460,10 @@ program
       // Import WorkflowRunner dynamically
       const { WorkflowRunner } = await import('./runner/workflow-runner.ts');
       const logger = new ConsoleLogger();
+      const inputs = parseInputs(options.input);
       const runner = new WorkflowRunner(workflow, {
         resumeRunId: runId,
+        resumeInputs: inputs,
         workflowDir: dirname(workflowPath),
         logger,
       });
@@ -609,7 +640,7 @@ async function performMaintenance(days: number) {
 program
   .command('prune')
   .description('Delete old workflow runs from the database (alias for maintenance)')
-  .option('--days <number>', 'Days to keep', '30')
+  .option('--days <number>', 'Days to keep', String(defaultRetentionDays))
   .action(async (options) => {
     const days = Number.parseInt(options.days, 10);
     await performMaintenance(days);
@@ -618,7 +649,7 @@ program
 program
   .command('maintenance')
   .description('Perform database maintenance (prune old runs and vacuum)')
-  .option('--days <days>', 'Delete runs older than this many days', '30')
+  .option('--days <days>', 'Delete runs older than this many days', String(defaultRetentionDays))
   .action(async (options) => {
     const days = Number.parseInt(options.days, 10);
     await performMaintenance(days);
@@ -1010,7 +1041,12 @@ _keystone() {
         validate)
           _arguments ':path:_files'
           ;;
-        resume|logs)
+        resume)
+          _arguments \\
+            '(-i --input)'{-i,--input}'[Input values]:key=value' \\
+            ':run_id:__keystone_runs'
+          ;;
+        logs)
           _arguments ':run_id:__keystone_runs'
           ;;
         auth)

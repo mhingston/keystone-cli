@@ -40,7 +40,7 @@ export class WorkflowSuspendedError extends Error {
 
 export interface StepResult {
   output: unknown;
-  status: 'success' | 'failed' | 'suspended';
+  status: 'success' | 'failed' | 'suspended' | 'skipped';
   error?: string;
   usage?: {
     prompt_tokens: number;
@@ -83,6 +83,14 @@ export async function executeStep(
   } = options;
 
   try {
+    if (dryRun && step.type !== 'shell') {
+      logger.log(`[DRY RUN] Skipping ${step.type} step: ${step.id}`);
+      return {
+        output: null,
+        status: 'skipped',
+      };
+    }
+
     let result: StepResult;
     switch (step.type) {
       case 'shell':
@@ -344,7 +352,7 @@ async function executeRequestStep(
   const url = ExpressionEvaluator.evaluateString(step.url, context);
 
   // Validate URL to prevent SSRF
-  await validateRemoteUrl(url);
+  await validateRemoteUrl(url, { allowInsecure: step.allowInsecure });
 
   // Evaluate headers
   const headers: Record<string, string> = {};
@@ -384,11 +392,70 @@ async function executeRequestStep(
     }
   }
 
-  const response = await fetch(url, {
-    method: step.method,
-    headers,
-    body,
-  });
+  const maxRedirects = 5;
+  let response: Response | undefined;
+  let currentUrl = url;
+  let currentMethod = step.method;
+  let currentBody = body;
+  const currentHeaders: Record<string, string> = { ...headers };
+  const removeHeader = (name: string) => {
+    const target = name.toLowerCase();
+    for (const key of Object.keys(currentHeaders)) {
+      if (key.toLowerCase() === target) {
+        delete currentHeaders[key];
+      }
+    }
+  };
+
+  for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+    response = await fetch(currentUrl, {
+      method: currentMethod,
+      headers: currentHeaders,
+      body: currentBody,
+      redirect: 'manual',
+    });
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) {
+        break;
+      }
+      if (redirectCount >= maxRedirects) {
+        throw new Error(`Request exceeded maximum redirects (${maxRedirects})`);
+      }
+
+      const nextUrl = new URL(location, currentUrl).href;
+      await validateRemoteUrl(nextUrl, { allowInsecure: step.allowInsecure });
+
+      const fromOrigin = new URL(currentUrl).origin;
+      const toOrigin = new URL(nextUrl).origin;
+      if (fromOrigin !== toOrigin) {
+        removeHeader('authorization');
+        removeHeader('proxy-authorization');
+        removeHeader('cookie');
+      }
+
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) &&
+          currentMethod !== 'GET' &&
+          currentMethod !== 'HEAD')
+      ) {
+        currentMethod = 'GET';
+        currentBody = undefined;
+        removeHeader('content-type');
+      }
+
+      currentUrl = nextUrl;
+      continue;
+    }
+
+    break;
+  }
+
+  if (!response) {
+    throw new Error('Request failed: No response received');
+  }
 
   const responseText = await response.text();
   let responseData: unknown;

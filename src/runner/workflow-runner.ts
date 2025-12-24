@@ -537,17 +537,42 @@ export class WorkflowRunner {
       }
     }
 
-    return {
+    const baseContext: ExpressionContext = {
       inputs: this.inputs,
       secrets: this.secrets,
       steps: stepsContext,
       item,
       index,
-      env: this.workflow.env,
+      env: {},
       output: item
         ? undefined
         : this.stepContexts.get(this.workflow.steps.find((s) => !s.foreach)?.id || '')?.output,
     };
+
+    const resolvedEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) {
+        resolvedEnv[key] = value;
+      }
+    }
+
+    if (this.workflow.env) {
+      for (const [key, value] of Object.entries(this.workflow.env)) {
+        try {
+          resolvedEnv[key] = ExpressionEvaluator.evaluateString(value, {
+            ...baseContext,
+            env: resolvedEnv,
+          });
+        } catch (error) {
+          this.logger.warn(
+            `Warning: Failed to evaluate workflow env "${key}": ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+    }
+
+    baseContext.env = resolvedEnv;
+    return baseContext;
   }
 
   /**
@@ -1008,6 +1033,15 @@ Please provide the fixed step configuration as JSON.`;
       await this.db.createStep(stepExecId, this.runId, step.id);
       await this.db.completeStep(stepExecId, 'skipped', null);
       this.stepContexts.set(step.id, { status: 'skipped' });
+      return;
+    }
+
+    if (this.options.dryRun && step.type !== 'shell') {
+      this.logger.log(`  ⊘ [DRY RUN] Skipping ${step.type} step ${step.id}`);
+      const stepExecId = randomUUID();
+      await this.db.createStep(stepExecId, this.runId, step.id);
+      await this.db.completeStep(stepExecId, StepStatus.SKIPPED, null);
+      this.stepContexts.set(step.id, { status: StepStatus.SKIPPED });
       return;
     }
 
