@@ -587,6 +587,8 @@ export class MCPClient {
   >();
   private timeout: number;
   private logger: Logger;
+  private _isHealthy = true;
+  private lastHealthCheck = Date.now();
 
   constructor(
     transportOrCommand: MCPTransport | string,
@@ -615,6 +617,21 @@ export class MCPClient {
         }
       }
     });
+  }
+
+  /**
+   * Returns whether the client is considered healthy.
+   * Updated after each health check or failed request.
+   */
+  get isHealthy(): boolean {
+    return this._isHealthy;
+  }
+
+  /**
+   * Returns the timestamp of the last health check.
+   */
+  get lastHealthCheckTime(): number {
+    return this.lastHealthCheck;
   }
 
   static async createLocal(
@@ -660,6 +677,7 @@ export class MCPClient {
       const timeoutId = setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
+          this._isHealthy = false;
           reject(new Error(`MCP request timeout: ${method}`));
         }
       }, this.timeout);
@@ -669,13 +687,14 @@ export class MCPClient {
       this.transport.send(message).catch((err) => {
         clearTimeout(timeoutId);
         this.pendingRequests.delete(id);
+        this._isHealthy = false;
         reject(err);
       });
     });
   }
 
   async initialize() {
-    return this.request('initialize', {
+    const response = await this.request('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: {
@@ -683,6 +702,8 @@ export class MCPClient {
         version: pkg.version,
       },
     });
+    this._isHealthy = true;
+    return response;
   }
 
   async listTools(): Promise<MCPTool[]> {
@@ -699,6 +720,52 @@ export class MCPClient {
       throw new Error(`MCP tool call failed: ${JSON.stringify(response.error)}`);
     }
     return response.result;
+  }
+
+  /**
+   * Perform a health check by sending a ping-like request.
+   * Uses a shorter timeout than normal requests.
+   *
+   * @param timeout Optional timeout in ms (default: 5000)
+   * @returns true if healthy, false otherwise
+   */
+  async healthCheck(timeout = 5000): Promise<boolean> {
+    this.lastHealthCheck = Date.now();
+    const id = this.messageId++;
+    const message = {
+      jsonrpc: '2.0',
+      id,
+      method: 'ping', // Standard MCP ping or falls back gracefully
+    };
+
+    return new Promise((resolve) => {
+      const timeoutId = setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          this._isHealthy = false;
+          resolve(false);
+        }
+      }, timeout);
+
+      this.pendingRequests.set(id, {
+        resolve: () => {
+          this._isHealthy = true;
+          resolve(true);
+        },
+        reject: () => {
+          this._isHealthy = false;
+          resolve(false);
+        },
+        timeoutId,
+      });
+
+      this.transport.send(message).catch(() => {
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(id);
+        this._isHealthy = false;
+        resolve(false);
+      });
+    });
   }
 
   stop() {

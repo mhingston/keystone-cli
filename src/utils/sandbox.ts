@@ -16,16 +16,22 @@
  * - Only run workflows/scripts from TRUSTED sources
  *
  * For production use with untrusted code, consider:
- * 1. Running in a separate subprocess with OS-level isolation
+ * 1. Running in a separate subprocess with OS-level isolation (default with useProcessIsolation)
  * 2. Using containers or VMs for full isolation
  * 3. Running on Node.js with isolated-vm instead of Bun
  */
 
 import * as vm from 'node:vm';
+import { ProcessSandbox } from './process-sandbox.ts';
 
 export interface SandboxOptions {
   timeout?: number;
   memoryLimit?: number; // Note: memoryLimit is not enforced by node:vm
+  /**
+   * Use subprocess-based isolation for better security (default: true).
+   * When false, uses node:vm which is faster but less secure.
+   */
+  useProcessIsolation?: boolean;
 }
 
 export class SafeSandbox {
@@ -34,10 +40,33 @@ export class SafeSandbox {
   /**
    * Execute a script in a sandbox.
    *
-   * Note: On Bun, this uses node:vm which provides basic isolation but
-   * is not secure against malicious code. Only run trusted scripts.
+   * By default, uses process-based isolation for better security.
+   * Set `useProcessIsolation: false` to use the faster but less secure node:vm.
    */
   static async execute(
+    code: string,
+    context: Record<string, unknown> = {},
+    options: SandboxOptions = {}
+  ): Promise<unknown> {
+    const useProcessIsolation = options.useProcessIsolation ?? true;
+
+    if (useProcessIsolation) {
+      // Use subprocess-based isolation (more secure)
+      return ProcessSandbox.execute(code, context, {
+        timeout: options.timeout,
+        memoryLimit: options.memoryLimit,
+      });
+    }
+
+    // Fall back to node:vm (faster but less secure)
+    return SafeSandbox.executeWithVm(code, context, options);
+  }
+
+  /**
+   * Execute using node:vm (legacy mode).
+   * Shows a warning since this is not secure against malicious code.
+   */
+  private static async executeWithVm(
     code: string,
     context: Record<string, unknown> = {},
     options: SandboxOptions = {}
