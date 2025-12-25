@@ -1,9 +1,7 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, extname, join } from 'node:path';
-import type { Workflow } from '../parser/schema.ts';
+import { join } from 'node:path';
 import { WorkflowParser } from '../parser/workflow-parser.ts';
-import { ConfigLoader } from './config-loader.ts';
+import { ResourceLoader } from './resource-loader.ts';
 
 export class WorkflowRegistry {
   private static getSearchPaths(): string[] {
@@ -31,15 +29,15 @@ export class WorkflowRegistry {
     const seen = new Set<string>();
 
     for (const dir of WorkflowRegistry.getSearchPaths()) {
-      if (!existsSync(dir)) continue;
+      if (!ResourceLoader.exists(dir)) continue;
 
       try {
-        const files = readdirSync(dir);
+        const files = ResourceLoader.listDirectory(dir);
         for (const file of files) {
           if (!file.endsWith('.yaml') && !file.endsWith('.yml')) continue;
 
           const fullPath = join(dir, file);
-          if (statSync(fullPath).isDirectory()) continue;
+          if (ResourceLoader.isDirectory(fullPath)) continue;
 
           try {
             // Parse strictly to get metadata
@@ -71,14 +69,14 @@ export class WorkflowRegistry {
    */
   static resolvePath(name: string, baseDir?: string): string {
     // 1. Check if it's already a path
-    if (existsSync(name) && (name.endsWith('.yaml') || name.endsWith('.yml'))) {
+    if (ResourceLoader.exists(name) && (name.endsWith('.yaml') || name.endsWith('.yml'))) {
       return name;
     }
 
     // 2. Check relative to baseDir if name ends with yaml/yml
     if (baseDir && (name.endsWith('.yaml') || name.endsWith('.yml'))) {
       const fullPath = join(baseDir, name);
-      if (existsSync(fullPath)) return fullPath;
+      if (ResourceLoader.exists(fullPath)) return fullPath;
     }
 
     const searchPaths = WorkflowRegistry.getSearchPaths();
@@ -86,39 +84,38 @@ export class WorkflowRegistry {
       searchPaths.unshift(baseDir);
       // Also check .keystone/workflows relative to baseDir if any
       const relativeKeystone = join(baseDir, '.keystone', 'workflows');
-      if (existsSync(relativeKeystone)) searchPaths.unshift(relativeKeystone);
+      if (ResourceLoader.exists(relativeKeystone)) searchPaths.unshift(relativeKeystone);
     }
 
     // 3. Search by filename in standard dirs
     for (const dir of searchPaths) {
-      if (!existsSync(dir)) continue;
+      if (!ResourceLoader.exists(dir)) continue;
 
       // Check exact filename match (name.yaml) - only if name doesn't already HAVE extension
       if (!name.endsWith('.yaml') && !name.endsWith('.yml')) {
         const pathYaml = join(dir, `${name}.yaml`);
-        if (existsSync(pathYaml)) return pathYaml;
+        if (ResourceLoader.exists(pathYaml)) return pathYaml;
 
         const pathYml = join(dir, `${name}.yml`);
-        if (existsSync(pathYml)) return pathYml;
+        if (ResourceLoader.exists(pathYml)) return pathYml;
       } else {
         // Just check if name exists in this dir
         const fullPath = join(dir, name);
-        if (existsSync(fullPath)) return fullPath;
+        if (ResourceLoader.exists(fullPath)) return fullPath;
       }
     }
 
     // 4. Search by internal workflow name
     for (const dir of searchPaths) {
-      if (!existsSync(dir)) continue;
+      if (!ResourceLoader.exists(dir)) continue;
 
       try {
-        const files = readdirSync(dir);
+        const files = ResourceLoader.listDirectory(dir);
         for (const file of files) {
           if (!file.endsWith('.yaml') && !file.endsWith('.yml')) continue;
 
           const fullPath = join(dir, file);
-          const stats = statSync(fullPath);
-          if (stats.isDirectory()) continue;
+          if (ResourceLoader.isDirectory(fullPath)) continue;
 
           try {
             const workflow = WorkflowParser.loadWorkflow(fullPath);

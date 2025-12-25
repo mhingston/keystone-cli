@@ -395,18 +395,18 @@ Tasks:
 5. Add webhook verification, secrets, and rate limits.
 6. Document security considerations and local network usage.
 
-### Embedded resources and standalone binaries
+### [x] Embedded resources and standalone binaries
 Goal: Allow users to compile a project into a single executable that bundles workflows and agents.
 Notes:
 1. Builds should be reproducible and embed a manifest with metadata.
 2. Provide clear override precedence between embedded assets and local files.
 3. Support versioned updates and cache busting.
 Tasks:
-1. Add `keystone compile` to bundle `.keystone` assets into an executable.
-2. Use `bun build --compile` with embedded asset lookup at runtime.
-3. Support override precedence between embedded assets and local files.
-4. Embed manifest metadata (version, checksum, build time).
-5. Document distribution and update workflows for compiled binaries.
+1. [x] Add `keystone compile` to bundle `.keystone` assets into an executable.
+2. [x] Use `bun build --compile` with embedded asset lookup at runtime.
+3. [x] Support override precedence between embedded assets and local files.
+4. [x] Embed manifest metadata (version, checksum, build time).
+5. [x] Document distribution and update workflows for compiled binaries.
 
 ### Self-bootstrapping DevMode workflow
 Goal: Dogfood Keystone by enabling it to modify its own codebase safely.

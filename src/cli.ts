@@ -698,6 +698,79 @@ program
     }
   });
 
+// ===== keystone compile =====
+program
+  .command('compile')
+  .description('Compile a project into a single executable with embedded assets')
+  .option('-o, --outfile <path>', 'Output executable path', 'keystone-app')
+  .option('--project <path>', 'Project directory (default: .)', '.')
+  .action(async (options) => {
+    const { spawnSync } = await import('node:child_process');
+    const { resolve, join } = await import('node:path');
+    const { existsSync } = await import('node:fs');
+
+    const projectDir = resolve(options.project);
+    const keystoneDir = join(projectDir, '.keystone');
+
+    if (!existsSync(keystoneDir)) {
+      console.error(`✗ No .keystone directory found at ${projectDir}`);
+      process.exit(1);
+    }
+
+    console.log(`🏗️  Compiling project at ${projectDir}...`);
+    console.log(`📂 Embedding assets from ${keystoneDir}`);
+
+    // Find the CLI source path
+    const cliSource = resolve(import.meta.dir, 'cli.ts');
+
+    const buildArgs = [
+      'build',
+      cliSource,
+      '--compile',
+      '--outfile',
+      options.outfile,
+    ];
+
+    console.log(`🚀 Running: ASSETS_DIR=${keystoneDir} bun ${buildArgs.join(' ')}`);
+
+    const result = spawnSync('bun', buildArgs, {
+      env: {
+        ...process.env,
+        ASSETS_DIR: keystoneDir,
+      },
+      stdio: 'inherit',
+    });
+
+    if (result.status === 0) {
+      console.log(`\n✨ Successfully compiled to ${options.outfile}`);
+      console.log(`   You can now run ./${options.outfile} anywhere!`);
+    } else {
+      console.error(`\n✗ Compilation failed with exit code ${result.status}`);
+      process.exit(1);
+    }
+  });
+
+// ===== keystone manifest =====
+program
+  .command('manifest')
+  .description('Show embedded assets manifest')
+  .action(async () => {
+    const { ResourceLoader } = await import('./utils/resource-loader.ts');
+    const assets = ResourceLoader.getEmbeddedAssets();
+    const keys = Object.keys(assets);
+
+    if (keys.length === 0) {
+      console.log('No embedded assets found.');
+      return;
+    }
+
+    console.log(`\n📦 Embedded Assets (${keys.length}):`);
+    for (const key of keys.sort()) {
+      console.log(`  - ${key} (${assets[key].length} bytes)`);
+    }
+    console.log('');
+  });
+
 async function showRunLogs(run: WorkflowRun, db: WorkflowDb, verbose: boolean) {
   console.log(`\n🏛️  Run: ${run.workflow_name} (${run.id})`);
   console.log(`   Status: ${run.status}`);

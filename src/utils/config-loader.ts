@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 import { type Config, ConfigSchema } from '../parser/config-schema';
 import { PathResolver } from './paths';
+import { ResourceLoader } from './resource-loader';
 
 export class ConfigLoader {
   private static instance: Config;
@@ -32,9 +33,10 @@ export class ConfigLoader {
 
     // Load configurations in reverse precedence order (User -> Project -> Env)
     for (const path of [...configPaths].reverse()) {
-      if (existsSync(path)) {
+      if (ResourceLoader.exists(path)) {
         try {
-          let content = readFileSync(path, 'utf8');
+          let content = ResourceLoader.readFile(path);
+          if (!content) continue;
 
           // Interpolate environment variables: ${VAR_NAME} or $VAR_NAME
           content = content.replace(

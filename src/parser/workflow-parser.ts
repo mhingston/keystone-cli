@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import * as yaml from 'js-yaml';
 import { z } from 'zod';
@@ -6,6 +5,7 @@ import { ExpressionEvaluator } from '../expression/evaluator.ts';
 import { validateJsonSchemaDefinition } from '../utils/schema-validator.ts';
 import { resolveAgentPath } from './agent-parser.ts';
 import { type Workflow, WorkflowSchema } from './schema.ts';
+import { ResourceLoader } from '../utils/resource-loader.ts';
 
 export class WorkflowParser {
   /**
@@ -13,7 +13,10 @@ export class WorkflowParser {
    */
   static loadWorkflow(path: string): Workflow {
     try {
-      const content = readFileSync(path, 'utf-8');
+      const content = ResourceLoader.readFile(path);
+      if (content === null) {
+        throw new Error(`Workflow file not found at ${path}`);
+      }
       const raw = yaml.load(content);
       const workflow = WorkflowSchema.parse(raw);
       const workflowDir = dirname(path);
