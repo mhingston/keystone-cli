@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import './sqlite-setup.ts';
+import { PathResolver } from '../utils/paths';
 import {
   StepStatus as StepStatusConst,
   type StepStatusType,
@@ -74,7 +75,7 @@ export interface CompensationRecord {
 export class WorkflowDb {
   private db: Database;
 
-  constructor(public readonly dbPath = '.keystone/state.db') {
+  constructor(public readonly dbPath = PathResolver.resolveDbPath()) {
     const dir = dirname(dbPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });

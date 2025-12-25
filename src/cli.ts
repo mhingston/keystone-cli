@@ -1047,15 +1047,26 @@ mcp
   });
 
 // ===== keystone config =====
-program
-  .command('config')
-  .description('Show current configuration')
+const configCmd = program.command('config').description('Configuration management');
+
+configCmd
+  .command('show')
+  .alias('list')
+  .description('Show current configuration and discovery paths')
   .action(async () => {
     const { ConfigLoader } = await import('./utils/config-loader.ts');
+    const { PathResolver } = await import('./utils/paths.ts');
     try {
       const config = ConfigLoader.load();
       console.log('\n🏛️  Keystone Configuration:');
       console.log(JSON.stringify(config, null, 2));
+
+      console.log('\n🔍 Configuration Search Paths (in precedence order):');
+      const paths = PathResolver.getConfigPaths();
+      for (const [i, p] of paths.entries()) {
+        const exists = existsSync(p) ? '✓' : '⊘';
+        console.log(`  ${i + 1}. ${exists} ${p}`);
+      }
     } catch (error) {
       console.error('✗ Failed to load config:', error instanceof Error ? error.message : error);
     }

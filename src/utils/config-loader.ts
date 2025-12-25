@@ -1,22 +1,37 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { type Config, ConfigSchema } from '../parser/config-schema';
+import { PathResolver } from './paths';
 
 export class ConfigLoader {
   private static instance: Config;
 
+  private static deepMerge(target: any, source: any): any {
+    const output = { ...target };
+    if (source && typeof source === 'object' && !Array.isArray(source)) {
+      for (const key of Object.keys(source)) {
+        if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+          if (!(key in target)) {
+            Object.assign(output, { [key]: source[key] });
+          } else {
+            output[key] = ConfigLoader.deepMerge(target[key], source[key]);
+          }
+        } else {
+          Object.assign(output, { [key]: source[key] });
+        }
+      }
+    }
+    return output;
+  }
+
   static load(): Config {
     if (ConfigLoader.instance) return ConfigLoader.instance;
 
-    const configPaths = [
-      join(process.cwd(), '.keystone', 'config.yaml'),
-      join(process.cwd(), '.keystone', 'config.yml'),
-    ];
+    const configPaths = PathResolver.getConfigPaths();
+    let mergedConfig: Record<string, unknown> = {};
 
-    let userConfig: Record<string, unknown> = {};
-
-    for (const path of configPaths) {
+    // Load configurations in reverse precedence order (User -> Project -> Env)
+    for (const path of [...configPaths].reverse()) {
       if (existsSync(path)) {
         try {
           let content = readFileSync(path, 'utf8');
@@ -30,15 +45,15 @@ export class ConfigLoader {
             }
           );
 
-          userConfig = (yaml.load(content) as Record<string, unknown>) || {};
-          break;
+          const config = (yaml.load(content) as Record<string, unknown>) || {};
+          mergedConfig = ConfigLoader.deepMerge(mergedConfig, config);
         } catch (error) {
           console.warn(`Warning: Failed to load config from ${path}:`, error);
         }
       }
     }
 
-    const result = ConfigSchema.safeParse(userConfig);
+    const result = ConfigSchema.safeParse(mergedConfig);
     if (!result.success) {
       console.warn('Warning: Invalid configuration, using defaults:', result.error.message);
       ConfigLoader.instance = ConfigSchema.parse({});

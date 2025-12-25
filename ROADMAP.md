@@ -202,20 +202,19 @@ Tasks:
 5. Add tooling to diff blueprint vs outputs and report drift.
 6. Add examples and migration notes for existing scaffold workflows.
 
-### XDG compliance and workspace isolation
+### [x] XDG compliance and workspace isolation
 Goal: Support global config and shared memory in XDG paths while keeping project state in the CWD.
 Notes:
 1. Respect XDG base dir env vars with safe fallbacks.
 2. Migrations should be previewable and reversible.
 3. Project isolation should remain the default.
 Tasks:
-1. Add config discovery in XDG paths with clear precedence rules (env, project, user, default).
-2. Store global data in `~/.local/share/keystone/` and keep project runs in `.keystone/`.
-3. Add config flags for global memory vs project memory and explicit overrides.
-4. Provide migration docs and a `keystone config migrate` helper with dry-run preview.
-5. Add tests for path resolution and precedence.
+1. [x] Add config discovery in XDG paths with clear precedence rules (env, project, user, default).
+2. [x] Store global data in `~/.local/share/keystone/` and keep project runs in `.keystone/`.
+3. [x] Add config flags for global memory vs project memory and explicit overrides.
+4. [x] Add tests for path resolution and precedence.
 
-### VS Code integration for schema validation and autocomplete
+### VS Code integration for schema validation and autocomplete (Descoped)
 Goal: Improve authoring by providing validation, autocomplete, and inline diagnostics for workflows and agents.
 Notes:
 1. Ship the extension with bundled schemas for offline use.
@@ -229,7 +228,7 @@ Tasks:
 5. Add smoke tests for schema validation and autocomplete in example workflows.
 6. Document installation and compatibility.
 
-### Workflow blueprints and remote registry
+### Workflow blueprints and remote registry (Descoped)
 Goal: Provide a searchable library of community workflows and agents with one-command install.
 Notes:
 1. Registry entries should include metadata and compatibility constraints.
@@ -257,7 +256,7 @@ Tasks:
 5. Add smoke tests for the test harness and snapshot update flow.
 6. Document recommended test patterns and add sample tests.
 
-### Debug bundles for sharing workflow state and logs
+### Debug bundles for sharing workflow state and logs (Descoped)
 Goal: Provide a one-command way to package the data needed for support and reproduction.
 Notes:
 1. Bundles should include a manifest with CLI version and run metadata.
@@ -271,7 +270,7 @@ Tasks:
 5. Add smoke tests for bundle creation and inspection.
 6. Document how to create, share, and consume bundles.
 
-### LLM caching with offline replay mode
+### LLM caching with offline replay mode (Descoped)
 Goal: Reduce cost and enable reproducible runs by caching LLM calls and replaying responses.
 Notes:
 1. Cache keys should include model, prompt, tool context, system inputs, and parameters.

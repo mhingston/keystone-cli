@@ -86,4 +86,69 @@ describe('ConfigLoader', () => {
       ConfigLoader.clear();
     }
   });
+
+  it('should merge configurations with precedence', () => {
+    const tempDir = mkdtempSync(join(process.cwd(), 'temp-merge-'));
+    const keystoneDir = join(tempDir, '.keystone');
+    mkdirSync(keystoneDir, { recursive: true });
+
+    const userConfigDir = join(tempDir, 'user-config');
+    process.env.XDG_CONFIG_HOME = userConfigDir;
+    mkdirSync(join(userConfigDir, 'keystone'), { recursive: true });
+
+    // User config
+    writeFileSync(
+      join(userConfigDir, 'keystone', 'config.yaml'),
+      'default_provider: anthropic\n' +
+      'providers:\n' +
+      '  anthropic:\n' +
+      '    type: anthropic\n' +
+      '    default_model: user-model\n'
+    );
+
+    // Project config
+    writeFileSync(
+      join(keystoneDir, 'config.yaml'),
+      'default_provider: openai\n' +
+      'providers:\n' +
+      '  openai:\n' +
+      '    type: openai\n' +
+      '    default_model: project-model\n'
+    );
+
+    const cwdSpy = spyOn(process, 'cwd').mockReturnValue(tempDir);
+
+    try {
+      ConfigLoader.clear();
+      const config = ConfigLoader.load();
+      // project overrides user
+      expect(config.default_provider).toBe('openai');
+      // merged providers
+      expect(config.providers.openai?.default_model).toBe('project-model');
+      expect(config.providers.anthropic?.default_model).toBe('user-model');
+    } finally {
+      cwdSpy.mockRestore();
+      delete process.env.XDG_CONFIG_HOME;
+      rmSync(tempDir, { recursive: true, force: true });
+      ConfigLoader.clear();
+    }
+  });
+
+  it('should respect KEYSTONE_CONFIG override', () => {
+    const tempDir = mkdtempSync(join(process.cwd(), 'temp-env-'));
+    const envConfigPath = join(tempDir, 'env-config.yaml');
+    writeFileSync(envConfigPath, 'default_provider: env-provider');
+
+    process.env.KEYSTONE_CONFIG = envConfigPath;
+
+    try {
+      ConfigLoader.clear();
+      const config = ConfigLoader.load();
+      expect(config.default_provider).toBe('env-provider');
+    } finally {
+      delete process.env.KEYSTONE_CONFIG;
+      rmSync(tempDir, { recursive: true, force: true });
+      ConfigLoader.clear();
+    }
+  });
 });
