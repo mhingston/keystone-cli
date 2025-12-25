@@ -49,7 +49,7 @@ describe('Durable Timers Integration', () => {
 
   it('should suspend a durable sleep step and create a timer', async () => {
     const runner = new WorkflowRunner(sleepWorkflow, { dbPath });
-    const runId = runner.getRunId();
+    const runId = runner.runId;
 
     try {
       await runner.run();
@@ -83,7 +83,7 @@ describe('Durable Timers Integration', () => {
     process.stdin.isTTY = false; // Ensure human step suspends instead of waiting for input
 
     const runner = new WorkflowRunner(humanWorkflow, { dbPath });
-    const runId = runner.getRunId();
+    const runId = runner.runId;
 
     try {
       await runner.run();
@@ -113,7 +113,7 @@ describe('Durable Timers Integration', () => {
 
   it('should resume a waiting run if the timer has NOT elapsed', async () => {
     const runner = new WorkflowRunner(sleepWorkflow, { dbPath });
-    const runId = runner.getRunId();
+    const runId = runner.runId;
 
     // Start it once to get it waiting
     try {
@@ -141,7 +141,7 @@ describe('Durable Timers Integration', () => {
 
   it('should NOT create duplicate timers on resume', async () => {
     const runner = new WorkflowRunner(sleepWorkflow, { dbPath });
-    const runId = runner.getRunId();
+    const runId = runner.runId;
     try {
       await runner.run();
     } catch {}
@@ -161,7 +161,7 @@ describe('Durable Timers Integration', () => {
 
   it('should resume and COMPLETE a waiting run if the timer has elapsed', async () => {
     const runner = new WorkflowRunner(sleepWorkflow, { dbPath });
-    const runId = runner.getRunId();
+    const runId = runner.runId;
 
     try {
       await runner.run();

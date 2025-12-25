@@ -36,7 +36,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) {}
+  ) { }
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -123,17 +123,17 @@ export class WorkflowRunner {
   private workflow: Workflow;
   private db: WorkflowDb;
   private memoryDb: MemoryDb;
-  private runId: string;
+  private _runId!: string;
   private stepContexts: Map<string, StepContext | ForeachStepContext> = new Map();
-  private inputs: Record<string, unknown>;
+  private inputs!: Record<string, unknown>;
   private secrets: Record<string, string>;
   private redactor: Redactor;
-  private rawLogger: Logger;
+  private rawLogger!: Logger;
   private secretValues: string[] = [];
   private redactAtRest = true;
   private resumeRunId?: string;
   private restored = false;
-  private logger: Logger;
+  private logger!: Logger;
   private mcpManager: MCPManager;
   private options: RunOptions;
   private signalHandler?: (signal: string) => void;
@@ -145,7 +145,7 @@ export class WorkflowRunner {
   private depth = 0;
   private lastFailedStep?: { id: string; error: string };
   private abortController = new AbortController();
-  private resourcePool: ResourcePoolManager;
+  private resourcePool!: ResourcePoolManager;
 
   /**
    * Get the abort signal for cancellation checks
@@ -176,13 +176,22 @@ export class WorkflowRunner {
     this.memoryDb = new MemoryDb(options.memoryDbPath);
     this.secrets = this.loadSecrets();
     this.redactor = new Redactor(this.secrets, { forcedSecrets: this.secretValues });
-    // Wrap the logger with a redactor to prevent secret leakage in logs
+
+    this.initLogger(options);
+    this.mcpManager = options.mcpManager || new MCPManager();
+    this.initResourcePool(options);
+    this.initRun(options);
+
+    this.setupSignalHandlers();
+  }
+
+  private initLogger(options: RunOptions): void {
     const rawLogger = options.logger || new ConsoleLogger();
     this.rawLogger = rawLogger;
     this.logger = new RedactingLogger(rawLogger, this.redactor);
-    this.mcpManager = options.mcpManager || new MCPManager();
+  }
 
-    // Initialize resource pool manager
+  private initResourcePool(options: RunOptions): void {
     if (options.resourcePoolManager) {
       this.resourcePool = options.resourcePoolManager;
     } else {
@@ -190,7 +199,6 @@ export class WorkflowRunner {
       const globalPools = config.concurrency?.pools || {};
       const workflowPools: Record<string, number> = {};
 
-      // Parse workflow-level pool overrides
       if (this.workflow.pools) {
         const baseContext = this.buildContext();
         for (const [name, limit] of Object.entries(this.workflow.pools)) {
@@ -207,31 +215,33 @@ export class WorkflowRunner {
         pools: { ...globalPools, ...workflowPools },
       });
     }
+  }
 
+  private initRun(options: RunOptions): void {
     if (options.resumeRunId) {
-      // Resume existing run
-      this.runId = options.resumeRunId;
+      this._runId = options.resumeRunId;
       this.resumeRunId = options.resumeRunId;
-      this.inputs = options.resumeInputs || {}; // Start with resume inputs, will be merged with DB inputs in restoreState
+      this.inputs = options.resumeInputs || {};
     } else {
-      // Start new run
       this.inputs = options.inputs || {};
-      this.runId = randomUUID();
+      this._runId = randomUUID();
     }
-
-    if (this.workflow.compensate) {
-      // We will register at the start of run()
-    }
-
-    this.setupSignalHandlers();
   }
 
   /**
    * Get the current run ID
    */
+  public get runId(): string {
+    return this._runId;
+  }
+
+  /**
+   * Get the current run ID (method for mocking compatibility)
+   */
   public getRunId(): string {
     return this.runId;
   }
+
 
   /**
    * Restore state from a previous run (for resume functionality)
@@ -750,9 +760,9 @@ export class WorkflowRunner {
           content:
             (step as import('../parser/schema.ts').FileStep).content !== undefined
               ? ExpressionEvaluator.evaluateString(
-                  (step as import('../parser/schema.ts').FileStep).content as string,
-                  context
-                )
+                (step as import('../parser/schema.ts').FileStep).content as string,
+                context
+              )
               : undefined,
           op: step.op,
           allowOutsideCwd: step.allowOutsideCwd,
@@ -831,9 +841,9 @@ export class WorkflowRunner {
           input:
             (step as import('../parser/schema.ts').EngineStep).input !== undefined
               ? ExpressionEvaluator.evaluateObject(
-                  (step as import('../parser/schema.ts').EngineStep).input,
-                  context
-                )
+                (step as import('../parser/schema.ts').EngineStep).input,
+                context
+              )
               : undefined,
           env,
           cwd: ExpressionEvaluator.evaluateString(
@@ -1248,11 +1258,11 @@ export class WorkflowRunner {
     const idempotencyContextForRetry =
       idempotencyClaimed && scopedIdempotencyKey
         ? {
-            rawKey: idempotencyKey || scopedIdempotencyKey,
-            scopedKey: scopedIdempotencyKey,
-            ttlSeconds: idempotencyTtlSeconds,
-            claimed: true,
-          }
+          rawKey: idempotencyKey || scopedIdempotencyKey,
+          scopedKey: scopedIdempotencyKey,
+          ttlSeconds: idempotencyTtlSeconds,
+          claimed: true,
+        }
         : undefined;
 
     let stepToExecute = step;
@@ -1299,9 +1309,9 @@ export class WorkflowRunner {
         try {
           const outputForValidation =
             stepToExecute.type === 'engine' &&
-            result.output &&
-            typeof result.output === 'object' &&
-            'summary' in result.output
+              result.output &&
+              typeof result.output === 'object' &&
+              'summary' in result.output
               ? (result.output as { summary?: unknown }).summary
               : result.output;
           this.validateSchema(
@@ -2138,7 +2148,7 @@ Please provide a corrected response that exactly matches the required schema.`;
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-        '   Workflows can execute arbitrary shell commands and access your environment.\n'
+      '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     this.redactAtRest = ConfigLoader.load().storage?.redact_secrets_at_rest ?? true;

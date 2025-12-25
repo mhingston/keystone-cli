@@ -46,7 +46,7 @@ describe('WorkflowRunner Reflexion', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: Accessing private property for testing
     const db = (runner as any).db;
-    await db.createRun(runner.getRunId(), workflow.name, {});
+    await db.createRun(runner.runId, workflow.name, {});
 
     const spy = jest.spyOn(StepExecutor, 'executeStep');
 

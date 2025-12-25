@@ -156,7 +156,7 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
 
     // Verify DB records
     const db = new WorkflowDb(compDbPath);
-    const runId = runner.getRunId();
+    const runId = runner.runId;
     const comps = await db.getAllCompensations(runId);
     expect(comps.length).toBe(2);
     db.close();

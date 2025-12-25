@@ -698,6 +698,33 @@ Keystone comes with a set of **Standard Tools** that can be enabled for any agen
 - `search_content`: Search for string or regex within files (arguments: `query`, `dir`, `pattern`)
 - `run_command`: Run a shell command (arguments: `command`, `dir`). Risky commands require `allowInsecure: true` on the LLM step.
 
+#### Standard Tool Examples
+
+Agents can use these tools to interact with their environment. Here is how they appear when used by an agent:
+
+**Read File:**
+```yaml
+- name: read_file
+  arguments:
+    path: "src/utils/logger.ts"
+```
+
+**Write File:**
+```yaml
+- name: write_file
+  arguments:
+    path: "new_file.txt"
+    content: "Hello from Keystone!"
+```
+
+**Run Command:**
+```yaml
+- name: run_command
+  arguments:
+    command: "ls -la"
+    dir: "."
+```
+
 Tool arguments are passed to the tool's execution step via the `args` variable.
 
 **`.keystone/workflows/agents/developer.md`**

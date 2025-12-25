@@ -99,13 +99,38 @@ export class ProcessSandbox {
 // Context is sanitized through JSON parse/stringify to prevent prototype pollution
 const context = ${contextJson};
 
-// Remove dangerous globals
-delete globalThis.process;
-delete globalThis.require;
-delete globalThis.module;
-delete globalThis.exports;
-delete globalThis.__dirname;
-delete globalThis.__filename;
+// Remove dangerous globals to prevent sandbox escape
+const dangerousGlobals = [
+  'process',
+  'require',
+  'module',
+  'exports',
+  '__dirname',
+  '__filename',
+  'Bun',
+  'fetch',
+  'crypto',
+  'Worker',
+  'navigator',
+  'performance',
+  'alert',
+  'confirm',
+  'prompt',
+  'addEventListener',
+  'dispatchEvent',
+  'removeEventListener',
+  'onmessage',
+  'onerror',
+  'ErrorEvent',
+];
+
+for (const g of dangerousGlobals) {
+  try {
+    delete globalThis[g];
+  } catch (e) {
+    // Ignore errors for non-deletable properties
+  }
+}
 
 // Make context variables available
 Object.assign(globalThis, context);
@@ -135,6 +160,7 @@ Object.assign(globalThis, context);
     ): Promise<ProcessSandboxResult> {
         return new Promise((resolve) => {
             let stdout = '';
+            let stderr = '';
             let timedOut = false;
 
             // Spawn bun with minimal environment
@@ -160,6 +186,11 @@ Object.assign(globalThis, context);
                 stdout += data.toString();
             });
 
+            // Collect stderr
+            child.stderr.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+
             // Handle process exit
             child.on('close', (exitCode) => {
                 if (timeoutHandle) {
@@ -174,7 +205,7 @@ Object.assign(globalThis, context);
                 if (exitCode !== 0 && !stdout) {
                     resolve({
                         success: false,
-                        error: `Process exited with code ${exitCode}`,
+                        error: `Process exited with code ${exitCode}${stderr ? `: ${stderr}` : ''}`,
                     });
                     return;
                 }

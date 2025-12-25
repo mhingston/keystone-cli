@@ -237,7 +237,7 @@ describe('WorkflowRunner', () => {
     await expect(runner.run()).rejects.toThrow(/Step s1 failed/);
 
     const db = new WorkflowDb(schemaDbPath);
-    const steps = await db.getStepsByRun(runner.getRunId());
+    const steps = await db.getStepsByRun(runner.runId);
     db.close();
 
     expect(steps[0]?.error || '').toMatch(/Input schema validation failed/);
@@ -268,7 +268,7 @@ describe('WorkflowRunner', () => {
     await expect(runner.run()).rejects.toThrow(/Step s1 failed/);
 
     const db = new WorkflowDb(schemaDbPath);
-    const steps = await db.getStepsByRun(runner.getRunId());
+    const steps = await db.getStepsByRun(runner.runId);
     db.close();
 
     expect(steps[0]?.error || '').toMatch(/Output schema validation failed/);
@@ -620,7 +620,7 @@ describe('WorkflowRunner', () => {
     try {
       await runner1.run();
     } catch (e) {
-      runId = runner1.getRunId();
+      runId = runner1.runId;
     }
 
     const fixedWorkflow: Workflow = {
@@ -689,7 +689,7 @@ describe('WorkflowRunner', () => {
     await runner.run();
 
     const db = new WorkflowDb(dbFile);
-    const run = await db.getRun(runner.getRunId());
+    const run = await db.getRun(runner.runId);
     db.close();
 
     expect(run).toBeTruthy();
@@ -702,8 +702,8 @@ describe('WorkflowRunner', () => {
 
   it('should return run ID', () => {
     const runner = new WorkflowRunner(workflow, { dbPath });
-    expect(runner.getRunId()).toBeDefined();
-    expect(typeof runner.getRunId()).toBe('string');
+    expect(runner.runId).toBeDefined();
+    expect(typeof runner.runId).toBe('string');
   });
 
   it('should continue even if finally step fails', async () => {
@@ -811,7 +811,7 @@ describe('WorkflowRunner', () => {
         : undefined
     ).toBe('WorkflowSuspendedError');
 
-    const runId = runner1.getRunId();
+    const runId = runner1.runId;
 
     // Check DB status - parent should be 'paused' and step should be 'suspended'
     const db = new WorkflowDb(resumeDbPath);
