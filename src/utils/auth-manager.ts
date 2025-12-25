@@ -9,6 +9,13 @@ export interface AuthData {
   copilot_expires_at?: number;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  google_gemini?: {
+    access_token: string;
+    refresh_token: string;
+    expires_at: number;
+    email?: string;
+    project_id?: string;
+  };
   anthropic_claude?: {
     access_token: string;
     refresh_token: string;
@@ -43,6 +50,24 @@ const OPENAI_CHATGPT_REDIRECT_URI = 'http://localhost:1455/callback';
 const ANTHROPIC_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const ANTHROPIC_OAUTH_REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback';
 const ANTHROPIC_OAUTH_SCOPE = 'org:create_api_key user:profile user:inference';
+const GOOGLE_GEMINI_OAUTH_CLIENT_ID =
+  '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
+const GOOGLE_GEMINI_OAUTH_CLIENT_SECRET = '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';
+const GOOGLE_GEMINI_OAUTH_REDIRECT_URI = 'http://localhost:51121/oauth-callback';
+const GOOGLE_GEMINI_OAUTH_SCOPES = [
+  'https://www.googleapis.com/auth/cloud-platform',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+  'https://www.googleapis.com/auth/cclog',
+  'https://www.googleapis.com/auth/experimentsandconfigs',
+];
+const GOOGLE_GEMINI_LOAD_ENDPOINTS = [
+  'https://cloudcode-pa.googleapis.com',
+  'https://daily-cloudcode-pa.sandbox.googleapis.com',
+  'https://autopush-cloudcode-pa.sandbox.googleapis.com',
+];
+const GOOGLE_GEMINI_METADATA_HEADER =
+  '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}';
 
 export class AuthManager {
   private static getAuthPath(): string {
@@ -277,6 +302,205 @@ export class AuthManager {
     };
   }
 
+  private static async fetchGoogleGeminiProjectId(
+    accessToken: string
+  ): Promise<string | undefined> {
+    const loadHeaders: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'google-api-nodejs-client/9.15.1',
+      'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+      'Client-Metadata': GOOGLE_GEMINI_METADATA_HEADER,
+    };
+
+    for (const baseEndpoint of GOOGLE_GEMINI_LOAD_ENDPOINTS) {
+      try {
+        const response = await fetch(`${baseEndpoint}/v1internal:loadCodeAssist`, {
+          method: 'POST',
+          headers: loadHeaders,
+          body: JSON.stringify({
+            metadata: {
+              ideType: 'IDE_UNSPECIFIED',
+              platform: 'PLATFORM_UNSPECIFIED',
+              pluginType: 'GEMINI',
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          continue;
+        }
+
+        const data = (await response.json()) as {
+          cloudaicompanionProject?: string | { id?: string };
+        };
+
+        if (typeof data.cloudaicompanionProject === 'string' && data.cloudaicompanionProject) {
+          return data.cloudaicompanionProject;
+        }
+        if (
+          data.cloudaicompanionProject &&
+          typeof data.cloudaicompanionProject.id === 'string' &&
+          data.cloudaicompanionProject.id
+        ) {
+          return data.cloudaicompanionProject.id;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return undefined;
+  }
+
+  static async loginGoogleGemini(projectId?: string): Promise<void> {
+    const verifier = AuthManager.generateCodeVerifier();
+    const challenge = AuthManager.createCodeChallenge(verifier);
+    const state = randomBytes(16).toString('hex');
+
+    return new Promise((resolve, reject) => {
+      let server: any;
+      const timeout = setTimeout(() => {
+        if (server) server.stop();
+        reject(new Error('Login timed out after 5 minutes'));
+      }, 5 * 60 * 1000);
+
+      server = Bun.serve({
+        port: 51121,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === '/oauth-callback') {
+            const error = url.searchParams.get('error');
+            if (error) {
+              clearTimeout(timeout);
+              setTimeout(() => server.stop(), 100);
+              reject(new Error(`Authorization error: ${error}`));
+              return new Response(`Error: ${error}`, { status: 400 });
+            }
+
+            const code = url.searchParams.get('code');
+            const returnedState = url.searchParams.get('state');
+            if (!code) {
+              return new Response('Missing code parameter', { status: 400 });
+            }
+            if (returnedState && returnedState !== state) {
+              clearTimeout(timeout);
+              setTimeout(() => server.stop(), 100);
+              reject(new Error('Invalid OAuth state'));
+              return new Response('Invalid state parameter', { status: 400 });
+            }
+
+            try {
+              const response = await fetch('https://oauth2.googleapis.com/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                  client_id: GOOGLE_GEMINI_OAUTH_CLIENT_ID,
+                  client_secret: GOOGLE_GEMINI_OAUTH_CLIENT_SECRET,
+                  code,
+                  grant_type: 'authorization_code',
+                  redirect_uri: GOOGLE_GEMINI_OAUTH_REDIRECT_URI,
+                  code_verifier: verifier,
+                }),
+              });
+
+              if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Failed to exchange code: ${response.status} - ${errorText}`);
+              }
+
+              const data = (await response.json()) as {
+                access_token: string;
+                refresh_token?: string;
+                expires_in: number;
+              };
+
+              if (!data.refresh_token) {
+                throw new Error('Missing refresh token in response. Try re-authenticating.');
+              }
+
+              let email: string | undefined;
+              try {
+                const userInfoResponse = await fetch(
+                  'https://www.googleapis.com/oauth2/v1/userinfo?alt=json',
+                  { headers: { Authorization: `Bearer ${data.access_token}` } }
+                );
+                if (userInfoResponse.ok) {
+                  const userInfo = (await userInfoResponse.json()) as { email?: string };
+                  email = userInfo.email;
+                }
+              } catch {
+                // Ignore user info lookup failures
+              }
+
+              let resolvedProjectId =
+                projectId ||
+                process.env.GOOGLE_GEMINI_PROJECT_ID ||
+                process.env.KEYSTONE_GEMINI_PROJECT_ID;
+              if (!resolvedProjectId) {
+                resolvedProjectId = await AuthManager.fetchGoogleGeminiProjectId(data.access_token);
+              }
+
+              AuthManager.save({
+                google_gemini: {
+                  access_token: data.access_token,
+                  refresh_token: data.refresh_token,
+                  expires_at: Math.floor(Date.now() / 1000) + data.expires_in,
+                  email,
+                  project_id: resolvedProjectId,
+                },
+              });
+
+              clearTimeout(timeout);
+              setTimeout(() => server.stop(), 100);
+              resolve();
+              return new Response(
+                '<h1>Authentication Successful!</h1><p>You can close this window and return to the terminal.</p>',
+                { headers: { 'Content-Type': 'text/html' } }
+              );
+            } catch (err) {
+              clearTimeout(timeout);
+              setTimeout(() => server.stop(), 100);
+              reject(err);
+              return new Response(`Error: ${err instanceof Error ? err.message : String(err)}`, {
+                status: 500,
+              });
+            }
+          }
+          return new Response('Not Found', { status: 404 });
+        },
+      });
+
+      const authUrl =
+        `https://accounts.google.com/o/oauth2/v2/auth?` +
+        new URLSearchParams({
+          client_id: GOOGLE_GEMINI_OAUTH_CLIENT_ID,
+          response_type: 'code',
+          redirect_uri: GOOGLE_GEMINI_OAUTH_REDIRECT_URI,
+          scope: GOOGLE_GEMINI_OAUTH_SCOPES.join(' '),
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+          access_type: 'offline',
+          prompt: 'consent',
+          state,
+        }).toString();
+
+      console.log('\nTo login with Google Gemini (OAuth):');
+      console.log('1. Visit the following URL in your browser:');
+      console.log(`   ${authUrl}\n`);
+      console.log('Waiting for authorization...');
+
+      try {
+        const { platform } = process;
+        const command = platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
+        const { spawn } = require('node:child_process');
+        spawn(command, [authUrl]);
+      } catch {
+        // Ignore if we can't open the browser automatically
+      }
+    });
+  }
+
   static async loginOpenAIChatGPT(): Promise<void> {
     const verifier = AuthManager.generateCodeVerifier();
     const challenge = AuthManager.createCodeChallenge(verifier);
@@ -422,6 +646,58 @@ export class AuthManager {
       return data.access_token;
     } catch (error) {
       console.error('Error refreshing OpenAI ChatGPT token:', error);
+      return undefined;
+    }
+  }
+
+  static async getGoogleGeminiToken(): Promise<string | undefined> {
+    const auth = AuthManager.load();
+    if (!auth.google_gemini) return undefined;
+
+    const { access_token, refresh_token, expires_at } = auth.google_gemini;
+
+    if (expires_at > Date.now() / 1000 + TOKEN_REFRESH_BUFFER_SECONDS) {
+      return access_token;
+    }
+
+    if (!refresh_token) {
+      return undefined;
+    }
+
+    try {
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: GOOGLE_GEMINI_OAUTH_CLIENT_ID,
+          client_secret: GOOGLE_GEMINI_OAUTH_CLIENT_SECRET,
+          grant_type: 'refresh_token',
+          refresh_token,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to refresh token: ${response.statusText}`);
+      }
+
+      const data = (await response.json()) as {
+        access_token: string;
+        refresh_token?: string;
+        expires_in: number;
+      };
+
+      AuthManager.save({
+        google_gemini: {
+          ...auth.google_gemini,
+          access_token: data.access_token,
+          refresh_token: data.refresh_token || refresh_token,
+          expires_at: Math.floor(Date.now() / 1000) + data.expires_in,
+        },
+      });
+
+      return data.access_token;
+    } catch (error) {
+      console.error('Error refreshing Google Gemini token:', error);
       return undefined;
     }
   }

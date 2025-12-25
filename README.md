@@ -88,9 +88,11 @@ keystone auth login openai
 keystone auth login anthropic
 keystone auth login anthropic-claude
 keystone auth login openai-chatgpt
+keystone auth login gemini
 ```
 Use `anthropic-claude` for Claude Pro/Max subscriptions (OAuth) instead of an API key.
 Use `openai-chatgpt` for ChatGPT Plus/Pro subscriptions (OAuth) instead of an API key.
+Use `google-gemini` for Google Gemini subscriptions (OAuth) instead of an API key.
 
 ### 3. Run a Workflow
 ```bash
@@ -153,6 +155,10 @@ providers:
     type: anthropic-claude
     base_url: https://api.anthropic.com/v1
     default_model: claude-3-5-sonnet-20240620
+  google-gemini:
+    type: google-gemini
+    base_url: https://cloudcode-pa.googleapis.com
+    default_model: gemini-3-pro-high
   groq:
     type: openai
     base_url: https://api.groq.com/openai/v1
@@ -164,6 +170,7 @@ model_mappings:
   "gpt-*": openai
   "claude-4*": anthropic-claude
   "claude-*": anthropic
+  "gemini-*": google-gemini
   "o1-*": openai
   "llama-*": groq
 
@@ -261,6 +268,16 @@ keystone auth login anthropic-claude
 ```
 
 Then map models to the `anthropic-claude` provider in your config. This flow uses the Claude web auth code and refreshes tokens automatically.
+
+### Google Gemini (OAuth)
+
+Keystone supports using your Google Gemini subscription (OAuth) instead of an API key:
+
+```bash
+keystone auth login gemini
+```
+
+Then map models to the `google-gemini` provider in your config.
 
 ### API Key Management
 

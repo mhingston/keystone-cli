@@ -1295,6 +1295,7 @@ auth
   .description('Login to an authentication provider')
   .argument('[provider]', 'Authentication provider', 'github')
   .option('-t, --token <token>', 'Personal Access Token (if not using interactive mode)')
+  .option('--project <project_id>', 'Google Cloud project ID (Gemini OAuth)')
   .action(async (provider, options) => {
     const { AuthManager } = await import('./utils/auth-manager.ts');
     const providerName = provider.toLowerCase();
@@ -1416,6 +1417,18 @@ auth
         );
         process.exit(1);
       }
+    } else if (providerName === 'gemini' || providerName === 'google-gemini') {
+      try {
+        await AuthManager.loginGoogleGemini(options.project);
+        console.log('\n✓ Successfully logged in to Google Gemini.');
+        return;
+      } catch (error) {
+        console.error(
+          '\n✗ Failed to login with Google Gemini:',
+          error instanceof Error ? error.message : error
+        );
+        process.exit(1);
+      }
     } else if (providerName === 'openai' || providerName === 'anthropic') {
       let key = options.token; // Use --token if provided as the API key
 
@@ -1510,12 +1523,30 @@ auth
       }
     }
 
+    if (!providerName || providerName === 'gemini' || providerName === 'google-gemini') {
+      if (auth.google_gemini) {
+        console.log('  ✓ Google Gemini subscription (OAuth) authenticated');
+        if (auth.google_gemini.email) {
+          console.log(`    Account: ${auth.google_gemini.email}`);
+        }
+        if (auth.google_gemini.expires_at) {
+          const expires = new Date(auth.google_gemini.expires_at * 1000);
+          console.log(`    Session expires: ${expires.toLocaleString()}`);
+        }
+      } else if (providerName) {
+        console.log(
+          `  ⊘ Google Gemini authentication not configured. Run "keystone auth login gemini" to authenticate.`
+        );
+      }
+    }
+
     if (
       !auth.github_token &&
       !auth.openai_api_key &&
       !auth.openai_chatgpt &&
       !auth.anthropic_api_key &&
       !auth.anthropic_claude &&
+      !auth.google_gemini &&
       !providerName
     ) {
       console.log('  ⊘ No providers configured. Run "keystone auth login" to authenticate.');
@@ -1555,6 +1586,11 @@ auth
       console.log(
         `✓ Successfully cleared ${providerName === 'anthropic' ? 'Anthropic API key and ' : ''}Claude session.`
       );
+    } else if (providerName === 'gemini' || providerName === 'google-gemini') {
+      AuthManager.save({
+        google_gemini: undefined,
+      });
+      console.log('✓ Successfully cleared Google Gemini session.');
     } else {
       console.error(`✗ Unknown provider: ${providerName}`);
       process.exit(1);

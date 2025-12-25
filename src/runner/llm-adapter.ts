@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { pipeline } from '@xenova/transformers';
 import { AuthManager, COPILOT_HEADERS } from '../utils/auth-manager';
 import { ConfigLoader } from '../utils/config-loader';
@@ -11,6 +12,13 @@ const ANTHROPIC_OAUTH_BETAS = [
   'interleaved-thinking-2025-05-14',
   'fine-grained-tool-streaming-2025-05-14',
 ].join(',');
+const GEMINI_DEFAULT_BASE_URL = 'https://cloudcode-pa.googleapis.com';
+const GEMINI_DEFAULT_PROJECT_ID = 'rising-fact-p41fc';
+const GEMINI_HEADERS = {
+  'User-Agent': 'antigravity/1.11.5 windows/amd64',
+  'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+  'Client-Metadata': '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}',
+};
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -49,6 +57,30 @@ export interface LLMTool {
     description?: string;
     parameters?: Record<string, unknown>;
   };
+}
+
+interface GeminiFunctionCall {
+  name: string;
+  args?: Record<string, unknown> | string;
+}
+
+interface GeminiPart {
+  text?: string;
+  functionCall?: GeminiFunctionCall;
+  functionResponse?: {
+    name: string;
+    response: Record<string, unknown>;
+  };
+}
+
+interface GeminiContent {
+  role: 'user' | 'model';
+  parts: GeminiPart[];
+}
+
+interface GeminiSystemInstruction {
+  role?: 'system';
+  parts: GeminiPart[];
 }
 
 export interface LLMAdapter {
@@ -561,6 +593,362 @@ export class OpenAIChatGPTAdapter implements LLMAdapter {
   }
 }
 
+export class GoogleGeminiAdapter implements LLMAdapter {
+  private baseUrl: string;
+  private projectId?: string;
+
+  constructor(baseUrl?: string, projectId?: string) {
+    this.baseUrl =
+      (baseUrl || Bun.env.GOOGLE_GEMINI_BASE_URL || GEMINI_DEFAULT_BASE_URL).replace(/\/$/, '');
+    this.projectId =
+      projectId || Bun.env.GOOGLE_GEMINI_PROJECT_ID || Bun.env.KEYSTONE_GEMINI_PROJECT_ID;
+  }
+
+  private sanitizeToolName(name: string, index: number, used: Set<string>): string {
+    let sanitized = name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+    if (!sanitized) {
+      sanitized = `tool_${index}`;
+    }
+    while (used.has(sanitized)) {
+      sanitized = `${sanitized}_${index}`.slice(0, 64);
+    }
+    used.add(sanitized);
+    return sanitized;
+  }
+
+  private buildToolMaps(tools?: LLMTool[]): {
+    nameToSanitized: Map<string, string>;
+    sanitizedToName: Map<string, string>;
+    tools?: { functionDeclarations: Array<{ name: string; description: string; parameters: unknown }> }[];
+    toolConfig?: { functionCallingConfig: { mode: 'AUTO' } };
+  } {
+    const nameToSanitized = new Map<string, string>();
+    const sanitizedToName = new Map<string, string>();
+
+    if (!tools || tools.length === 0) {
+      return { nameToSanitized, sanitizedToName };
+    }
+
+    const usedNames = new Set<string>();
+    const functionDeclarations = tools.map((tool, index) => {
+      const originalName = tool.function.name;
+      const sanitized = this.sanitizeToolName(originalName, index, usedNames);
+      nameToSanitized.set(originalName, sanitized);
+      sanitizedToName.set(sanitized, originalName);
+      return {
+        name: sanitized,
+        description: tool.function.description ?? '',
+        parameters: tool.function.parameters ?? { type: 'object', properties: {} },
+      };
+    });
+
+    return {
+      nameToSanitized,
+      sanitizedToName,
+      tools: [{ functionDeclarations }],
+      toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+    };
+  }
+
+  private parseToolResponse(content: string | null): Record<string, unknown> {
+    if (!content) return {};
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, unknown>;
+      }
+      return { content: parsed };
+    } catch {
+      return { content };
+    }
+  }
+
+  private buildContents(
+    messages: LLMMessage[],
+    nameToSanitized: Map<string, string>
+  ): { contents: GeminiContent[]; systemInstruction?: GeminiSystemInstruction } {
+    const contents: GeminiContent[] = [];
+    const systemParts: string[] = [];
+
+    for (const message of messages) {
+      if (message.role === 'system') {
+        if (message.content) systemParts.push(message.content);
+        continue;
+      }
+
+      const role: GeminiContent['role'] = message.role === 'assistant' ? 'model' : 'user';
+      const parts: GeminiPart[] = [];
+
+      if (message.role === 'tool') {
+        const toolName = message.name ? nameToSanitized.get(message.name) || message.name : undefined;
+        if (toolName) {
+          parts.push({
+            functionResponse: {
+              name: toolName,
+              response: this.parseToolResponse(message.content),
+            },
+          });
+        } else if (message.content) {
+          parts.push({ text: message.content });
+        }
+      } else {
+        if (message.content) {
+          parts.push({ text: message.content });
+        }
+
+        if (message.tool_calls) {
+          for (const toolCall of message.tool_calls) {
+            const toolName =
+              nameToSanitized.get(toolCall.function.name) || toolCall.function.name;
+            let args: Record<string, unknown> | string = {};
+            if (typeof toolCall.function.arguments === 'string') {
+              try {
+                args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+              } catch {
+                args = toolCall.function.arguments;
+              }
+            } else {
+              args = toolCall.function.arguments as unknown as Record<string, unknown>;
+            }
+            parts.push({
+              functionCall: {
+                name: toolName,
+                args,
+              },
+            });
+          }
+        }
+      }
+
+      if (parts.length > 0) {
+        contents.push({ role, parts });
+      }
+    }
+
+    const systemInstruction =
+      systemParts.length > 0
+        ? {
+          parts: [{ text: systemParts.join('\n\n') }],
+        }
+        : undefined;
+
+    return { contents, systemInstruction };
+  }
+
+  private buildEndpoint(isStreaming: boolean): string {
+    const action = isStreaming ? 'streamGenerateContent' : 'generateContent';
+    const suffix = isStreaming ? '?alt=sse' : '';
+    return `${this.baseUrl}/v1internal:${action}${suffix}`;
+  }
+
+  private buildUsage(usage?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  }): LLMResponse['usage'] | undefined {
+    if (!usage) return undefined;
+    const promptTokens = usage.promptTokenCount ?? 0;
+    const completionTokens = usage.candidatesTokenCount ?? 0;
+    const totalTokens = usage.totalTokenCount ?? promptTokens + completionTokens;
+    return {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
+    };
+  }
+
+  private extractGeminiParts(
+    data: {
+      candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
+    },
+    sanitizedToName: Map<string, string>,
+    onStream?: (chunk: string) => void,
+    toolCalls?: LLMToolCall[]
+  ): { content: string; usage?: LLMResponse['usage'] } {
+    let content = '';
+    if (Array.isArray(data.candidates)) {
+      const candidate = data.candidates[0];
+      const parts = candidate?.content?.parts || [];
+      for (const part of parts) {
+        if (part.text) {
+          if (content.length + part.text.length > MAX_RESPONSE_SIZE) {
+            throw new Error(`LLM response exceeds maximum size of ${MAX_RESPONSE_SIZE} bytes`);
+          }
+          content += part.text;
+          onStream?.(part.text);
+        }
+        if (part.functionCall && toolCalls) {
+          const originalName =
+            sanitizedToName.get(part.functionCall.name) || part.functionCall.name;
+          const args = part.functionCall.args ?? {};
+          const argsString = typeof args === 'string' ? args : JSON.stringify(args);
+          toolCalls.push({
+            id: `gemini_tool_${toolCalls.length + 1}`,
+            type: 'function',
+            function: {
+              name: originalName,
+              arguments: argsString,
+            },
+          });
+        }
+      }
+    }
+
+    return { content, usage: this.buildUsage(data.usageMetadata) };
+  }
+
+  async chat(
+    messages: LLMMessage[],
+    options?: {
+      model?: string;
+      tools?: LLMTool[];
+      onStream?: (chunk: string) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<LLMResponse> {
+    const isStreaming = !!options?.onStream;
+    const token = await AuthManager.getGoogleGeminiToken();
+    if (!token) {
+      throw new Error(
+        'Google Gemini authentication not found. Please run "keystone auth login gemini" first.'
+      );
+    }
+
+    const { nameToSanitized, sanitizedToName, tools, toolConfig } = this.buildToolMaps(
+      options?.tools
+    );
+    const { contents, systemInstruction } = this.buildContents(messages, nameToSanitized);
+
+    const requestPayload: Record<string, unknown> = {
+      contents,
+      sessionId: randomUUID(),
+    };
+    if (systemInstruction) requestPayload.systemInstruction = systemInstruction;
+    if (tools) requestPayload.tools = tools;
+    if (toolConfig) requestPayload.toolConfig = toolConfig;
+
+    const authProjectId = this.projectId ? undefined : AuthManager.load().google_gemini?.project_id;
+    const resolvedProjectId = this.projectId || authProjectId || GEMINI_DEFAULT_PROJECT_ID;
+
+    const wrappedBody = {
+      project: resolvedProjectId,
+      model: options?.model || 'gemini-3-pro-high',
+      request: requestPayload,
+      userAgent: 'antigravity',
+      requestId: `keystone-${randomUUID()}`,
+    };
+
+    const response = await fetch(this.buildEndpoint(isStreaming), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...GEMINI_HEADERS,
+        ...(isStreaming ? { Accept: 'text/event-stream' } : {}),
+      },
+      body: JSON.stringify(wrappedBody),
+      signal: options?.signal,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Google Gemini API error: ${response.status} ${response.statusText} - ${error}`);
+    }
+
+    if (isStreaming) {
+      if (!response.body) throw new Error('Response body is null');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let fullContent = '';
+      const toolCalls: LLMToolCall[] = [];
+      let usage: LLMResponse['usage'] | undefined;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+
+          try {
+            const data = JSON.parse(payload) as {
+              candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+              usageMetadata?: {
+                promptTokenCount?: number;
+                candidatesTokenCount?: number;
+                totalTokenCount?: number;
+              };
+            };
+            const result = this.extractGeminiParts(
+              data,
+              sanitizedToName,
+              options?.onStream,
+              toolCalls
+            );
+            if (result.content) {
+              if (fullContent.length + result.content.length > MAX_RESPONSE_SIZE) {
+                throw new Error(`LLM response exceeds maximum size of ${MAX_RESPONSE_SIZE} bytes`);
+              }
+              fullContent += result.content;
+            }
+            if (result.usage) {
+              usage = result.usage;
+            }
+          } catch (e) {
+            if (e instanceof Error && e.message.includes('LLM response exceeds')) {
+              throw e;
+            }
+            if (process.env.DEBUG || process.env.LLM_DEBUG) {
+              process.stderr.write(`[Gemini Stream] Failed to parse chunk: ${payload}\n`);
+            }
+          }
+        }
+      }
+
+      const finalToolCalls = toolCalls.length > 0 ? toolCalls : undefined;
+      return {
+        message: {
+          role: 'assistant',
+          content: fullContent || null,
+          tool_calls: finalToolCalls,
+        },
+        usage,
+      };
+    }
+
+    const data = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+      usageMetadata?: {
+        promptTokenCount?: number;
+        candidatesTokenCount?: number;
+        totalTokenCount?: number;
+      };
+    };
+
+    const toolCalls: LLMToolCall[] = [];
+    const extracted = this.extractGeminiParts(data, sanitizedToName, undefined, toolCalls);
+    const content = extracted.content || null;
+
+    return {
+      message: {
+        role: 'assistant',
+        content,
+        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+      },
+      usage: extracted.usage,
+    };
+  }
+}
+
 export class CopilotAdapter implements LLMAdapter {
   private baseUrl: string;
 
@@ -690,6 +1078,8 @@ export function getAdapter(model: string): { adapter: LLMAdapter; resolvedModel:
     adapter = new CopilotAdapter(providerConfig.base_url);
   } else if (providerConfig.type === 'openai-chatgpt') {
     adapter = new OpenAIChatGPTAdapter(providerConfig.base_url);
+  } else if (providerConfig.type === 'google-gemini') {
+    adapter = new GoogleGeminiAdapter(providerConfig.base_url, providerConfig.project_id);
   } else if (providerConfig.type === 'anthropic-claude') {
     adapter = new AnthropicClaudeAdapter(providerConfig.base_url);
   } else {

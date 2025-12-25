@@ -5,6 +5,7 @@ import {
   AnthropicAdapter,
   AnthropicClaudeAdapter,
   CopilotAdapter,
+  GoogleGeminiAdapter,
   LocalEmbeddingAdapter,
   OpenAIAdapter,
   OpenAIChatGPTAdapter,
@@ -444,6 +445,75 @@ describe('OpenAIChatGPTAdapter', () => {
   });
 });
 
+describe('GoogleGeminiAdapter', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    // @ts-ignore
+    global.fetch = mock();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('should call Gemini API with OAuth token and wrapped request', async () => {
+    const mockResponse = {
+      candidates: [
+        {
+          content: {
+            parts: [{ text: 'hello from gemini' }],
+          },
+        },
+      ],
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2, totalTokenCount: 3 },
+    };
+
+    const authSpy = spyOn(AuthManager, 'getGoogleGeminiToken').mockResolvedValue('gemini-token');
+
+    // @ts-ignore
+    global.fetch.mockResolvedValue(
+      new Response(JSON.stringify(mockResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const adapter = new GoogleGeminiAdapter('https://cloudcode-pa.googleapis.com', 'project-123');
+    const response = await adapter.chat([{ role: 'user', content: 'hi' }], {
+      model: 'gemini-3-pro-high',
+    });
+
+    expect(response.message.content).toBe('hello from gemini');
+    expect(response.usage?.total_tokens).toBe(3);
+
+    // @ts-ignore
+    const fetchMock = global.fetch as MockFetch;
+    // @ts-ignore
+    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
+    const [url, init] = fetchMock.mock.calls[0] as [string, any];
+
+    expect(url).toBe('https://cloudcode-pa.googleapis.com/v1internal:generateContent');
+    expect(init.headers.Authorization).toBe('Bearer gemini-token');
+
+    const body = JSON.parse(init.body);
+    expect(body.project).toBe('project-123');
+    expect(body.model).toBe('gemini-3-pro-high');
+    expect(body.request.contents[0].role).toBe('user');
+
+    authSpy.mockRestore();
+  });
+
+  it('should throw error if token not found', async () => {
+    const authSpy = spyOn(AuthManager, 'getGoogleGeminiToken').mockResolvedValue(undefined);
+
+    const adapter = new GoogleGeminiAdapter();
+    await expect(adapter.chat([])).rejects.toThrow(/Google Gemini authentication not found/);
+
+    authSpy.mockRestore();
+  });
+});
+
 describe('getAdapter', () => {
   beforeEach(() => {
     // Setup a clean config for each test
@@ -455,12 +525,14 @@ describe('getAdapter', () => {
         copilot: { type: 'copilot' },
         'chatgpt-provider': { type: 'openai-chatgpt' },
         'claude-subscription': { type: 'anthropic-claude' },
+        'gemini-subscription': { type: 'google-gemini' },
       },
       model_mappings: {
         'claude-4*': 'claude-subscription',
         'claude-*': 'anthropic',
         'gpt-5*': 'chatgpt-provider',
         'gpt-*': 'openai',
+        'gemini-*': 'gemini-subscription',
         'copilot:*': 'copilot',
       },
       storage: { retention_days: 30, redact_secrets_at_rest: true },
@@ -513,6 +585,12 @@ describe('getAdapter', () => {
     const { adapter, resolvedModel } = getAdapter('gpt-5.1');
     expect(adapter).toBeInstanceOf(OpenAIChatGPTAdapter);
     expect(resolvedModel).toBe('gpt-5.1');
+  });
+
+  it('should return GoogleGeminiAdapter for gemini subscription models', () => {
+    const { adapter, resolvedModel } = getAdapter('gemini-3-pro-high');
+    expect(adapter).toBeInstanceOf(GoogleGeminiAdapter);
+    expect(resolvedModel).toBe('gemini-3-pro-high');
   });
 
   it('should throw error for unknown provider', () => {
