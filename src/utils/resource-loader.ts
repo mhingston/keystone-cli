@@ -17,8 +17,8 @@ export class ResourceLoader {
     if (existsSync(path)) {
       try {
         return readFileSync(path, 'utf8');
-      } catch (e) {
-        // If it exists but can't be read, fall back to embedded
+      } catch {
+        // File exists but cannot be read (permissions, etc.) - fall back to embedded assets
       }
     }
 
@@ -67,7 +67,9 @@ export class ResourceLoader {
         for (const file of readdirSync(dirPath)) {
           files.add(file);
         }
-      } catch (e) {}
+      } catch {
+        // Directory cannot be read (permissions, etc.) - continue with embedded assets only
+      }
     }
 
     // 2. Add embedded files

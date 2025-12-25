@@ -3,10 +3,10 @@ import type { ExpressionContext } from '../expression/evaluator';
 import { ExpressionEvaluator } from '../expression/evaluator';
 import { parseAgent, resolveAgentPath } from '../parser/agent-parser';
 import type { AgentTool, LlmStep, Step } from '../parser/schema';
+import { LIMITS } from '../utils/constants';
 import { extractJson } from '../utils/json-parser';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
 import { RedactionBuffer, Redactor } from '../utils/redactor';
-import { LIMITS } from '../utils/constants';
 import { type LLMMessage, getAdapter } from './llm-adapter';
 import { MCPClient } from './mcp-client';
 import type { MCPManager, MCPServerConfig } from './mcp-manager';
@@ -21,8 +21,8 @@ function truncateMessages(messages: LLMMessage[], maxHistory: number): LLMMessag
   if (messages.length <= maxHistory) return messages;
 
   // Keep all system messages
-  const systemMessages = messages.filter(m => m.role === 'system');
-  const nonSystem = messages.filter(m => m.role !== 'system');
+  const systemMessages = messages.filter((m) => m.role === 'system');
+  const nonSystem = messages.filter((m) => m.role !== 'system');
 
   // Keep most recent non-system messages, accounting for system messages
   const keep = nonSystem.slice(-(maxHistory - systemMessages.length));

@@ -62,7 +62,9 @@ describe('Redactor', () => {
     // Minimum secret length for sensitive keys is 6 to reduce false positives
     const shortRedactor = new Redactor({ S1: 'a', S2: '12', TOKEN: 'abc', SECRET: 'secret' });
     const text = 'a and 12 and abc are safe, but secret is redacted';
-    expect(shortRedactor.redact(text)).toBe('a and 12 and abc are safe, but ***REDACTED*** is redacted');
+    expect(shortRedactor.redact(text)).toBe(
+      'a and 12 and abc are safe, but ***REDACTED*** is redacted'
+    );
   });
 
   it('should not redact substrings of larger words when using alphanumeric secrets', () => {
@@ -113,9 +115,7 @@ describe('Redactor', () => {
     // Secrets 6+ chars with sensitive key should be redacted, word boundaries apply for < 5 chars
     const shortRedactor = new Redactor({ TOKEN: 'keeper' }); // 'keeper' is 6 chars, TOKEN is sensitive
     const text = 'The keeper of the keys is here.';
-    expect(shortRedactor.redact(text)).toBe(
-      'The ***REDACTED*** of the keys is here.'
-    );
+    expect(shortRedactor.redact(text)).toBe('The ***REDACTED*** of the keys is here.');
   });
 });
 

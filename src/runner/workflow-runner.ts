@@ -36,7 +36,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) { }
+  ) {}
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -241,7 +241,6 @@ export class WorkflowRunner {
   public getRunId(): string {
     return this.runId;
   }
-
 
   /**
    * Restore state from a previous run (for resume functionality)
@@ -760,9 +759,9 @@ export class WorkflowRunner {
           content:
             (step as import('../parser/schema.ts').FileStep).content !== undefined
               ? ExpressionEvaluator.evaluateString(
-                (step as import('../parser/schema.ts').FileStep).content as string,
-                context
-              )
+                  (step as import('../parser/schema.ts').FileStep).content as string,
+                  context
+                )
               : undefined,
           op: step.op,
           allowOutsideCwd: step.allowOutsideCwd,
@@ -841,9 +840,9 @@ export class WorkflowRunner {
           input:
             (step as import('../parser/schema.ts').EngineStep).input !== undefined
               ? ExpressionEvaluator.evaluateObject(
-                (step as import('../parser/schema.ts').EngineStep).input,
-                context
-              )
+                  (step as import('../parser/schema.ts').EngineStep).input,
+                  context
+                )
               : undefined,
           env,
           cwd: ExpressionEvaluator.evaluateString(
@@ -1258,11 +1257,11 @@ export class WorkflowRunner {
     const idempotencyContextForRetry =
       idempotencyClaimed && scopedIdempotencyKey
         ? {
-          rawKey: idempotencyKey || scopedIdempotencyKey,
-          scopedKey: scopedIdempotencyKey,
-          ttlSeconds: idempotencyTtlSeconds,
-          claimed: true,
-        }
+            rawKey: idempotencyKey || scopedIdempotencyKey,
+            scopedKey: scopedIdempotencyKey,
+            ttlSeconds: idempotencyTtlSeconds,
+            claimed: true,
+          }
         : undefined;
 
     let stepToExecute = step;
@@ -1309,9 +1308,9 @@ export class WorkflowRunner {
         try {
           const outputForValidation =
             stepToExecute.type === 'engine' &&
-              result.output &&
-              typeof result.output === 'object' &&
-              'summary' in result.output
+            result.output &&
+            typeof result.output === 'object' &&
+            'summary' in result.output
               ? (result.output as { summary?: unknown }).summary
               : result.output;
           this.validateSchema(
@@ -2148,7 +2147,7 @@ Please provide a corrected response that exactly matches the required schema.`;
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-      '   Workflows can execute arbitrary shell commands and access your environment.\n'
+        '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     this.redactAtRest = ConfigLoader.load().storage?.redact_secrets_at_rest ?? true;

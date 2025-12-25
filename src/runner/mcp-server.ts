@@ -506,11 +506,11 @@ export class MCPServer {
 
             // Create a silent logger - we don't capture logs for async runs
             const logger = {
-              log: () => { },
-              error: () => { },
-              warn: () => { },
-              info: () => { },
-              debug: () => { },
+              log: () => {},
+              error: () => {},
+              warn: () => {},
+              info: () => {},
+              debug: () => {},
             };
 
             const runner = new WorkflowRunner(workflow, {

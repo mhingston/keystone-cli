@@ -274,10 +274,14 @@ export class ExpressionEvaluator {
     // Increment node counter for DoS protection
     nodeCounter.count++;
     if (nodeCounter.count > ExpressionEvaluator.MAX_TOTAL_NODES) {
-      throw new Error(`Expression exceeds maximum complexity of ${ExpressionEvaluator.MAX_TOTAL_NODES} nodes`);
+      throw new Error(
+        `Expression exceeds maximum complexity of ${ExpressionEvaluator.MAX_TOTAL_NODES} nodes`
+      );
     }
     if (depth > ExpressionEvaluator.MAX_NESTING_DEPTH) {
-      throw new Error(`Expression nesting exceeds maximum depth of ${ExpressionEvaluator.MAX_NESTING_DEPTH}`);
+      throw new Error(
+        `Expression nesting exceeds maximum depth of ${ExpressionEvaluator.MAX_NESTING_DEPTH}`
+      );
     }
     switch (node.type) {
       case 'Literal':
@@ -288,9 +292,23 @@ export class ExpressionEvaluator {
 
         // Security: Block dangerous global identifiers that could enable code execution
         const FORBIDDEN_IDENTIFIERS = new Set([
-          'eval', 'Function', 'AsyncFunction', 'GeneratorFunction',
-          'globalThis', 'global', 'self', 'window', 'top', 'parent', 'frames',
-          'Reflect', 'Proxy', 'require', 'import', 'module', 'exports',
+          'eval',
+          'Function',
+          'AsyncFunction',
+          'GeneratorFunction',
+          'globalThis',
+          'global',
+          'self',
+          'window',
+          'top',
+          'parent',
+          'frames',
+          'Reflect',
+          'Proxy',
+          'require',
+          'import',
+          'module',
+          'exports',
         ]);
         if (FORBIDDEN_IDENTIFIERS.has(name)) {
           throw new Error(`Access to "${name}" is forbidden for security reasons`);
@@ -483,7 +501,9 @@ export class ExpressionEvaluator {
       case 'ArrayExpression': {
         const arrayNode = node as jsep.ArrayExpression;
         if (arrayNode.elements.length > ExpressionEvaluator.MAX_ARRAY_SIZE) {
-          throw new Error(`Array literal exceeds maximum size of ${ExpressionEvaluator.MAX_ARRAY_SIZE} elements`);
+          throw new Error(
+            `Array literal exceeds maximum size of ${ExpressionEvaluator.MAX_ARRAY_SIZE} elements`
+          );
         }
         return arrayNode.elements.map((elem) =>
           elem ? ExpressionEvaluator.evaluateNode(elem, context, depth + 1) : null

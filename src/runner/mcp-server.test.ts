@@ -224,7 +224,7 @@ describe('MCPServer', () => {
     const testServer = new MCPServer(db, input, outputStream);
 
     const writeSpy = spyOn(outputStream, 'write').mockImplementation(() => true);
-    const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
+    const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
 
     const startPromise = testServer.start();
 

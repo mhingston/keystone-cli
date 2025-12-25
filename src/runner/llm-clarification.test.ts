@@ -4,11 +4,16 @@ import * as agentParser from '../parser/agent-parser';
 import type { Config } from '../parser/config-schema';
 import type { Agent, LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
-import { type LLMMessage, OpenAIAdapter } from './llm-adapter';
+import type { LLMAdapter, LLMMessage } from './llm-adapter';
 import { executeLlmStep } from './llm-executor';
 
 describe('LLM Clarification', () => {
-  const originalChat = OpenAIAdapter.prototype.chat;
+  const createMockGetAdapter = (chatFn: LLMAdapter['chat']) => {
+    return (_modelString: string) => ({
+      adapter: { chat: chatFn } as LLMAdapter,
+      resolvedModel: 'gpt-4o',
+    });
+  };
 
   beforeEach(() => {
     spyOn(agentParser, 'resolveAgentPath').mockReturnValue('test-agent.md');
@@ -33,7 +38,6 @@ describe('LLM Clarification', () => {
   });
 
   afterEach(() => {
-    OpenAIAdapter.prototype.chat = originalChat;
     mock.restore();
   });
 
@@ -57,11 +61,20 @@ describe('LLM Clarification', () => {
       message: { role: 'assistant' as const, content: 'Final response' },
       usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
     }));
-    OpenAIAdapter.prototype.chat = chatMock;
+    const getAdapter = createMockGetAdapter(chatMock as unknown as LLMAdapter['chat']);
 
     const executeStepFn = mock(async () => ({ output: 'ok', status: 'success' as const }));
 
-    await executeLlmStep(step, context, executeStepFn);
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
 
     expect(chatMock).toHaveBeenCalled();
     const calls = chatMock.mock.calls as unknown[][];
@@ -106,11 +119,20 @@ describe('LLM Clarification', () => {
         },
         usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
       }));
-      OpenAIAdapter.prototype.chat = chatMock;
+      const getAdapter = createMockGetAdapter(chatMock as unknown as LLMAdapter['chat']);
 
       const executeStepFn = mock(async () => ({ output: 'ok', status: 'success' as const }));
 
-      const result = await executeLlmStep(step, context, executeStepFn);
+      const result = await executeLlmStep(
+        step,
+        context,
+        executeStepFn,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        getAdapter
+      );
 
       expect(result.status).toBe('suspended');
       const output = result.output as { question: string; messages: unknown[] };
@@ -182,11 +204,20 @@ describe('LLM Clarification', () => {
       message: { role: 'assistant' as const, content: 'Hello Keystone' },
       usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
     }));
-    OpenAIAdapter.prototype.chat = chatMock;
+    const getAdapter = createMockGetAdapter(chatMock as unknown as LLMAdapter['chat']);
 
     const executeStepFn = mock(async () => ({ output: 'ok', status: 'success' as const }));
 
-    const result = await executeLlmStep(step, context, executeStepFn);
+    const result = await executeLlmStep(
+      step,
+      context,
+      executeStepFn,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
 
     expect(result.output).toBe('Hello Keystone');
     expect(chatMock).toHaveBeenCalled();

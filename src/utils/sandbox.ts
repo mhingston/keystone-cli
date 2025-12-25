@@ -78,8 +78,8 @@ export class SafeSandbox {
     if (!SafeSandbox.warned) {
       console.warn(
         '\n⚠️  SECURITY WARNING: Using Bun/Node.js built-in VM for script execution.\n' +
-        '   This sandbox is NOT secure against malicious code.\n' +
-        '   Only run workflows from trusted sources.\n'
+          '   This sandbox is NOT secure against malicious code.\n' +
+          '   Only run workflows from trusted sources.\n'
       );
       SafeSandbox.warned = true;
     }

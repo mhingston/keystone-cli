@@ -1,17 +1,20 @@
-import { afterAll, beforeAll, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ExpressionContext } from '../expression/evaluator';
 import type { LlmStep, Step } from '../parser/schema';
-import { ConsoleLogger } from '../utils/logger';
-import { OpenAIAdapter } from './llm-adapter';
+import type { LLMAdapter } from './llm-adapter';
 import { executeLlmStep } from './llm-executor';
 
 describe('Standard Tools Integration', () => {
-  const originalOpenAIChat = OpenAIAdapter.prototype.chat;
+  const createMockGetAdapter = (chatFn: LLMAdapter['chat']) => {
+    return (_modelString: string) => ({
+      adapter: { chat: chatFn } as LLMAdapter,
+      resolvedModel: 'gpt-4o',
+    });
+  };
 
   beforeAll(() => {
-    // Mocking OpenAI Adapter
     // Ensure .keystone/workflows/agents exists
     const agentsDir = join(process.cwd(), '.keystone', 'workflows', 'agents');
     if (!existsSync(agentsDir)) {
@@ -30,7 +33,6 @@ System prompt`,
   });
 
   afterAll(() => {
-    OpenAIAdapter.prototype.chat = originalOpenAIChat;
     // Cleanup test-agent.md
     const agentPath = join(process.cwd(), '.keystone', 'workflows', 'agents', 'test-agent.md');
     if (existsSync(agentPath)) {
@@ -42,7 +44,7 @@ System prompt`,
     // biome-ignore lint/suspicious/noExplicitAny: mock
     let capturedTools: any[] = [];
 
-    OpenAIAdapter.prototype.chat = mock(async (messages, options) => {
+    const chatMock = mock(async (messages, options) => {
       capturedTools = options.tools || [];
       return {
         message: {
@@ -62,7 +64,8 @@ System prompt`,
         usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
         // biome-ignore lint/suspicious/noExplicitAny: mock
       } as any;
-    });
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     const step: LlmStep = {
       id: 'l1',
@@ -83,7 +86,16 @@ System prompt`,
     // but we can still check if tools were injected and the tool call was made.
     try {
       // biome-ignore lint/suspicious/noExplicitAny: mock
-      await executeLlmStep(step, context, executeStepFn as any);
+      await executeLlmStep(
+        step,
+        context,
+        executeStepFn as any,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        getAdapter
+      );
     } catch (e) {
       if ((e as Error).message !== 'Max ReAct iterations reached') throw e;
     }
@@ -95,27 +107,6 @@ System prompt`,
   });
 
   it('should block risky standard tools without allowInsecure', async () => {
-    OpenAIAdapter.prototype.chat = mock(async (messages, options) => {
-      return {
-        message: {
-          role: 'assistant',
-          content: 'I will run a command',
-          tool_calls: [
-            {
-              id: 'call_2',
-              type: 'function',
-              function: {
-                name: 'run_command',
-                arguments: JSON.stringify({ command: 'rm -rf /' }),
-              },
-            },
-          ],
-        },
-        usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-      } as any;
-    });
-
     const step: LlmStep = {
       id: 'l1',
       type: 'llm',
@@ -135,7 +126,7 @@ System prompt`,
     // Actually, in llm-executor.ts, it pushes a "Security Error" message if check fails and continues loop.
 
     let securityErrorMessage = '';
-    OpenAIAdapter.prototype.chat = mock(async (messages) => {
+    const chatMock = mock(async (messages) => {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === 'tool') {
         securityErrorMessage = lastMessage.content;
@@ -158,10 +149,20 @@ System prompt`,
         },
         // biome-ignore lint/suspicious/noExplicitAny: mock
       } as any;
-    });
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     // biome-ignore lint/suspicious/noExplicitAny: mock
-    await executeLlmStep(step, context, executeStepFn as any);
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn as any,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
 
     expect(securityErrorMessage).toContain('Security Error');
     expect(executeStepFn).not.toHaveBeenCalled();

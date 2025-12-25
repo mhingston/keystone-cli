@@ -92,13 +92,17 @@ export class ResourcePoolManager {
 
       // Handle abort signal
       if (options.signal) {
-        options.signal.addEventListener('abort', () => {
-          const index = poolRef.queue.indexOf(request);
-          if (index !== -1) {
-            poolRef.queue.splice(index, 1);
-            reject(new Error('Acquisition aborted'));
-          }
-        }, { once: true });
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            const index = poolRef.queue.indexOf(request);
+            if (index !== -1) {
+              poolRef.queue.splice(index, 1);
+              reject(new Error('Acquisition aborted'));
+            }
+          },
+          { once: true }
+        );
       }
     });
   }

@@ -135,7 +135,11 @@ export class RateLimiter {
     return new Promise<void>((resolve, reject) => {
       // Check queue size limit to prevent memory exhaustion
       if (this.waitQueue.length >= this.maxQueueSize) {
-        reject(new Error(`Rate limiter queue full (max ${this.maxQueueSize}) - system under excessive load`));
+        reject(
+          new Error(
+            `Rate limiter queue full (max ${this.maxQueueSize}) - system under excessive load`
+          )
+        );
         return;
       }
 

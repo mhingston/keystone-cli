@@ -26,7 +26,10 @@ async function isUrlSafe(url: string): Promise<{ safe: boolean; reason?: string 
 
     // Block non-HTTPS by default (HTTP is only allowed with explicit flag)
     if (parsed.protocol !== 'https:') {
-      return { safe: false, reason: `Only HTTPS URLs are allowed for remote MCP servers (got ${parsed.protocol})` };
+      return {
+        safe: false,
+        reason: `Only HTTPS URLs are allowed for remote MCP servers (got ${parsed.protocol})`,
+      };
     }
 
     const hostname = parsed.hostname;
@@ -34,7 +37,10 @@ async function isUrlSafe(url: string): Promise<{ safe: boolean; reason?: string 
     // Check for obvious private hostnames
     for (const pattern of PRIVATE_IP_RANGES) {
       if (pattern.test(hostname)) {
-        return { safe: false, reason: `Access to private/internal address "${hostname}" is not allowed` };
+        return {
+          safe: false,
+          reason: `Access to private/internal address "${hostname}" is not allowed`,
+        };
       }
     }
 
@@ -48,7 +54,10 @@ async function isUrlSafe(url: string): Promise<{ safe: boolean; reason?: string 
       for (const addr of allAddresses) {
         for (const pattern of PRIVATE_IP_RANGES) {
           if (pattern.test(addr)) {
-            return { safe: false, reason: `Hostname "${hostname}" resolves to private address "${addr}"` };
+            return {
+              safe: false,
+              reason: `Hostname "${hostname}" resolves to private address "${addr}"`,
+            };
           }
         }
       }
@@ -58,7 +67,10 @@ async function isUrlSafe(url: string): Promise<{ safe: boolean; reason?: string 
 
     return { safe: true };
   } catch (error) {
-    return { safe: false, reason: `Invalid URL: ${error instanceof Error ? error.message : String(error)}` };
+    return {
+      safe: false,
+      reason: `Invalid URL: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }
 

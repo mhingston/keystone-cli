@@ -7,9 +7,9 @@ import type { ExpressionContext } from '../expression/evaluator';
 import { ExpressionEvaluator } from '../expression/evaluator';
 import type { EngineStep } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
+import { LIMITS } from '../utils/constants';
 import { extractJson } from '../utils/json-parser';
 import { ConsoleLogger, type Logger } from '../utils/logger';
-import { LIMITS } from '../utils/constants';
 
 /**
  * Simple LRU cache with maximum size to prevent memory leaks.
@@ -17,7 +17,7 @@ import { LIMITS } from '../utils/constants';
 class LRUCache<K, V> {
   private cache = new Map<K, V>();
 
-  constructor(private maxSize: number) { }
+  constructor(private maxSize: number) {}
 
   get(key: K): V | undefined {
     const value = this.cache.get(key);
@@ -102,6 +102,10 @@ function resolveAllowlistEntry(
   return null;
 }
 
+/**
+ * Run a command and capture its output.
+ * @internal
+ */
 async function runCommand(
   command: string,
   args: string[],
@@ -109,7 +113,7 @@ async function runCommand(
   cwd: string,
   abortSignal?: AbortSignal
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
@@ -128,7 +132,9 @@ async function runCommand(
     const abortHandler = () => {
       try {
         child.kill();
-      } catch { }
+      } catch {
+        // Process may already be terminated - safe to ignore
+      }
     };
     if (abortSignal) {
       abortSignal.addEventListener('abort', abortHandler, { once: true });
@@ -327,7 +333,9 @@ export async function executeEngineStep(
     const abortHandler = () => {
       try {
         child.kill();
-      } catch { }
+      } catch {
+        // Process may already be terminated - safe to ignore
+      }
     };
     if (abortSignal) {
       abortSignal.addEventListener('abort', abortHandler, { once: true });

@@ -17,14 +17,7 @@ import { Readable, Writable } from 'node:stream';
 import type { ExpressionContext } from '../expression/evaluator';
 import type { LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
-import {
-  AnthropicAdapter,
-  CopilotAdapter,
-  type LLMMessage,
-  type LLMResponse,
-  type LLMTool,
-  OpenAIAdapter,
-} from './llm-adapter';
+import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './llm-adapter';
 import { executeLlmStep } from './llm-executor';
 import { MCPClient, type MCPResponse } from './mcp-client';
 import { MCPManager } from './mcp-manager';
@@ -42,13 +35,12 @@ describe('llm-executor', () => {
   let listToolsSpy: ReturnType<typeof spyOn>;
   let stopSpy: ReturnType<typeof spyOn>;
 
-  const mockChat = async (messages: unknown[], _options?: unknown) => {
-    const msgs = messages as LLMMessage[];
-    const lastMessage = msgs[msgs.length - 1];
-    const systemMessage = msgs.find((m) => m.role === 'system');
+  const mockChat: LLMAdapter['chat'] = async (messages, _options) => {
+    const lastMessage = messages[messages.length - 1];
+    const systemMessage = messages.find((m) => m.role === 'system');
 
     // If there's any tool message, just respond with final message
-    if (msgs.some((m) => m.role === 'tool')) {
+    if (messages.some((m) => m.role === 'tool')) {
       return {
         message: { role: 'assistant', content: 'LLM Response' },
       };
@@ -130,11 +122,9 @@ describe('llm-executor', () => {
   };
 
   // Create a mock adapter factory that doesn't rely on prototype mutation
-  const createMockGetAdapter = (chatFn: typeof mockChat = mockChat) => {
+  const createMockGetAdapter = (chatFn: LLMAdapter['chat'] = mockChat) => {
     return (_modelString: string) => {
-      const mockAdapter = {
-        chat: chatFn,
-      } as unknown as InstanceType<typeof OpenAIAdapter>;
+      const mockAdapter: LLMAdapter = { chat: chatFn };
       return { adapter: mockAdapter, resolvedModel: 'gpt-4' };
     };
   };
@@ -177,17 +167,7 @@ You are a test agent.`;
     writeFileSync(join(agentsDir, 'test-agent.md'), agentContent);
   });
 
-  // Store original adapter methods at runtime to avoid cross-file contamination
-  let savedOpenAIChat: typeof OpenAIAdapter.prototype.chat;
-  let savedCopilotChat: typeof CopilotAdapter.prototype.chat;
-  let savedAnthropicChat: typeof AnthropicAdapter.prototype.chat;
-
   beforeEach(() => {
-    // Capture current state of prototype methods
-    savedOpenAIChat = OpenAIAdapter.prototype.chat;
-    savedCopilotChat = CopilotAdapter.prototype.chat;
-    savedAnthropicChat = AnthropicAdapter.prototype.chat;
-
     // Global MCP mocks to avoid hangs
     initSpy = spyOn(MCPClient.prototype, 'initialize').mockResolvedValue({
       jsonrpc: '2.0',
@@ -196,25 +176,12 @@ You are a test agent.`;
     } as MCPResponse);
     listToolsSpy = spyOn(MCPClient.prototype, 'listTools').mockResolvedValue([]);
     stopSpy = spyOn(MCPClient.prototype, 'stop').mockReturnValue(undefined);
-
-    // Set adapters to global mock for this test
-    OpenAIAdapter.prototype.chat = mock(mockChat) as unknown as typeof OpenAIAdapter.prototype.chat;
-    CopilotAdapter.prototype.chat = mock(
-      mockChat
-    ) as unknown as typeof CopilotAdapter.prototype.chat;
-    AnthropicAdapter.prototype.chat = mock(
-      mockChat
-    ) as unknown as typeof AnthropicAdapter.prototype.chat;
   });
 
   afterEach(() => {
     initSpy.mockRestore();
     listToolsSpy.mockRestore();
     stopSpy.mockRestore();
-    // Restore adapter mocks to what they were before this test
-    OpenAIAdapter.prototype.chat = savedOpenAIChat;
-    CopilotAdapter.prototype.chat = savedCopilotChat;
-    AnthropicAdapter.prototype.chat = savedAnthropicChat;
   });
 
   afterAll(() => {
@@ -236,7 +203,12 @@ You are a test agent.`;
     const result = await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined, // logger
+      undefined, // mcpManager
+      undefined, // workflowDir
+      undefined, // abortSignal
+      mockGetAdapter
     );
     expect(result.status).toBe('success');
     expect(result.output).toBe('LLM Response');
@@ -263,7 +235,12 @@ You are a test agent.`;
     const result = await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined, // logger
+      undefined, // mcpManager
+      undefined, // workflowDir
+      undefined, // abortSignal
+      mockGetAdapter
     );
     expect(result.status).toBe('success');
     expect(result.output).toBe('LLM Response');
@@ -297,7 +274,11 @@ You are a test agent.`;
       step,
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
-      logger
+      logger,
+      undefined, // mcpManager
+      undefined, // workflowDir
+      undefined, // abortSignal
+      mockGetAdapter
     );
 
     // Check if logger.log was called with arguments
@@ -328,7 +309,12 @@ You are a test agent.`;
     const result = await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined, // logger
+      undefined, // mcpManager
+      undefined, // workflowDir
+      undefined, // abortSignal
+      mockGetAdapter
     );
     expect(result.status).toBe('success');
     expect(result.output).toEqual({ foo: 'bar' });
@@ -347,36 +333,30 @@ You are a test agent.`;
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
-    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
-    const originalCopilotChatInner = CopilotAdapter.prototype.chat;
-    const originalAnthropicChatInner = AnthropicAdapter.prototype.chat;
-
     let attempt = 0;
-    const mockChat = mock(async () => {
+    const chatMock = mock(async () => {
       attempt++;
       if (attempt === 1) {
         return { message: { role: 'assistant', content: 'Not JSON' } };
       }
       return { message: { role: 'assistant', content: '{"success": true}' } };
-    }) as unknown as typeof OpenAIAdapter.prototype.chat;
-
-    OpenAIAdapter.prototype.chat = mockChat;
-    CopilotAdapter.prototype.chat = mockChat;
-    AnthropicAdapter.prototype.chat = mockChat;
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     const result = await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
     );
 
     expect(result.status).toBe('success');
     expect(result.output).toEqual({ success: true });
     expect(attempt).toBe(2);
-
-    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
-    CopilotAdapter.prototype.chat = originalCopilotChatInner;
-    AnthropicAdapter.prototype.chat = originalAnthropicChatInner;
   });
 
   it('should fail after max iterations if JSON remains invalid', async () => {
@@ -392,29 +372,23 @@ You are a test agent.`;
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
-    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
-    const originalCopilotChatInner = CopilotAdapter.prototype.chat;
-    const originalAnthropicChatInner = AnthropicAdapter.prototype.chat;
-
-    const mockChat = mock(async () => ({
+    const chatMock = mock(async () => ({
       message: { role: 'assistant', content: 'Not JSON' },
-    })) as unknown as typeof OpenAIAdapter.prototype.chat;
-
-    OpenAIAdapter.prototype.chat = mockChat;
-    CopilotAdapter.prototype.chat = mockChat;
-    AnthropicAdapter.prototype.chat = mockChat;
+    })) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     await expect(
       executeLlmStep(
         step,
         context,
-        executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+        executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        getAdapter
       )
     ).rejects.toThrow('Max ReAct iterations reached');
-
-    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
-    CopilotAdapter.prototype.chat = originalCopilotChatInner;
-    AnthropicAdapter.prototype.chat = originalAnthropicChatInner;
   });
 
   it('should handle tool not found', async () => {
@@ -430,11 +404,7 @@ You are a test agent.`;
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
     let toolErrorCaptured = false;
-    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
-    const originalCopilotChatInner = CopilotAdapter.prototype.chat;
-    const originalAnthropicChatInner = AnthropicAdapter.prototype.chat;
-
-    const mockChat = mock(async (messages: LLMMessage[]) => {
+    const chatMock = mock(async (messages: LLMMessage[]) => {
       const toolResultMessage = messages.find((m) => m.role === 'tool');
       if (toolResultMessage?.content?.includes('Error: Tool unknown-tool not found')) {
         toolErrorCaptured = true;
@@ -453,22 +423,21 @@ You are a test agent.`;
           ],
         },
       } as LLMResponse;
-    }) as unknown as typeof OpenAIAdapter.prototype.chat;
-
-    OpenAIAdapter.prototype.chat = mockChat;
-    CopilotAdapter.prototype.chat = mockChat;
-    AnthropicAdapter.prototype.chat = mockChat;
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
     );
 
     expect(toolErrorCaptured).toBe(true);
-    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
-    CopilotAdapter.prototype.chat = originalCopilotChatInner;
-    AnthropicAdapter.prototype.chat = originalAnthropicChatInner;
   });
 
   it('should handle MCP connection failure', async () => {
@@ -495,7 +464,12 @@ You are a test agent.`;
     await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockGetAdapter
     );
 
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -527,12 +501,9 @@ You are a test agent.`;
       return client;
     });
 
-    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
-    const originalCopilotChatInner = CopilotAdapter.prototype.chat;
-    const originalAnthropicChatInner = AnthropicAdapter.prototype.chat;
     let toolErrorCaptured = false;
 
-    const mockChat = mock(async (messages: LLMMessage[]) => {
+    const chatMock = mock(async (messages: LLMMessage[]) => {
       const toolResultMessage = messages.find((m) => m.role === 'tool');
       if (toolResultMessage?.content?.includes('Error: Tool failed')) {
         toolErrorCaptured = true;
@@ -546,21 +517,22 @@ You are a test agent.`;
           ],
         },
       };
-    }) as unknown as typeof OpenAIAdapter.prototype.chat;
-
-    OpenAIAdapter.prototype.chat = mockChat;
-    CopilotAdapter.prototype.chat = mockChat;
-    AnthropicAdapter.prototype.chat = mockChat;
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
     );
 
     expect(toolErrorCaptured).toBe(true);
 
-    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
     createLocalSpy.mockRestore();
   });
 
@@ -603,27 +575,27 @@ You are a test agent.`;
     });
 
     let toolFound = false;
-    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
-    const mockChat = mock(async (_messages: LLMMessage[], options: { tools?: LLMTool[] }) => {
+    const chatMock = mock(async (_messages: LLMMessage[], options: { tools?: LLMTool[] }) => {
       if (options.tools?.some((t: LLMTool) => t.function.name === 'global-tool')) {
         toolFound = true;
       }
       return { message: { role: 'assistant', content: 'hello' } };
-    }) as unknown as typeof OpenAIAdapter.prototype.chat;
-
-    OpenAIAdapter.prototype.chat = mockChat;
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     await executeLlmStep(
       step,
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       console,
-      manager
+      manager,
+      undefined,
+      undefined,
+      getAdapter
     );
 
     expect(toolFound).toBe(true);
 
-    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
     createLocalSpy.mockRestore();
     ConfigLoader.clear();
   });
@@ -660,7 +632,12 @@ You are a test agent.`;
     await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockGetAdapter
     );
 
     expect(toolExecuted).toBe(true);
@@ -688,10 +665,8 @@ You are a test agent.`;
       return {
         message: { role: 'assistant', content: 'done' },
       };
-    }) as unknown as typeof OpenAIAdapter.prototype.chat;
-
-    const originalChat = OpenAIAdapter.prototype.chat;
-    OpenAIAdapter.prototype.chat = handoffChat;
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(handoffChat);
 
     const step: LlmStep = {
       id: 'l1',
@@ -726,13 +701,16 @@ You are a test agent.`;
     await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
     );
 
     expect(capturedStep?.type).toBe('engine');
     expect(chatCount).toBe(2);
-
-    OpenAIAdapter.prototype.chat = originalChat;
   });
 
   it('should handle global MCP server name without manager', async () => {
@@ -753,7 +731,11 @@ You are a test agent.`;
       step,
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
-      console // Passing console as logger but no manager
+      console, // Passing console as logger but no manager
+      undefined,
+      undefined,
+      undefined,
+      mockGetAdapter
     );
 
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -799,11 +781,10 @@ You are a test agent.`;
       return client;
     });
 
-    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
-    const mockChat = mock(async () => ({
+    const chatMock = mock(async () => ({
       message: { role: 'assistant', content: 'hello' },
-    })) as unknown as typeof OpenAIAdapter.prototype.chat;
-    OpenAIAdapter.prototype.chat = mockChat;
+    })) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     const managerSpy = spyOn(manager, 'getGlobalServers');
 
@@ -812,7 +793,10 @@ You are a test agent.`;
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       console,
-      manager
+      manager,
+      undefined,
+      undefined,
+      getAdapter
     );
 
     expect(managerSpy).toHaveBeenCalled();
@@ -823,7 +807,6 @@ You are a test agent.`;
     // Actually, createLocal will be called for 'test-mcp' (explicitly listed)
     expect(createLocalSpy).toHaveBeenCalledTimes(1);
 
-    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
     createLocalSpy.mockRestore();
     managerSpy.mockRestore();
     ConfigLoader.clear();
@@ -846,27 +829,27 @@ You are a test agent.`;
     };
 
     let capturedPrompt = '';
-    const originalOpenAIChatInner = OpenAIAdapter.prototype.chat;
-    const mockChat = mock(async (messages: LLMMessage[]) => {
+    const chatMock = mock(async (messages: LLMMessage[]) => {
       // console.log('MESSAGES:', JSON.stringify(messages, null, 2));
       capturedPrompt = messages.find((m) => m.role === 'user')?.content || '';
       return { message: { role: 'assistant', content: 'Response' } };
-    }) as unknown as typeof OpenAIAdapter.prototype.chat;
-    OpenAIAdapter.prototype.chat = mockChat;
-    CopilotAdapter.prototype.chat = mockChat;
-    AnthropicAdapter.prototype.chat = mockChat;
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
 
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
 
     await executeLlmStep(
       step,
       context,
-      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
     );
 
     expect(capturedPrompt).toContain('"key": "value"');
     expect(capturedPrompt).not.toContain('[object Object]');
-
-    OpenAIAdapter.prototype.chat = originalOpenAIChatInner;
   });
 });

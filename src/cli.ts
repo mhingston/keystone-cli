@@ -40,19 +40,44 @@ program
   .description('A local-first, declarative, agentic workflow orchestrator')
   .version(pkg.version);
 
+/**
+ * Parse CLI input pairs (key=value) into a record.
+ * Attempts JSON parsing for complex types, falls back to string for simple values.
+ *
+ * @param pairs Array of key=value strings
+ * @returns Record of parsed inputs
+ */
 const parseInputs = (pairs?: string[]): Record<string, unknown> => {
   const inputs: Record<string, unknown> = {};
   if (!pairs) return inputs;
   for (const pair of pairs) {
     const index = pair.indexOf('=');
-    if (index > 0) {
-      const key = pair.slice(0, index);
-      const value = pair.slice(index + 1);
-      try {
-        inputs[key] = JSON.parse(value);
-      } catch {
-        inputs[key] = value;
+    if (index <= 0) {
+      console.warn(`⚠️  Invalid input format: "${pair}" (expected key=value)`);
+      continue;
+    }
+    const key = pair.slice(0, index);
+    const value = pair.slice(index + 1);
+
+    // Validate key format (no special characters that could cause issues)
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+      console.warn(`⚠️  Invalid input key: "${key}" (use alphanumeric and underscores only)`);
+      continue;
+    }
+
+    try {
+      // Attempt JSON parse for objects, arrays, booleans, numbers
+      inputs[key] = JSON.parse(value);
+    } catch {
+      // Check if it looks like malformed JSON (starts with { or [)
+      if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
+        console.warn(
+          `⚠️  Input "${key}" looks like JSON but failed to parse. Check for syntax errors.`
+        );
+        console.warn(`   Value: ${value.slice(0, 50)}${value.length > 50 ? '...' : ''}`);
       }
+      // Fall back to string value
+      inputs[key] = value;
     }
   }
   return inputs;
