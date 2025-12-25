@@ -133,8 +133,23 @@ export class RateLimiter {
 
       // Handle timeout
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      // Define abort handler for cleanup
+      const abortHandler = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+        const index = this.waitQueue.indexOf(waiter);
+        if (index >= 0) {
+          this.waitQueue.splice(index, 1);
+          reject(new Error('Rate limit acquire aborted'));
+        }
+      };
+
       if (options.timeout) {
         timeoutId = setTimeout(() => {
+          // Clean up abort listener on timeout
+          if (options.signal) {
+            options.signal.removeEventListener('abort', abortHandler);
+          }
           const index = this.waitQueue.indexOf(waiter);
           if (index >= 0) {
             this.waitQueue.splice(index, 1);
@@ -143,22 +158,18 @@ export class RateLimiter {
         }, options.timeout);
       }
 
-      // Handle abort signal
+      // Handle abort signal with cleanup on success
       if (options.signal) {
-        options.signal.addEventListener('abort', () => {
-          if (timeoutId) clearTimeout(timeoutId);
-          const index = this.waitQueue.indexOf(waiter);
-          if (index >= 0) {
-            this.waitQueue.splice(index, 1);
-            reject(new Error('Rate limit acquire aborted'));
-          }
-        });
+        options.signal.addEventListener('abort', abortHandler, { once: true });
       }
 
-      // Clean up timeout on resolve
+      // Clean up timeout and abort listener on resolve
       const originalResolve = waiter.resolve;
       waiter.resolve = () => {
         if (timeoutId) clearTimeout(timeoutId);
+        if (options.signal) {
+          options.signal.removeEventListener('abort', abortHandler);
+        }
         originalResolve();
       };
     });

@@ -25,8 +25,8 @@ Keystone allows you to define complex automation workflows using a simple YAML s
 - 🛠️ **Extensible:** Support for shell, file, HTTP request, LLM, and sub-workflow steps.
 - 🔌 **MCP Support:** Integrated Model Context Protocol server.
 - 🛡️ **Secret Redaction:** Automatically redacts environment variables and secrets from logs and outputs.
-- 🧠 **Semantic Memory:** Store and retrieve step outputs using vector embeddings/RAG.
-- 🎯 **Prompt Optimization:** Automatically optimize prompts using iterative evaluation (DSPy-style).
+- 🧠 **Semantic Memory:** Store/search text with vector embeddings (and auto-index via `learn`).
+- 🎯 **Prompt Optimization:** Iteratively optimize prompts via `keystone optimize` + workflow `eval`.
 
 ---
 
@@ -119,12 +119,12 @@ keystone auth login github
 ```
 Use `anthropic-claude` for Claude Pro/Max subscriptions (OAuth) instead of an API key.
 Use `openai-chatgpt` for ChatGPT Plus/Pro subscriptions (OAuth) instead of an API key.
-Use `google-gemini` for Google Gemini subscriptions (OAuth) instead of an API key.
+Use `gemini` (alias `google-gemini`) for Google Gemini subscriptions (OAuth) instead of an API key.
 Use `github` to authenticate GitHub Copilot via the GitHub device flow.
 
 ### 3. Run a Workflow
 ```bash
-keystone run basic-shell
+keystone run scaffold-feature
 ```
 Keystone automatically looks in `.keystone/workflows/` (locally and in your home directory) for `.yaml` or `.yml` files.
 
@@ -146,6 +146,7 @@ keystone ui
 - `decompose-research`: Runs a single research task (`task`) with optional `context`/`constraints`.
 - `decompose-implement`: Runs a single implementation task (`task`) with optional `research` findings.
 - `decompose-review`: Reviews a single implementation task (`task`) with optional `implementation` results.
+- `dev`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
 
 Example runs:
 ```bash
@@ -159,7 +160,7 @@ The sub-workflows are used by the top-level workflows, but can be run directly i
 
 ## ⚙️ Configuration
 
-Keystone uses a local configuration file at `.keystone/config.yaml` to manage model providers and model mappings.
+Keystone loads configuration from project `.keystone/config.yaml` (and user-level config; see `keystone config show` for search order) to manage model providers and model mappings.
 
 ```yaml
 default_provider: openai
@@ -371,6 +372,10 @@ finally:
     type: shell
     run: echo "Workflow finished"
 
+outputs:
+  slack_message: ${{ steps.notify.output }}
+```
+
 ### Expression Syntax
 
 Keystone uses `${{ }}` syntax for dynamic values. Expressions are evaluated using a safe AST parser.
@@ -388,12 +393,6 @@ Keystone uses `${{ }}` syntax for dynamic values. Expressions are evaluated usin
 Inputs support `values` for enums and `secret: true` for sensitive values (redacted in logs and at rest by default; resumptions may require re-entry).
 
 Standard JavaScript-like expressions are supported: `${{ steps.build.status == 'success' ? '🚀' : '❌' }}`.
-
----
-
-outputs:
-  slack_message: ${{ steps.notify.output }}
-```
 
 ---
 
@@ -418,8 +417,9 @@ Keystone supports several specialized step types:
   - `inputType: confirm`: Simple Enter-to-continue prompt.
   - `inputType: text`: Prompt for a string input, available via `${{ steps.id.output }}`.
 - `workflow`: Trigger another workflow as a sub-step.
-- `script`: Run arbitrary JavaScript in a sandbox. On Bun, uses `node:vm` (since `isolated-vm` requires V8).
-  - ⚠️ **Security Note:** The `node:vm` sandbox is not secure against malicious code. Only run scripts from trusted sources.
+- `join`: Aggregate outputs from dependencies and enforce a completion condition (`all`, `any`, or a number).
+- `blueprint`: Generate a structured system blueprint with an agent (persisted as an artifact).
+- `script`: Run JavaScript in a sandboxed subprocess. Requires `allowInsecure: true`.
 - `sleep`: Pause execution for a specified duration.
   - `durable`: Boolean (default `false`). If `true` and duration >= 60s, the wait is persisted and can resume after restarts.
 - `memory`: Store or retrieve information from the semantic memory vector database.
@@ -456,7 +456,7 @@ keystone scheduler --interval 30
 
 All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), `concurrency` (max parallel items for foreach), `transform` (post-process output using expressions), `learn` (auto-index for few-shot), and `reflexion` (self-correction loop).
 
-Workflows also support a top-level `concurrency` field to limit how many steps can run in parallel across the entire workflow. This must be a positive integer.
+Workflows also support a top-level `concurrency` field to limit how many steps can run in parallel across the entire workflow. This must resolve to a positive integer (number or expression).
 
 ### Engine Steps
 Engine steps run allowlisted external CLIs and capture a structured summary for safe chaining.
@@ -547,6 +547,7 @@ When a step fails, the specified agent is invoked with the error details. The ag
   foreach: ${{ steps.list_files.output }}
   concurrency: 5 # Process 5 files at a time (must be a positive integer)
   run: echo "Processing ${{ item }}"
+```
 
 #### Example: Script Step
 ```yaml
@@ -556,7 +557,6 @@ When a step fails, the specified agent is invoked with the error details. The ag
   run: |
     const data = context.steps.fetch_data.output;
     return data.map(i => i.value * 2).reduce((a, b) => a + b, 0);
-```
 ```
 
 ---
@@ -702,7 +702,7 @@ Keystone comes with a set of **Standard Tools** that can be enabled for any agen
 - `list_files`: List files in a directory (arguments: `path`)
 - `search_files`: Search for files by glob pattern (arguments: `pattern`, `dir`)
 - `search_content`: Search for string or regex within files (arguments: `query`, `dir`, `pattern`)
-- `run_command`: Run a shell command (arguments: `command`, `dir`). Requires `allowInsecure: true` on the step unless whitelisted.
+- `run_command`: Run a shell command (arguments: `command`, `dir`). Risky commands require `allowInsecure: true` on the LLM step.
 
 Tool arguments are passed to the tool's execution step via the `args` variable.
 
@@ -810,58 +810,63 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | :--- | :--- |
 | `init` | Initialize a new Keystone project |
 | `run <workflow>` | Execute a workflow (use `-i key=val`, `--resume` to auto-resume, `--dry-run`, `--debug`, `--no-dedup`, `--explain`) |
-| `optimize <workflow>` | Optimize a specific step in a workflow (requires --target) |
 | `resume <run_id>` | Resume a failed/paused/crashed workflow by ID (use `-i key=val` to answer human steps) |
 | `validate [path]` | Check workflow files for errors |
 | `workflows` | List available workflows |
 | `history` | Show recent workflow runs |
 | `logs <run_id>` | View logs, outputs, and errors for a specific run (`-v` for full output) |
 | `graph <workflow>` | Generate a Mermaid diagram of the workflow |
-| `config` | Show current configuration and providers |
+| `test [path]` | Run workflow tests with fixtures and snapshots |
+| `optimize <workflow>` | Optimize a specific step in a workflow (requires --target) |
+| `compile` | Compile a project into a single executable with embedded assets |
+| `dev <task>` | Run the self-bootstrapping DevMode workflow |
+| `manifest` | Show embedded assets manifest |
+| `config show` | Show current configuration and discovery paths (alias: `list`) |
 | `auth status [provider]` | Show authentication status |
-| `auth login [provider]` | Login to an authentication provider (github, openai, anthropic) |
+| `auth login [provider]` | Login to an authentication provider (github, openai, anthropic, openai-chatgpt, anthropic-claude, gemini/google-gemini) |
 | `auth logout [provider]` | Logout and clear authentication tokens |
 | `ui` | Open the interactive TUI dashboard |
 | `mcp start` | Start the Keystone MCP server |
 | `mcp login <server>` | Login to a remote MCP server |
 | `scheduler` | Run the durable timer scheduler to resume sleep timers |
+| `timers list` | List durable timers |
+| `timers clear` | Clear durable timers by run ID or `--all` |
 | `dedup list [run_id]` | List idempotency records (optionally filter by run) |
 | `dedup clear <target>` | Clear idempotency records by run ID or `--all` |
 | `dedup prune` | Remove expired idempotency records |
 | `completion [shell]` | Generate shell completion script (zsh, bash) |
 | `maintenance [--days N]` | Perform database maintenance (prune old runs and vacuum) |
+| `prune [--days N]` | Alias for `maintenance` |
 
 ---
 
 ### Dry Run
 `keystone run --dry-run` prints shell commands without executing them and skips non-shell steps (including human prompts). Outputs from skipped steps are empty, so conditional branches may differ from a real run.
- 
- ## 🛡️ Security
- 
- ### Shell Execution
- By default, Keystone analyzes shell commands for potentially dangerous patterns (like shell injection, `rm -rf`, piped commands). If a risk is detected:
- - In interactive mode, the user is prompted for confirmation.
- - In non-interactive mode, the step is suspended or failed.
- 
- You can bypass this check if you trust the command:
- ```yaml
- - id: deploy
-   type: shell
-   run: ./deploy.sh ${{ inputs.env }}
-   allowInsecure: true
- ```
- 
- ### Expression Safety
- Expressions `${{ }}` are evaluated using a safe AST parser (`jsep`) which:
- - Prevents arbitrary code execution (no `eval` or `Function`).
- - Whitelists safe global objects (`Math`, `JSON`, `Date`, etc.).
- - Blocks access to sensitive properties (`constructor`, `__proto__`).
- - Enforces a maximum template length to prevent ReDoS attacks.
- 
- ### Script Sandboxing
- The `script` step uses Node.js `vm` module. While it provides isolation for variables, it is **not a security boundary** for malicious code. Only run scripts from trusted sources.
- 
- ---
+
+## 🛡️ Security
+
+### Shell Execution
+Keystone blocks shell commands that match common injection/destructive patterns (like `rm -rf` or pipes to shells). To run them, set `allowInsecure: true` on the step. Prefer `${{ escape(...) }}` when interpolating user input.
+
+You can bypass this check if you trust the command:
+```yaml
+- id: deploy
+  type: shell
+  run: ./deploy.sh ${{ inputs.env }}
+  allowInsecure: true
+```
+
+### Expression Safety
+Expressions `${{ }}` are evaluated using a safe AST parser (`jsep`) which:
+- Prevents arbitrary code execution (no `eval` or `Function`).
+- Whitelists safe global objects (`Math`, `JSON`, `Date`, etc.).
+- Blocks access to sensitive properties (`constructor`, `__proto__`).
+- Enforces a maximum template length to prevent ReDoS attacks.
+
+### Script Sandboxing
+Script steps run in a separate subprocess by default. This reduces risk but is **not a security boundary** for malicious code. Script steps are disabled by default; set `allowInsecure: true` to run them.
+
+---
  
  ## 📂 Project Structure
 

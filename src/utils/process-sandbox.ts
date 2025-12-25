@@ -87,10 +87,13 @@ export class ProcessSandbox {
      * Create the runner script that will be executed in the subprocess.
      */
     private static createRunnerScript(code: string, context: Record<string, unknown>): string {
-        const contextJson = JSON.stringify(context);
+        // Sanitize context by re-parsing to strip any inherited properties or prototype pollution
+        const sanitizedContext = JSON.parse(JSON.stringify(context));
+        const contextJson = JSON.stringify(sanitizedContext);
 
         return `
 // Minimal sandbox environment
+// Context is sanitized through JSON parse/stringify to prevent prototype pollution
 const context = ${contextJson};
 
 // Remove dangerous globals

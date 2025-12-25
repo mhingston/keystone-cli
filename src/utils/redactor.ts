@@ -7,6 +7,12 @@
 
 export interface RedactorOptions {
   forcedSecrets?: string[];
+  /** Additional words to skip (add to default blocklist) */
+  additionalBlocklist?: string[];
+  /** Replace default blocklist entirely */
+  customBlocklist?: string[];
+  /** Warn when a potentially sensitive key's value matches blocklist */
+  onBlocklistMatch?: (key: string, value: string) => void;
 }
 
 export class Redactor {
@@ -32,25 +38,35 @@ export class Redactor {
       'private_key',
     ]);
 
-    const valueBlocklist = new Set([
-      'true',
-      'false',
-      'null',
-      'undefined',
-      'info',
-      'warn',
-      'error',
-      'debug',
-      'success',
-      'pending',
-      'failed',
-      'skipped',
-      'suspended',
-      'default',
-      'public',
-      'private',
-      'protected',
-    ]);
+    // Build blocklist - allow customization via options
+    const valueBlocklist = new Set(
+      options.customBlocklist ?? [
+        'true',
+        'false',
+        'null',
+        'undefined',
+        'info',
+        'warn',
+        'error',
+        'debug',
+        'success',
+        'pending',
+        'failed',
+        'skipped',
+        'suspended',
+        'default',
+        'public',
+        'private',
+        'protected',
+      ]
+    );
+
+    // Add any additional blocklist items
+    if (options.additionalBlocklist) {
+      for (const item of options.additionalBlocklist) {
+        valueBlocklist.add(item.toLowerCase());
+      }
+    }
 
     // Extract all secret values
     // We filter based on:
@@ -69,7 +85,15 @@ export class Redactor {
       if (!value || typeof value !== 'string') continue;
 
       const lowerValue = value.toLowerCase();
-      if (valueBlocklist.has(lowerValue)) continue;
+      if (valueBlocklist.has(lowerValue)) {
+        // Warn if this is a sensitive key whose value matches blocklist
+        const lowerKey = key.toLowerCase();
+        const isSensitiveKey = Array.from(sensitiveKeys).some((k) => lowerKey.includes(k));
+        if (isSensitiveKey && options.onBlocklistMatch) {
+          options.onBlocklistMatch(key, value);
+        }
+        continue;
+      }
 
       const lowerKey = key.toLowerCase();
       // Check if key contains any sensitive term

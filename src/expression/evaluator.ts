@@ -82,6 +82,10 @@ export class ExpressionEvaluator {
   private static readonly MAX_TEMPLATE_LENGTH = 10_000;
   // Maximum length for plain strings without expressions (1MB)
   private static readonly MAX_PLAIN_STRING_LENGTH = 1_000_000;
+  // Maximum nesting depth for expressions (prevents stack overflow)
+  private static readonly MAX_NESTING_DEPTH = 50;
+  // Maximum array literal size (prevents memory exhaustion)
+  private static readonly MAX_ARRAY_SIZE = 1000;
 
   /**
    * Helper to scan string for matches of ${{ ... }} handling nested braces manually
@@ -254,7 +258,10 @@ export class ExpressionEvaluator {
   /**
    * Evaluate an AST node recursively
    */
-  private static evaluateNode(node: ASTNode, context: ExpressionContext): unknown {
+  private static evaluateNode(node: ASTNode, context: ExpressionContext, depth = 0): unknown {
+    if (depth > ExpressionEvaluator.MAX_NESTING_DEPTH) {
+      throw new Error(`Expression nesting exceeds maximum depth of ${ExpressionEvaluator.MAX_NESTING_DEPTH}`);
+    }
     switch (node.type) {
       case 'Literal':
         return (node as jsep.Literal).value;
@@ -448,8 +455,11 @@ export class ExpressionEvaluator {
 
       case 'ArrayExpression': {
         const arrayNode = node as jsep.ArrayExpression;
+        if (arrayNode.elements.length > ExpressionEvaluator.MAX_ARRAY_SIZE) {
+          throw new Error(`Array literal exceeds maximum size of ${ExpressionEvaluator.MAX_ARRAY_SIZE} elements`);
+        }
         return arrayNode.elements.map((elem) =>
-          elem ? ExpressionEvaluator.evaluateNode(elem, context) : null
+          elem ? ExpressionEvaluator.evaluateNode(elem, context, depth + 1) : null
         );
       }
 

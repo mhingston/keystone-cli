@@ -71,4 +71,19 @@ describe('ProcessSandbox', () => {
     mkdirSpy.mockRestore();
     rmSpy.mockRestore();
   });
+
+  // Security tests
+  it('should sanitize context to prevent prototype pollution', async () => {
+    // Attempt to pass a context with __proto__ manipulation
+    const context = { normal: 'value' };
+    // @ts-ignore - intentionally testing prototype pollution
+    context['__proto__'] = { polluted: true };
+
+    const result = await ProcessSandbox.execute(
+      'return { hasNormal: typeof normal !== "undefined", hasPolluted: typeof polluted !== "undefined" }',
+      context
+    );
+
+    expect(result).toEqual({ hasNormal: true, hasPolluted: false });
+  });
 });
