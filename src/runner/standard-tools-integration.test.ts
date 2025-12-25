@@ -5,6 +5,7 @@ import type { ExpressionContext } from '../expression/evaluator';
 import type { LlmStep, Step } from '../parser/schema';
 import type { LLMAdapter } from './llm-adapter';
 import { executeLlmStep } from './llm-executor';
+import type { StepResult } from './step-executor';
 
 describe('Standard Tools Integration', () => {
   const createMockGetAdapter = (chatFn: LLMAdapter['chat']) => {
@@ -85,11 +86,10 @@ System prompt`,
     // We catch the "Max iterations reached" error because we set maxIterations to 1
     // but we can still check if tools were injected and the tool call was made.
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: mock
       await executeLlmStep(
         step,
         context,
-        executeStepFn as any,
+        executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
         undefined,
         undefined,
         undefined,
@@ -152,11 +152,10 @@ System prompt`,
     }) as unknown as LLMAdapter['chat'];
     const getAdapter = createMockGetAdapter(chatMock);
 
-    // biome-ignore lint/suspicious/noExplicitAny: mock
     await executeLlmStep(
       step,
       context,
-      executeStepFn as any,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       undefined,
       undefined,
       undefined,

@@ -48,12 +48,14 @@ export class BlueprintUtils {
     generatedFiles: { path: string; purpose?: string }[]
   ): string[] {
     const diffs: string[] = [];
+    const blueprintByPath = new Map(blueprint.files.map((file) => [file.path, file]));
+    const generatedByPath = new Map(generatedFiles.map((file) => [file.path, file]));
 
     // Check for missing files
-    for (const blueprintFile of blueprint.files) {
-      const generated = generatedFiles.find((f) => f.path === blueprintFile.path);
+    for (const [filePath, blueprintFile] of blueprintByPath.entries()) {
+      const generated = generatedByPath.get(filePath);
       if (!generated) {
-        diffs.push(`Missing file: ${blueprintFile.path}`);
+        diffs.push(`Missing file: ${filePath}`);
       } else if (
         blueprintFile.purpose &&
         generated.purpose &&
@@ -61,15 +63,14 @@ export class BlueprintUtils {
       ) {
         // Optional: Check purpose drift if provided in outputs
         diffs.push(
-          `Purpose drift in ${blueprintFile.path}: expected "${blueprintFile.purpose}", got "${generated.purpose}"`
+          `Purpose drift in ${filePath}: expected "${blueprintFile.purpose}", got "${generated.purpose}"`
         );
       }
     }
 
     // Check for unexpected extra files
     for (const generated of generatedFiles) {
-      const inBlueprint = blueprint.files.some((f) => f.path === generated.path);
-      if (!inBlueprint) {
+      if (!blueprintByPath.has(generated.path)) {
         diffs.push(`Extra file not in blueprint: ${generated.path}`);
       }
     }

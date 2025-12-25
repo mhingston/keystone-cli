@@ -21,6 +21,9 @@
       "recommended": true,
       "complexity": {
         "noStaticOnlyClass": "off"
+      },
+      "suspicious": {
+        "noConsole": "error"
       }
     }
   },
@@ -32,5 +35,27 @@
   },
   "organizeImports": {
     "enabled": true
-  }
+  },
+  "overrides": [
+    {
+      "include": ["src/cli.ts", "src/utils/logger.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    },
+    {
+      "include": ["**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    }
+  ]
 }

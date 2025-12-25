@@ -22,10 +22,9 @@
  */
 
 import * as vm from 'node:vm';
+import { TIMEOUTS } from './constants.ts';
+import { ConsoleLogger } from './logger.ts';
 import { ProcessSandbox } from './process-sandbox.ts';
-
-/** Default timeout for script execution in milliseconds */
-const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface SandboxOptions {
   timeout?: number;
@@ -39,6 +38,7 @@ export interface SandboxOptions {
 
 export class SafeSandbox {
   private static warned = false;
+  private static logger = new ConsoleLogger();
 
   /**
    * Execute a script in a sandbox.
@@ -76,7 +76,7 @@ export class SafeSandbox {
   ): Promise<unknown> {
     // Show warning once per process
     if (!SafeSandbox.warned) {
-      console.warn(
+      SafeSandbox.logger.warn(
         '\n⚠️  SECURITY WARNING: Using Bun/Node.js built-in VM for script execution.\n' +
           '   This sandbox is NOT secure against malicious code.\n' +
           '   Only run workflows from trusted sources.\n'
@@ -86,7 +86,7 @@ export class SafeSandbox {
 
     const sandbox = { ...context };
     return vm.runInNewContext(code, sandbox, {
-      timeout: options.timeout || DEFAULT_TIMEOUT_MS,
+      timeout: options.timeout || TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS,
       displayErrors: true,
     });
   }

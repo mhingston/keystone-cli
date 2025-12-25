@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ExpressionEvaluator } from '../expression/evaluator';
-import type { AgentTool, Step } from '../parser/schema';
+import type { AgentTool } from '../parser/schema';
+import { LIMITS, TIMEOUTS } from '../utils/constants';
 import { detectShellInjectionRisk } from './shell-executor';
 
 export const STANDARD_TOOLS: AgentTool[] = [
@@ -169,50 +169,97 @@ export const STANDARD_TOOLS: AgentTool[] = [
           const dir = args.dir || '.';
           const pattern = args.pattern || '**/*';
           const query = args.query;
-          if (query.length > 500) {
-            throw new Error('Search query exceeds maximum length of 500 characters');
+          const Re2 = (() => {
+            try {
+              return require('re2');
+            } catch {
+              return null;
+            }
+          })();
+          const maxQueryLength = ${LIMITS.MAX_SEARCH_QUERY_LENGTH};
+          const maxPatternLength = ${LIMITS.MAX_REGEX_PATTERN_LENGTH};
+          const maxResults = ${LIMITS.MAX_SEARCH_RESULTS};
+          const maxFileBytes = ${LIMITS.MAX_SEARCH_FILE_BYTES};
+          const maxLineLength = ${LIMITS.MAX_SEARCH_LINE_LENGTH};
+          const regexTimeoutMs = ${TIMEOUTS.REGEX_TIMEOUT_MS};
+
+          if (query.length > maxQueryLength) {
+            throw new Error('Search query exceeds maximum length of ' + maxQueryLength + ' characters');
           }
-          const isRegex = query.startsWith('/') && query.endsWith('/');
+
+          const isRegex = query.startsWith('/') && query.endsWith('/') && query.length > 1;
+          let regex;
+          let normalizedQuery = '';
+          let regexDeadline;
           
           // ReDoS protection: detect dangerous regex patterns
           if (isRegex) {
             const pattern = query.slice(1, -1);
+            if (pattern.length > maxPatternLength) {
+              throw new Error('Regex pattern exceeds maximum length of ' + maxPatternLength + ' characters');
+            }
             // Detect common ReDoS patterns: nested quantifiers, overlapping alternations
             const dangerousPatterns = [
-              /\\([^)]*[+*]\\)[+*]/,           // (x+)+ or (x*)*
-              /\\([^)]*\\|[^)]*\\)[+*]/,        // (a|aa)+
-              /\\(\\?:[^)]*[+*]\\)[+*]/,        // (?:x+)+
-              /[+*]{2,}/,                     // consecutive quantifiers
+              /\\([^)]*(?:[+*]|\\{\\d+(?:,\\d*)?\\})[^)]*\\)(?:[+*]|\\{\\d+(?:,\\d*)?\\})/, // (x+)+, (x{1,3})*
+              /\\([^)]*\\|[^)]*\\)(?:[+*]|\\{\\d+(?:,\\d*)?\\})/, // (a|aa)+
+              /(?:[+*]|\\{\\d+(?:,\\d*)?\\}){2,}/, // consecutive quantifiers
             ];
             if (dangerousPatterns.some(p => p.test(pattern))) {
               throw new Error('Regex pattern contains potentially dangerous constructs (possible ReDoS). Simplify the pattern.');
             }
-          }
-          
-          let regex;
-          try {
-            regex = isRegex ? new RegExp(query.slice(1, -1)) : new RegExp(query.replace(/[.*+?^$\\{}()|[\\]\\\\]/g, '\\\\$&'), 'i');
-          } catch (e) {
-            throw new Error('Invalid regular expression: ' + e.message);
+
+            try {
+              regex = Re2 ? new Re2(pattern) : new RegExp(pattern);
+            } catch (e) {
+              throw new Error('Invalid regular expression: ' + e.message);
+            }
+
+          } else {
+            normalizedQuery = query.toLowerCase();
           }
   
           const files = globSync(pattern, { cwd: dir, nodir: true });
           const results = [];
           for (const file of files) {
+            if (isRegex) {
+              regexDeadline = Date.now() + regexTimeoutMs;
+            }
             const fullPath = path.join(dir, file);
-            const content = fs.readFileSync(fullPath, 'utf8');
+            let stat;
+            try {
+              stat = fs.statSync(fullPath);
+            } catch {
+              continue;
+            }
+            if (stat.size > maxFileBytes) {
+              continue;
+            }
+            let content;
+            try {
+              content = fs.readFileSync(fullPath, 'utf8');
+            } catch {
+              continue;
+            }
             const lines = content.split('\\n');
             for (let i = 0; i < lines.length; i++) {
-              if (regex.test(lines[i])) {
+              if (regexDeadline && Date.now() > regexDeadline) {
+                throw new Error('Regex search exceeded time limit');
+              }
+              const line = lines[i];
+              if (line.length > maxLineLength) {
+                continue;
+              }
+              const matched = isRegex ? regex.test(line) : line.toLowerCase().includes(normalizedQuery);
+              if (matched) {
                 results.push({
                   file,
                   line: i + 1,
-                  content: lines[i].trim()
+                  content: line.trim()
                 });
               }
-              if (results.length > 100) break; // Limit results
+              if (results.length >= maxResults) break;
             }
-            if (results.length > 100) break;
+            if (results.length >= maxResults) break;
           }
           return results;
         })();

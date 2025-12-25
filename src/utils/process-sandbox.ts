@@ -10,12 +10,10 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-/** Default timeout for script execution in milliseconds */
-const DEFAULT_TIMEOUT_MS = 5000;
+import { FILE_MODES, TIMEOUTS } from './constants.ts';
 
 export interface ProcessSandboxOptions {
-  /** Timeout in milliseconds (default: DEFAULT_TIMEOUT_MS = 5000) */
+  /** Timeout in milliseconds (default: TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS) */
   timeout?: number;
   /** Memory limit in bytes (enforced via ulimit on Unix) */
   memoryLimit?: number;
@@ -52,12 +50,12 @@ export class ProcessSandbox {
     context: Record<string, unknown> = {},
     options: ProcessSandboxOptions = {}
   ): Promise<unknown> {
-    const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
+    const timeout = options.timeout ?? TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS;
     const tempDir = join(tmpdir(), `keystone-sandbox-${randomUUID()}`);
 
     try {
       // Create temp directory with restrictive permissions (0o700 = owner only)
-      await mkdir(tempDir, { recursive: true, mode: 0o700 });
+      await mkdir(tempDir, { recursive: true, mode: FILE_MODES.SECURE_DIR });
 
       // Write the runner script
       const runnerScript = ProcessSandbox.createRunnerScript(code, context);

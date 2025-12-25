@@ -5,7 +5,7 @@ import { ConsoleLogger } from '../utils/logger';
 import { WorkflowRegistry } from '../utils/workflow-registry';
 import { MCPServer } from './mcp-server';
 import { WorkflowSuspendedError } from './step-executor';
-import { WorkflowRunner } from './workflow-runner';
+import type { WorkflowRunner } from './workflow-runner';
 
 describe('MCPServer', () => {
   let db: WorkflowDb;
@@ -84,15 +84,18 @@ describe('MCPServer', () => {
     const runner = { run: mockRun } as unknown as WorkflowRunner;
     const testServer = createServerWithRunner(runner);
 
-    const response = await handleMessage({
-      jsonrpc: '2.0',
-      id: 4,
-      method: 'tools/call',
-      params: {
-        name: 'run_workflow',
-        arguments: { workflow_name: 'test-wf', inputs: {} },
+    const response = await handleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'tools/call',
+        params: {
+          name: 'run_workflow',
+          arguments: { workflow_name: 'test-wf', inputs: {} },
+        },
       },
-    }, testServer);
+      testServer
+    );
 
     expect(JSON.parse(response?.result?.content?.[0]?.text || '{}').status).toBe('success');
   });
@@ -110,15 +113,18 @@ describe('MCPServer', () => {
     } as unknown as WorkflowRunner;
     const testServer = createServerWithRunner(runner);
 
-    const response = await handleMessage({
-      jsonrpc: '2.0',
-      id: 5,
-      method: 'tools/call',
-      params: {
-        name: 'run_workflow',
-        arguments: { workflow_name: 'test-wf' },
+    const response = await handleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'tools/call',
+        params: {
+          name: 'run_workflow',
+          arguments: { workflow_name: 'test-wf' },
+        },
       },
-    }, testServer);
+      testServer
+    );
 
     expect(response?.result?.isError).toBe(true);
     expect(response?.result?.content?.[0]?.text).toContain('Workflow failed');
@@ -139,15 +145,18 @@ describe('MCPServer', () => {
     } as unknown as WorkflowRunner;
     const testServer = createServerWithRunner(runner);
 
-    const response = await handleMessage({
-      jsonrpc: '2.0',
-      id: 6,
-      method: 'tools/call',
-      params: {
-        name: 'run_workflow',
-        arguments: { workflow_name: 'test-wf' },
+    const response = await handleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 6,
+        method: 'tools/call',
+        params: {
+          name: 'run_workflow',
+          arguments: { workflow_name: 'test-wf' },
+        },
       },
-    }, testServer);
+      testServer
+    );
 
     const result = JSON.parse(response?.result?.content?.[0]?.text || '{}');
     expect(result.status).toBe('paused');
@@ -172,15 +181,18 @@ describe('MCPServer', () => {
     const runner = { run: mockRun } as unknown as WorkflowRunner;
     const testServer = createServerWithRunner(runner);
 
-    const response = await handleMessage({
-      jsonrpc: '2.0',
-      id: 7,
-      method: 'tools/call',
-      params: {
-        name: 'answer_human_input',
-        arguments: { run_id: runId, input: 'my response' },
+    const response = await handleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 7,
+        method: 'tools/call',
+        params: {
+          name: 'answer_human_input',
+          arguments: { run_id: runId, input: 'my response' },
+        },
       },
-    }, testServer);
+      testServer
+    );
 
     expect(JSON.parse(response?.result?.content?.[0]?.text || '{}').status).toBe('success');
 
@@ -264,7 +276,6 @@ describe('MCPServer', () => {
 
     input.end();
     await startPromise;
-
   });
 
   it('should call start_workflow tool and return immediately', async () => {
@@ -284,15 +295,18 @@ describe('MCPServer', () => {
     } as unknown as WorkflowRunner;
     const testServer = createServerWithRunner(runner);
 
-    const response = await handleMessage({
-      jsonrpc: '2.0',
-      id: 10,
-      method: 'tools/call',
-      params: {
-        name: 'start_workflow',
-        arguments: { workflow_name: 'test-wf', inputs: {} },
+    const response = await handleMessage(
+      {
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/call',
+        params: {
+          name: 'start_workflow',
+          arguments: { workflow_name: 'test-wf', inputs: {} },
+        },
       },
-    }, testServer);
+      testServer
+    );
 
     const result = JSON.parse(response?.result?.content?.[0]?.text || '{}');
     expect(result.status).toBe('running');

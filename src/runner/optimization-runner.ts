@@ -1,10 +1,8 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { stringify } from 'yaml';
-import { parseAgent, resolveAgentPath } from '../parser/agent-parser';
+import { resolveAgentPath } from '../parser/agent-parser';
 import type { LlmStep, Step, Workflow } from '../parser/schema';
-import { extractJson } from '../utils/json-parser';
-import { getAdapter } from './llm-adapter';
+import { TIMEOUTS } from '../utils/constants';
+import { ConsoleLogger, type Logger } from '../utils/logger';
 import { executeLlmStep } from './llm-executor';
 import { WorkflowRunner } from './workflow-runner';
 
@@ -13,6 +11,7 @@ export interface OptimizationOptions {
   targetStepId: string;
   inputs?: Record<string, unknown>;
   iterations?: number;
+  logger?: Logger;
 }
 
 export class OptimizationRunner {
@@ -21,6 +20,8 @@ export class OptimizationRunner {
   private targetStepId: string;
   private iterations: number;
   private inputs: Record<string, unknown>;
+  private logger: Logger;
+  private secrets: Record<string, string>;
 
   constructor(workflow: Workflow, options: OptimizationOptions) {
     this.workflow = workflow;
@@ -28,6 +29,18 @@ export class OptimizationRunner {
     this.targetStepId = options.targetStepId;
     this.iterations = options.iterations || 5;
     this.inputs = options.inputs || {};
+    this.logger = options.logger || new ConsoleLogger();
+    this.secrets = OptimizationRunner.extractSecrets(Bun.env);
+  }
+
+  private static extractSecrets(env: Record<string, string | undefined>): Record<string, string> {
+    const secrets: Record<string, string> = {};
+    for (const [key, value] of Object.entries(env)) {
+      if (typeof value === 'string') {
+        secrets[key] = value;
+      }
+    }
+    return secrets;
   }
 
   public async optimize(): Promise<{ bestPrompt: string; bestScore: number }> {
@@ -40,8 +53,8 @@ export class OptimizationRunner {
       throw new Error(`Target step "${this.targetStepId}" not found or is not an LLM/Shell step`);
     }
 
-    console.log(`\n🚀 Optimizing step: ${this.targetStepId} (${targetStep.type})`);
-    console.log(`📊 Iterations: ${this.iterations}`);
+    this.logger.log(`\n🚀 Optimizing step: ${this.targetStepId} (${targetStep.type})`);
+    this.logger.log(`📊 Iterations: ${this.iterations}`);
 
     let bestPrompt =
       targetStep.type === 'llm'
@@ -52,8 +65,8 @@ export class OptimizationRunner {
     let currentPrompt = bestPrompt;
 
     for (let i = 1; i <= this.iterations; i++) {
-      console.log(`\n--- Iteration ${i}/${this.iterations} ---`);
-      console.log(
+      this.logger.log(`\n--- Iteration ${i}/${this.iterations} ---`);
+      this.logger.log(
         `Current Prompt: ${currentPrompt.substring(0, 100)}${currentPrompt.length > 100 ? '...' : ''}`
       );
 
@@ -74,18 +87,19 @@ export class OptimizationRunner {
       const runner = new WorkflowRunner(modifiedWorkflow, {
         inputs: this.inputs,
         workflowDir: dirname(this.workflowPath),
+        logger: this.logger,
       });
 
       const outputs = await runner.run();
 
       // 2. Evaluate the result
       const score = await this.evaluate(outputs);
-      console.log(`Score: ${score}/100`);
+      this.logger.log(`Score: ${score}/100`);
 
       if (score > bestScore) {
         bestScore = score;
         bestPrompt = currentPrompt;
-        console.log(`✨ New best score: ${bestScore}`);
+        this.logger.log(`✨ New best score: ${bestScore}`);
       }
 
       // 3. Suggest next prompt (if not last iteration)
@@ -103,15 +117,13 @@ export class OptimizationRunner {
     if (!evalConfig) return 0;
 
     if (evalConfig.scorer === 'script') {
-      // Note: getAdapter already imported at top level
       const { executeStep } = await import('./step-executor');
 
       // Create a context with outputs available
       const context = {
         inputs: this.inputs,
         steps: {},
-        // biome-ignore lint/suspicious/noExplicitAny: environment access
-        secrets: Bun.env as any,
+        secrets: this.secrets,
         env: this.workflow.env,
         outputs, // Direct access
         output: outputs, // For convenience
@@ -136,7 +148,9 @@ export class OptimizationRunner {
       // Note: OptimizationRunner should probably import executeStep
       const { SafeSandbox } = await import('../utils/sandbox');
       try {
-        const result = await SafeSandbox.execute(scriptStep.run, context, { timeout: 5000 });
+        const result = await SafeSandbox.execute(scriptStep.run, context, {
+          timeout: TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS,
+        });
         if (typeof result === 'object' && result !== null && 'stdout' in result) {
           // biome-ignore lint/suspicious/noExplicitAny: result typing
           const match = (result as any).stdout.match(/\d+/);
@@ -150,14 +164,14 @@ export class OptimizationRunner {
           if (match) return Number.parseInt(match[0], 10);
         }
       } catch (e) {
-        console.error('Eval script failed:', e);
+        this.logger.error(`Eval script failed: ${String(e)}`);
       }
       return 0;
     }
 
     // LLM Scorer
     if (!evalConfig.agent || !evalConfig.prompt) {
-      console.warn('Skipping LLM evaluation: agent or prompt missing');
+      this.logger.warn('Skipping LLM evaluation: agent or prompt missing');
       return 0;
     }
 
@@ -182,8 +196,7 @@ export class OptimizationRunner {
     const context = {
       inputs: this.inputs,
       steps: {},
-      // biome-ignore lint/suspicious/noExplicitAny: environment access
-      secrets: Bun.env as any,
+      secrets: this.secrets,
       env: this.workflow.env,
     };
 
@@ -194,7 +207,7 @@ export class OptimizationRunner {
       async () => {
         throw new Error('Tools not supported in eval');
       },
-      console
+      this.logger
     );
 
     if (result.status === 'success' && result.output && typeof result.output === 'object') {
@@ -244,8 +257,7 @@ Return ONLY the new prompt text.`,
     const context = {
       inputs: this.inputs,
       steps: {},
-      // biome-ignore lint/suspicious/noExplicitAny: environment access
-      secrets: Bun.env as any,
+      secrets: this.secrets,
       env: this.workflow.env,
     };
 
@@ -257,7 +269,7 @@ Return ONLY the new prompt text.`,
         async () => {
           throw new Error('Tools not supported in meta-opt');
         },
-        console,
+        this.logger,
         undefined,
         dirname(this.workflowPath) // Pass workflowDir to resolve agent
       );
@@ -265,7 +277,7 @@ Return ONLY the new prompt text.`,
         return result.output.trim();
       }
     } catch (e) {
-      console.warn(`  ⚠️ Meta-optimizer failed: ${e instanceof Error ? e.message : String(e)}`);
+      this.logger.warn(`  ⚠️ Meta-optimizer failed: ${e instanceof Error ? e.message : String(e)}`);
       // Adding a dummy mutation for testing purposes if env var is set
       if (Bun.env.TEST_OPTIMIZER) {
         return `${currentPrompt}!`;
@@ -276,28 +288,28 @@ Return ONLY the new prompt text.`,
   }
 
   private async saveBestPrompt(prompt: string): Promise<void> {
-    console.log(`\n💾 Saving best prompt to ${this.workflowPath}`);
+    this.logger.log(`\n💾 Saving best prompt to ${this.workflowPath}`);
 
     // We need to be careful here. The prompt might be in the workflow YAML directly,
     // or it might be in an agent file.
 
     const targetStep = this.workflow.steps.find((s) => s.id === this.targetStepId);
 
-    console.log(`--- BEST PROMPT/RUN ---\n${prompt}\n-----------------------`);
+    this.logger.log(`--- BEST PROMPT/RUN ---\n${prompt}\n-----------------------`);
 
     if (targetStep?.type === 'llm') {
       const agentPath = resolveAgentPath((targetStep as LlmStep).agent, dirname(this.workflowPath));
       try {
         // For MVP, we just logged it. Automatic replacement in arbitrary files is risky without robust parsing.
         // But we can try to warn/notify.
-        console.log(
+        this.logger.log(
           `To apply this optimization, update the 'systemPrompt' or instruction in: ${agentPath}`
         );
       } catch (e) {
-        console.warn(`Could not locate agent file: ${e}`);
+        this.logger.warn(`Could not locate agent file: ${String(e)}`);
       }
     } else {
-      console.log(
+      this.logger.log(
         `To apply this optimization, update the 'run' command for step '${this.targetStepId}' in ${this.workflowPath}`
       );
     }

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { ConsoleLogger, type Logger } from './logger';
 
 export interface AuthData {
   github_token?: string;
@@ -70,6 +71,8 @@ const GOOGLE_GEMINI_METADATA_HEADER =
   '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}';
 
 export class AuthManager {
+  private static logger: Logger = new ConsoleLogger();
+
   private static getAuthPath(): string {
     if (process.env.KEYSTONE_AUTH_PATH) {
       return process.env.KEYSTONE_AUTH_PATH;
@@ -99,12 +102,14 @@ export class AuthManager {
     try {
       writeFileSync(path, JSON.stringify({ ...current, ...data }, null, 2), { mode: 0o600 });
     } catch (error) {
-      // Use ConsoleLogger as a safe fallback for top-level utility
-      console.error(
-        'Failed to save auth data:',
-        error instanceof Error ? error.message : String(error)
+      AuthManager.logger.error(
+        `Failed to save auth data: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  static setLogger(logger: Logger): void {
+    AuthManager.logger = logger;
   }
 
   static async initGitHubDeviceLogin(): Promise<{
@@ -237,8 +242,7 @@ export class AuthManager {
 
       return data.token;
     } catch (error) {
-      // Use ConsoleLogger as a safe fallback for top-level utility
-      console.error('Error refreshing Copilot token:', error);
+      AuthManager.logger.error(`Error refreshing Copilot token: ${String(error)}`);
       return undefined;
     }
   }
@@ -485,10 +489,10 @@ export class AuthManager {
         state,
       }).toString()}`;
 
-      console.log('\nTo login with Google Gemini (OAuth):');
-      console.log('1. Visit the following URL in your browser:');
-      console.log(`   ${authUrl}\n`);
-      console.log('Waiting for authorization...');
+      AuthManager.logger.log('\nTo login with Google Gemini (OAuth):');
+      AuthManager.logger.log('1. Visit the following URL in your browser:');
+      AuthManager.logger.log(`   ${authUrl}\n`);
+      AuthManager.logger.log('Waiting for authorization...');
 
       try {
         const { platform } = process;
@@ -590,10 +594,10 @@ export class AuthManager {
         scope: 'openid profile email offline_access',
       }).toString()}`;
 
-      console.log('\nTo login with OpenAI ChatGPT:');
-      console.log('1. Visit the following URL in your browser:');
-      console.log(`   ${authUrl}\n`);
-      console.log('Waiting for authorization...');
+      AuthManager.logger.log('\nTo login with OpenAI ChatGPT:');
+      AuthManager.logger.log('1. Visit the following URL in your browser:');
+      AuthManager.logger.log(`   ${authUrl}\n`);
+      AuthManager.logger.log('Waiting for authorization...');
 
       // Attempt to open the browser
       try {
@@ -651,7 +655,7 @@ export class AuthManager {
 
       return data.access_token;
     } catch (error) {
-      console.error('Error refreshing OpenAI ChatGPT token:', error);
+      AuthManager.logger.error(`Error refreshing OpenAI ChatGPT token: ${String(error)}`);
       return undefined;
     }
   }
@@ -703,7 +707,7 @@ export class AuthManager {
 
       return data.access_token;
     } catch (error) {
-      console.error('Error refreshing Google Gemini token:', error);
+      AuthManager.logger.error(`Error refreshing Google Gemini token: ${String(error)}`);
       return undefined;
     }
   }
@@ -749,7 +753,7 @@ export class AuthManager {
 
       return data.access_token;
     } catch (error) {
-      console.error('Error refreshing Anthropic Claude token:', error);
+      AuthManager.logger.error(`Error refreshing Anthropic Claude token: ${String(error)}`);
       return undefined;
     }
   }

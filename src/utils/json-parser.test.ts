@@ -28,6 +28,10 @@ describe('json-parser', () => {
     expect(extractJson(text)).toEqual([{ id: 1 }, { id: 2 }]);
   });
 
+  it('should throw on empty input', () => {
+    expect(() => extractJson('')).toThrow(/Failed to extract valid JSON/);
+  });
+
   it('should throw if no JSON is found', () => {
     const text = 'Hello world, no JSON here!';
     expect(() => extractJson(text)).toThrow(/Failed to extract valid JSON/);

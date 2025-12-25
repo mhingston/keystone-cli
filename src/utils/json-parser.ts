@@ -17,7 +17,9 @@
  * @throws Error if no valid JSON can be extracted
  */
 export function extractJson(text: string): unknown {
-  if (!text) return null;
+  if (!text || text.trim().length === 0) {
+    throw new Error('Failed to extract valid JSON from empty input.');
+  }
 
   // 1. Try to extract from Markdown code blocks first
   const markdownRegex = /```(?:json)?\s*([\s\S]*?)\s*```/gi;

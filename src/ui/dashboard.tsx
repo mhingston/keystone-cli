@@ -1,6 +1,7 @@
 import { Box, Newline, Text, render, useInput } from 'ink';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { WorkflowDb } from '../db/workflow-db.ts';
+import { ConsoleLogger } from '../utils/logger.ts';
 
 interface Run {
   id: string;
@@ -9,6 +10,8 @@ interface Run {
   started_at: string;
   total_tokens?: number;
 }
+
+const logger = new ConsoleLogger();
 
 const Dashboard = () => {
   const [runs, setRuns] = useState<Run[]>([]);
@@ -50,9 +53,7 @@ const Dashboard = () => {
       );
       setRuns(runsWithUsage);
     } catch (error) {
-      // Dashboard is UI, console.error is acceptable but let's be consistent if possible.
-      // For now we keep it as is or could use a toast.
-      console.error('Failed to fetch runs:', error);
+      logger.error(`Failed to fetch runs: ${String(error)}`);
     } finally {
       setLoading(false);
     }

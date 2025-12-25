@@ -22,10 +22,12 @@ describe('llm-executor with tools and MCP', () => {
       resolvedModel: 'gpt-4',
     });
   };
-  const createMockMcpClient = (options: {
-    tools?: { name: string; description?: string; inputSchema: Record<string, unknown> }[];
-    callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
-  } = {}) => {
+  const createMockMcpClient = (
+    options: {
+      tools?: { name: string; description?: string; inputSchema: Record<string, unknown> }[];
+      callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+    } = {}
+  ) => {
     const listTools = mock(async () => options.tools ?? []);
     const callTool =
       options.callTool || (mock(async () => ({})) as unknown as typeof options.callTool);
@@ -34,9 +36,11 @@ describe('llm-executor with tools and MCP', () => {
       callTool,
     };
   };
-  const createMockMcpManager = (options: {
-    clients?: Record<string, ReturnType<typeof createMockMcpClient> | undefined>;
-  } = {}) => {
+  const createMockMcpManager = (
+    options: {
+      clients?: Record<string, ReturnType<typeof createMockMcpClient> | undefined>;
+    } = {}
+  ) => {
     const getClient = mock(async (serverRef: string | { name: string }) => {
       const name = typeof serverRef === 'string' ? serverRef : serverRef.name;
       return options.clients?.[name];
@@ -129,7 +133,6 @@ Test system prompt`;
     expect(toolNames).toContain('agent-tool');
     expect(toolNames).toContain('step-tool');
     expect(toolNames).toContain('mcp-tool');
-
   });
 
   it('should execute MCP tool when called', async () => {

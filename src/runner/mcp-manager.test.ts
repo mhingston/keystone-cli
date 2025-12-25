@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 import { ConfigLoader } from '../utils/config-loader';
 import type { MCPClient } from './mcp-client';
-import { MCPManager, type MCPClientFactory } from './mcp-manager';
+import { type MCPClientFactory, MCPManager } from './mcp-manager';
 
 import type { Config } from '../parser/config-schema';
 

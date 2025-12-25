@@ -47,6 +47,21 @@ export class DebugRepl {
     rl.prompt();
 
     return new Promise((resolve) => {
+      let resolved = false;
+      const resolveOnce = (action: DebugAction) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(action);
+      };
+
+      rl.on('close', () => {
+        resolveOnce({ type: 'continue_failure' });
+      });
+
+      rl.on('SIGINT', () => {
+        rl.close();
+      });
+
       rl.on('line', (line) => {
         const trimmed = line.trim();
         const [cmd, ...args] = trimmed.split(' ');
@@ -59,19 +74,19 @@ export class DebugRepl {
             break;
 
           case 'retry':
+            resolveOnce({ type: 'retry', modifiedStep: this.step });
             rl.close();
-            resolve({ type: 'retry', modifiedStep: this.step });
             break;
 
           case 'skip':
+            resolveOnce({ type: 'skip' });
             rl.close();
-            resolve({ type: 'skip' });
             break;
 
           case 'exit':
           case 'quit':
+            resolveOnce({ type: 'continue_failure' });
             rl.close();
-            resolve({ type: 'continue_failure' });
             break;
 
           case 'edit': {

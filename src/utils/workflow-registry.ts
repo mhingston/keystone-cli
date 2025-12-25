@@ -1,9 +1,12 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { WorkflowParser } from '../parser/workflow-parser.ts';
+import { ConsoleLogger } from './logger.ts';
 import { ResourceLoader } from './resource-loader.ts';
 
 export class WorkflowRegistry {
+  private static logger = new ConsoleLogger();
+
   private static getSearchPaths(): string[] {
     const paths = new Set<string>();
 
@@ -57,7 +60,7 @@ export class WorkflowRegistry {
           }
         }
       } catch (e) {
-        console.warn(`Failed to scan directory ${dir}:`, e);
+        WorkflowRegistry.logger.warn(`Failed to scan directory ${dir}: ${String(e)}`);
       }
     }
 

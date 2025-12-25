@@ -52,6 +52,10 @@ export async function executeStep(step: Step, context: Context): Promise<StepRes
 ## Testing
 
 - Tests are co-located with source files (`foo.ts` → `foo.test.ts`)
+- Naming conventions:
+  - `*.test.ts` for unit tests
+  - `*-integration.test.ts` for integration tests
+  - `*-audit.test.ts` for security/compliance tests
 - Use `bun test` to run tests
 - Mock external dependencies (LLM providers, MCP servers, etc.)
 

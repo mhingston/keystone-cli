@@ -9,7 +9,7 @@ import type { LlmStep, Step } from '../parser/schema';
 import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './llm-adapter';
 import { executeLlmStep } from './llm-executor';
 import type { MCPServerConfig } from './mcp-manager';
-import { type StepResult } from './step-executor';
+import type { StepResult } from './step-executor';
 import type { Logger } from './workflow-runner';
 
 // Mock adapters
@@ -117,10 +117,12 @@ describe('llm-executor', () => {
   // Default mock adapter factory using the standard mockChat
   const mockGetAdapter = createMockGetAdapter();
 
-  const createMockMcpClient = (options: {
-    tools?: { name: string; description?: string; inputSchema: Record<string, unknown> }[];
-    callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
-  } = {}) => {
+  const createMockMcpClient = (
+    options: {
+      tools?: { name: string; description?: string; inputSchema: Record<string, unknown> }[];
+      callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+    } = {}
+  ) => {
     const listTools = mock(async () => options.tools ?? []);
     const callTool =
       options.callTool || (mock(async () => ({})) as unknown as typeof options.callTool);
@@ -130,12 +132,14 @@ describe('llm-executor', () => {
     };
   };
 
-  const createMockMcpManager = (options: {
-    clients?: Record<string, ReturnType<typeof createMockMcpClient> | undefined>;
-    defaultClient?: ReturnType<typeof createMockMcpClient>;
-    errors?: Record<string, Error>;
-    globalServers?: MCPServerConfig[];
-  } = {}) => {
+  const createMockMcpManager = (
+    options: {
+      clients?: Record<string, ReturnType<typeof createMockMcpClient> | undefined>;
+      defaultClient?: ReturnType<typeof createMockMcpClient>;
+      errors?: Record<string, Error>;
+      globalServers?: MCPServerConfig[];
+    } = {}
+  ) => {
     const getClient = mock(async (serverRef: string | { name: string }) => {
       const name = typeof serverRef === 'string' ? serverRef : serverRef.name;
       if (options.errors?.[name]) {
@@ -566,7 +570,10 @@ You are a test agent.`;
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       console,
-      manager as unknown as { getClient: () => Promise<unknown>; getGlobalServers: () => unknown[] },
+      manager as unknown as {
+        getClient: () => Promise<unknown>;
+        getGlobalServers: () => unknown[];
+      },
       undefined,
       undefined,
       getAdapter
@@ -750,7 +757,10 @@ You are a test agent.`;
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       console,
-      manager as unknown as { getClient: () => Promise<unknown>; getGlobalServers: () => unknown[] },
+      manager as unknown as {
+        getClient: () => Promise<unknown>;
+        getGlobalServers: () => unknown[];
+      },
       undefined,
       undefined,
       getAdapter

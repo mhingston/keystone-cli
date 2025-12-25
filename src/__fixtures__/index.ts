@@ -1,6 +1,6 @@
 /**
  * Shared test fixtures for Keystone CLI tests.
- * 
+ *
  * Centralizes mock agents, workflows, and configs to reduce duplication
  * across test files.
  */
@@ -54,47 +54,47 @@ steps:
  * Default test config
  */
 export const TEST_CONFIG = {
-    providers: {
-        openai: { type: 'openai' as const, api_key_env: 'OPENAI_API_KEY' },
-    },
-    default_provider: 'openai',
-    model_mappings: {},
-    storage: { retention_days: 30, redact_secrets_at_rest: true },
-    mcp_servers: {},
-    engines: { allowlist: {}, denylist: [] },
-    concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
+  providers: {
+    openai: { type: 'openai' as const, api_key_env: 'OPENAI_API_KEY' },
+  },
+  default_provider: 'openai',
+  model_mappings: {},
+  storage: { retention_days: 30, redact_secrets_at_rest: true },
+  mcp_servers: {},
+  engines: { allowlist: {}, denylist: [] },
+  concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
 };
 
 /**
  * Create a mock LLM response
  */
 export function createMockLLMResponse(content: string) {
-    return {
-        message: { role: 'assistant' as const, content },
-        usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
-    };
+  return {
+    message: { role: 'assistant' as const, content },
+    usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+  };
 }
 
 /**
  * Create a mock tool call response
  */
 export function createMockToolCallResponse(
-    toolName: string,
-    args: Record<string, unknown>,
-    callId = 'call-1'
+  toolName: string,
+  args: Record<string, unknown>,
+  callId = 'call-1'
 ) {
-    return {
-        message: {
-            role: 'assistant' as const,
-            content: null,
-            tool_calls: [
-                {
-                    id: callId,
-                    type: 'function' as const,
-                    function: { name: toolName, arguments: JSON.stringify(args) },
-                },
-            ],
+  return {
+    message: {
+      role: 'assistant' as const,
+      content: null,
+      tool_calls: [
+        {
+          id: callId,
+          type: 'function' as const,
+          function: { name: toolName, arguments: JSON.stringify(args) },
         },
-        usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
-    };
+      ],
+    },
+    usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+  };
 }

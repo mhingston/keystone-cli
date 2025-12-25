@@ -26,6 +26,7 @@ import { WorkflowParser } from './parser/workflow-parser.ts';
 import { WorkflowSuspendedError, WorkflowWaitingError } from './runner/step-executor.ts';
 import { TestHarness } from './runner/test-harness.ts';
 import { ConfigLoader } from './utils/config-loader.ts';
+import { LIMITS } from './utils/constants.ts';
 import { ConsoleLogger } from './utils/logger.ts';
 import { generateMermaidGraph, renderWorkflowAsAscii } from './utils/mermaid.ts';
 import { WorkflowRegistry } from './utils/workflow-registry.ts';
@@ -34,6 +35,7 @@ import pkg from '../package.json' with { type: 'json' };
 
 const program = new Command();
 const defaultRetentionDays = ConfigLoader.load().storage?.retention_days ?? 30;
+const MAX_INPUT_STRING_LENGTH = LIMITS.MAX_INPUT_STRING_LENGTH;
 
 program
   .name('keystone')
@@ -67,8 +69,31 @@ const parseInputs = (pairs?: string[]): Record<string, unknown> => {
 
     try {
       // Attempt JSON parse for objects, arrays, booleans, numbers
-      inputs[key] = JSON.parse(value);
+      const parsed = JSON.parse(value);
+      if (typeof parsed === 'string') {
+        if (parsed.length > MAX_INPUT_STRING_LENGTH) {
+          console.warn(
+            `⚠️  Input "${key}" exceeds maximum length of ${MAX_INPUT_STRING_LENGTH} characters`
+          );
+          continue;
+        }
+        if (parsed.includes('\u0000')) {
+          console.warn(`⚠️  Input "${key}" contains invalid null characters`);
+          continue;
+        }
+      }
+      inputs[key] = parsed;
     } catch {
+      if (value.length > MAX_INPUT_STRING_LENGTH) {
+        console.warn(
+          `⚠️  Input "${key}" exceeds maximum length of ${MAX_INPUT_STRING_LENGTH} characters`
+        );
+        continue;
+      }
+      if (value.includes('\u0000')) {
+        console.warn(`⚠️  Input "${key}" contains invalid null characters`);
+        continue;
+      }
       // Check if it looks like malformed JSON (starts with { or [)
       if ((value.startsWith('{') || value.startsWith('[')) && value.length > 1) {
         console.warn(

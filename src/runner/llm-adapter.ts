@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { pipeline } from '@xenova/transformers';
 import { AuthManager, COPILOT_HEADERS } from '../utils/auth-manager';
 import { ConfigLoader } from '../utils/config-loader';
+import { ConsoleLogger } from '../utils/logger';
 import { processOpenAIStream } from './stream-utils';
 
 // Maximum response size to prevent memory exhaustion (1MB)
@@ -20,6 +21,7 @@ const GEMINI_HEADERS = {
   'Client-Metadata':
     '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}',
 };
+const defaultLogger = new ConsoleLogger();
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -110,7 +112,7 @@ export class OpenAIAdapter implements LLMAdapter {
     this.baseUrl = baseUrl || Bun.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 
     if (!this.apiKey && this.baseUrl === 'https://api.openai.com/v1') {
-      console.warn('Warning: OPENAI_API_KEY is not set.');
+      defaultLogger.warn('Warning: OPENAI_API_KEY is not set.');
     }
   }
 
@@ -209,7 +211,7 @@ export class AnthropicAdapter implements LLMAdapter {
       !this.apiKey &&
       this.baseUrl === 'https://api.anthropic.com/v1'
     ) {
-      console.warn('Warning: ANTHROPIC_API_KEY is not set.');
+      defaultLogger.warn('Warning: ANTHROPIC_API_KEY is not set.');
     }
   }
 
@@ -285,7 +287,7 @@ export class AnthropicAdapter implements LLMAdapter {
                     ? JSON.parse(tc.function.arguments)
                     : tc.function.arguments;
               } catch (e) {
-                console.error(`Failed to parse tool arguments: ${tc.function.arguments}`);
+                defaultLogger.error(`Failed to parse tool arguments: ${tc.function.arguments}`);
               }
               return {
                 type: 'tool_use' as const,
@@ -410,7 +412,7 @@ export class AnthropicAdapter implements LLMAdapter {
           } catch (e) {
             // Log non-SyntaxError exceptions at warning level (they indicate real issues)
             if (!(e instanceof SyntaxError)) {
-              console.warn(`[Anthropic Stream] Error processing chunk: ${e}`);
+              defaultLogger.warn(`[Anthropic Stream] Error processing chunk: ${e}`);
             } else if (process.env.DEBUG || process.env.LLM_DEBUG) {
               // SyntaxErrors are normal for incomplete chunks - only log in debug mode
               process.stderr.write(

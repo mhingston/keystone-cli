@@ -25,8 +25,14 @@ export async function executeBlueprintStep(
     executeLlmStep?: typeof executeLlmStep;
   }
 ): Promise<StepResult> {
-  const { mcpManager, workflowDir, abortSignal, runId, artifactRoot, executeLlmStep: injected } =
-    options;
+  const {
+    mcpManager,
+    workflowDir,
+    abortSignal,
+    runId,
+    artifactRoot,
+    executeLlmStep: injected,
+  } = options;
   const runLlmStep = injected || executeLlmStep;
 
   // 1. Create a virtual LLM step to generate the blueprint

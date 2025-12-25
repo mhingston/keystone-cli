@@ -17,15 +17,85 @@ import type { StepResult } from './step-executor';
  * Truncate message history to prevent unbounded memory growth.
  * Preserves system messages and keeps the most recent messages.
  */
-function truncateMessages(messages: LLMMessage[], maxHistory: number): LLMMessage[] {
-  if (messages.length <= maxHistory) return messages;
+function estimateMessageBytes(message: LLMMessage): number {
+  let size = 0;
+  if (typeof message.content === 'string') {
+    size += Buffer.byteLength(message.content, 'utf8');
+  }
+  if (message.tool_calls) {
+    size += Buffer.byteLength(JSON.stringify(message.tool_calls), 'utf8');
+  }
+  if (message.reasoning) {
+    size += Buffer.byteLength(JSON.stringify(message.reasoning), 'utf8');
+  }
+  if (message.name) {
+    size += Buffer.byteLength(message.name, 'utf8');
+  }
+  return size;
+}
+
+function truncateStringByBytes(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) return '';
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
+
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    const slice = value.slice(0, mid);
+    if (Buffer.byteLength(slice, 'utf8') <= maxBytes) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return value.slice(0, low);
+}
+
+function truncateToolOutput(content: string, maxBytes: number): string {
+  const contentBytes = Buffer.byteLength(content, 'utf8');
+  if (contentBytes <= maxBytes) return content;
+
+  const suffix = '... [truncated output]';
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  const truncated = truncateStringByBytes(content, Math.max(0, maxBytes - suffixBytes));
+  return `${truncated}${suffix}`;
+}
+
+function truncateMessages(
+  messages: LLMMessage[],
+  maxHistory: number,
+  maxBytes: number
+): LLMMessage[] {
+  if (messages.length === 0) return messages;
 
   // Keep all system messages
   const systemMessages = messages.filter((m) => m.role === 'system');
   const nonSystem = messages.filter((m) => m.role !== 'system');
 
   // Keep most recent non-system messages, accounting for system messages
-  const keep = nonSystem.slice(-(maxHistory - systemMessages.length));
+  const nonSystemLimit = Math.max(0, maxHistory - systemMessages.length);
+  let keep = nonSystem.slice(-nonSystemLimit);
+
+  // Enforce total byte budget with a most-recent tail
+  if (maxBytes > 0) {
+    const systemBytes = systemMessages.reduce((total, msg) => total + estimateMessageBytes(msg), 0);
+    let remaining = maxBytes - systemBytes;
+    if (remaining <= 0) {
+      return systemMessages;
+    }
+
+    const tail: LLMMessage[] = [];
+    for (let i = keep.length - 1; i >= 0; i--) {
+      const msg = keep[i];
+      const msgBytes = estimateMessageBytes(msg);
+      if (msgBytes > remaining) break;
+      tail.push(msg);
+      remaining -= msgBytes;
+    }
+    keep = tail.reverse();
+  }
+
   return [...systemMessages, ...keep];
 }
 
@@ -64,7 +134,8 @@ export async function executeLlmStep(
     systemPrompt += `\n\nIMPORTANT: You must output valid JSON that matches the following schema:\n${JSON.stringify(step.outputSchema, null, 2)}`;
   }
 
-  const messages: LLMMessage[] = [];
+  let messages: LLMMessage[] = [];
+  const maxToolOutputBytes = LIMITS.MAX_TOOL_OUTPUT_BYTES;
 
   // Resume from state if provided
   const stepState =
@@ -91,7 +162,7 @@ export async function executeLlmStep(
           role: 'tool',
           tool_call_id: askCall.id,
           name: 'ask',
-          content: String(answer),
+          content: truncateToolOutput(String(answer), maxToolOutputBytes),
         });
       }
     }
@@ -303,6 +374,10 @@ export async function executeLlmStep(
       forcedSecrets: context.secretValues || [],
     });
     const redactionBuffer = new RedactionBuffer(redactor);
+    const maxHistory = step.maxMessageHistory || LIMITS.MAX_MESSAGE_HISTORY;
+    const maxConversationBytes = LIMITS.MAX_CONVERSATION_BYTES;
+    const formatToolContent = (content: string): string =>
+      truncateToolOutput(content, maxToolOutputBytes);
 
     while (iterations < maxIterations) {
       iterations++;
@@ -311,8 +386,8 @@ export async function executeLlmStep(
       }
 
       // Truncate message history to prevent unbounded growth
-      const maxHistory = step.maxMessageHistory || LIMITS.MAX_MESSAGE_HISTORY;
-      const truncatedMessages = truncateMessages(messages, maxHistory);
+      messages = truncateMessages(messages, maxHistory, maxConversationBytes);
+      const truncatedMessages = messages;
 
       const response = await adapter.chat(truncatedMessages, {
         model: resolvedModel,
@@ -397,7 +472,9 @@ export async function executeLlmStep(
                 role: 'tool',
                 tool_call_id: toolCall.id,
                 name: 'ask',
-                content: `Error: Invalid JSON in arguments: ${e instanceof Error ? e.message : String(e)}`,
+                content: formatToolContent(
+                  `Error: Invalid JSON in arguments: ${e instanceof Error ? e.message : String(e)}`
+                ),
               });
               continue;
             }
@@ -419,11 +496,12 @@ export async function executeLlmStep(
                 role: 'tool',
                 tool_call_id: toolCall.id,
                 name: 'ask',
-                content: String(result.output),
+                content: formatToolContent(String(result.output)),
               });
               continue;
             }
             // In non-TTY, we suspend
+            messages = truncateMessages(messages, maxHistory, maxConversationBytes);
             return {
               status: 'suspended',
               output: {
@@ -438,7 +516,7 @@ export async function executeLlmStep(
             role: 'tool',
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
-            content: `Error: Tool ${toolCall.function.name} not found`,
+            content: formatToolContent(`Error: Tool ${toolCall.function.name} not found`),
           });
           continue;
         }
@@ -451,7 +529,9 @@ export async function executeLlmStep(
             role: 'tool',
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
-            content: `Error: Invalid JSON in arguments: ${e instanceof Error ? e.message : String(e)}`,
+            content: formatToolContent(
+              `Error: Invalid JSON in arguments: ${e instanceof Error ? e.message : String(e)}`
+            ),
           });
           continue;
         }
@@ -463,14 +543,16 @@ export async function executeLlmStep(
               role: 'tool',
               tool_call_id: toolCall.id,
               name: toolCall.function.name,
-              content: JSON.stringify(result),
+              content: formatToolContent(JSON.stringify(result)),
             });
           } catch (error) {
             messages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
               name: toolCall.function.name,
-              content: `Error: ${error instanceof Error ? error.message : String(error)}`,
+              content: formatToolContent(
+                `Error: ${error instanceof Error ? error.message : String(error)}`
+              ),
             });
           }
         } else if (toolInfo.execution) {
@@ -486,7 +568,9 @@ export async function executeLlmStep(
                 role: 'tool',
                 tool_call_id: toolCall.id,
                 name: toolCall.function.name,
-                content: `Security Error: ${error instanceof Error ? error.message : String(error)}`,
+                content: formatToolContent(
+                  `Security Error: ${error instanceof Error ? error.message : String(error)}`
+                ),
               });
               continue;
             }
@@ -504,13 +588,14 @@ export async function executeLlmStep(
             role: 'tool',
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
-            content:
-              result.status === 'success'
-                ? JSON.stringify(result.output)
-                : `Error: ${result.error}`,
+            content: formatToolContent(
+              result.status === 'success' ? JSON.stringify(result.output) : `Error: ${result.error}`
+            ),
           });
         }
       }
+
+      messages = truncateMessages(messages, maxHistory, maxConversationBytes);
     }
 
     throw new Error('Max ReAct iterations reached');

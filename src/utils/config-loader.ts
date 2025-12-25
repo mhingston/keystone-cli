@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs';
 import yaml from 'js-yaml';
 import { type Config, ConfigSchema } from '../parser/config-schema';
+import { ConsoleLogger, type Logger } from './logger';
 import { PathResolver } from './paths';
 import { ResourceLoader } from './resource-loader';
 
 export class ConfigLoader {
   private static instance: Config;
+  private static logger: Logger = new ConsoleLogger();
 
   // biome-ignore lint/suspicious/noExplicitAny: Generic deep merge utility
   private static deepMerge(target: any, source: any): any {
@@ -26,11 +27,12 @@ export class ConfigLoader {
     return output;
   }
 
-  static load(): Config {
+  static load(logger: Logger = ConfigLoader.logger): Config {
     if (ConfigLoader.instance) return ConfigLoader.instance;
 
     const configPaths = PathResolver.getConfigPaths();
     let mergedConfig: Record<string, unknown> = {};
+    const activeLogger = logger;
 
     // Load configurations in reverse precedence order (User -> Project -> Env)
     for (const path of [...configPaths].reverse()) {
@@ -51,14 +53,14 @@ export class ConfigLoader {
           const config = (yaml.load(content) as Record<string, unknown>) || {};
           mergedConfig = ConfigLoader.deepMerge(mergedConfig, config);
         } catch (error) {
-          console.warn(`Warning: Failed to load config from ${path}:`, error);
+          activeLogger.warn(`Warning: Failed to load config from ${path}: ${String(error)}`);
         }
       }
     }
 
     const result = ConfigSchema.safeParse(mergedConfig);
     if (!result.success) {
-      console.warn('Warning: Invalid configuration, using defaults:', result.error.message);
+      activeLogger.warn(`Warning: Invalid configuration, using defaults: ${result.error.message}`);
       ConfigLoader.instance = ConfigSchema.parse({});
     } else {
       ConfigLoader.instance = result.data;
@@ -72,6 +74,13 @@ export class ConfigLoader {
    */
   static setConfig(config: Config): void {
     ConfigLoader.instance = config;
+  }
+
+  /**
+   * For testing or custom logging, override the logger used by ConfigLoader.
+   */
+  static setLogger(logger: Logger): void {
+    ConfigLoader.logger = logger;
   }
 
   /**
