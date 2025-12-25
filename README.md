@@ -89,10 +89,12 @@ keystone auth login anthropic
 keystone auth login anthropic-claude
 keystone auth login openai-chatgpt
 keystone auth login gemini
+keystone auth login github
 ```
 Use `anthropic-claude` for Claude Pro/Max subscriptions (OAuth) instead of an API key.
 Use `openai-chatgpt` for ChatGPT Plus/Pro subscriptions (OAuth) instead of an API key.
 Use `google-gemini` for Google Gemini subscriptions (OAuth) instead of an API key.
+Use `github` to authenticate GitHub Copilot via the GitHub device flow.
 
 ### 3. Run a Workflow
 ```bash
