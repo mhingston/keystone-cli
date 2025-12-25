@@ -93,6 +93,7 @@ export interface RunOptions {
   depth?: number;
   allowSuccessResume?: boolean;
   resourcePoolManager?: ResourcePoolManager;
+  allowInsecure?: boolean;
 }
 
 export interface StepContext {
@@ -1804,8 +1805,10 @@ Do not change the 'id' or 'type' or 'auto_heal' fields.
       memoryDb: this.memoryDb,
       workflowDir: this.options.workflowDir,
       dryRun: this.options.dryRun,
+      debug: this.options.debug,
       runId: this.runId,
       redactForStorage: this.redactForStorage.bind(this),
+      allowInsecure: this.options.allowInsecure,
     });
 
     if (result.status !== 'success' || !result.output) {
@@ -2256,7 +2259,7 @@ Please provide a corrected response that exactly matches the required schema.`;
               const promise = (async () => {
                 let release: (() => void) | undefined;
                 try {
-                  this.logger.debug(
+                  this.logger.debug?.(
                     `[${stepIndex}/${totalSteps}] ⏳ Waiting for pool: ${poolName}`
                   );
                   release = await this.resourcePool.acquire(poolName, { signal: this.abortSignal });
@@ -2644,8 +2647,9 @@ Please provide a corrected response that exactly matches the required schema.`;
         mcpManager: this.mcpManager,
         workflowDir: dirname(workflowPath),
         depth: this.depth + 1,
-        allowSuccessResume: true,
+        allowSuccessResume: true, // Internal workflows might need this
         resourcePoolManager: this.resourcePool,
+        allowInsecure: this.options.allowInsecure,
       });
 
       // Restore sub-workflow state

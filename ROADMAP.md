@@ -408,18 +408,18 @@ Tasks:
 4. [x] Embed manifest metadata (version, checksum, build time).
 5. [x] Document distribution and update workflows for compiled binaries.
 
-### Self-bootstrapping DevMode workflow
+### [x] Self-bootstrapping DevMode workflow
 Goal: Dogfood Keystone by enabling it to modify its own codebase safely.
 Notes:
-1. DevMode should be opt-in and read-only by default.
-2. Approvals and file scope should be explicit and auditable.
-3. Provide a summary of changes for human review.
+1. DevMode is opt-in and provides human-in-the-loop approvals.
+2. Specialist agents (architect, engineer, tester) coordinate the process.
+3. Guardrails ensure changes are restricted to the project scope.
 Tasks:
-1. Add a built-in DevMode workflow with tools to read files, run tests, and write patches.
-2. Add guardrails for sandboxing, approvals, and file scope (allowlists).
-3. Provide templates for common maintenance tasks (new step type, schema update, tests).
-4. Add audit logs and summary of changes for human review.
-5. Document recommended human-in-the-loop checks.
+1. [x] Add a built-in DevMode workflow with tools to read files, run tests, and write patches.
+2. [x] Add guardrails for sandboxing, approvals, and file scope (allowlists).
+3. [x] Provide templates for common maintenance tasks (new step type, schema update, tests).
+4. [x] Add audit logs and summary of changes for human review.
+5. [x] Document recommended human-in-the-loop checks.
 
 ### Lightweight distributed mode with remote runners (Descoped)
 Goal: Support scaling beyond a single machine while keeping local-first defaults.

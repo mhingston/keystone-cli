@@ -1,0 +1,134 @@
+name: dev
+description: "Self-bootstrapping DevMode workflow for Keystone CLI"
+
+inputs:
+  task:
+    type: string
+    description: "The development task to perform"
+  auto_approve:
+    type: boolean
+    default: false
+    description: "If true, skip the plan approval step"
+
+outputs:
+  summary: ${{ steps.implement.output.summary }}
+  files_changed: ${{ steps.implement.output.files_changed }}
+
+steps:
+  - id: analyze
+    type: llm
+    agent: keystone-architect
+    useStandardTools: true
+    prompt: |
+      Analyze the following task and the current project structure.
+      Task: ${{ inputs.task }}
+      
+      Identify the relevant files and components that need to be modified or created.
+      Provide a high-level summary of your analysis.
+    outputSchema:
+      type: object
+      properties:
+        analysis: { type: string }
+        affected_files: { type: array, items: { type: string } }
+      required: [analysis, affected_files]
+
+  - id: plan
+    type: llm
+    agent: keystone-architect
+    needs: [analyze]
+    prompt: |
+      Based on the analysis, create a detailed implementation plan for:
+      ${{ inputs.task }}
+
+      Analysis:
+      ${{ steps.analyze.output.analysis }}
+
+      Proposed Implementation Strategy:
+      1. What changes are needed in which files?
+      2. Are there any new files to be created?
+      3. What are the potential risks or breaking changes?
+      4. How will the changes be verified?
+    outputSchema:
+      type: object
+      properties:
+        plan_summary: { type: string }
+        detailed_steps: { type: array, items: { type: string } }
+      required: [plan_summary, detailed_steps]
+
+  - id: approve_plan
+    type: human
+    if: "!${{ inputs.auto_approve }}"
+    needs: [plan]
+    message: |
+      Proposed Plan for: ${{ inputs.task }}
+
+      Summary:
+      ${{ steps.plan.output.plan_summary }}
+
+      Detailed Steps:
+      ${{ steps.plan.output.detailed_steps.join('\n') }}
+
+      Do you want to proceed with this plan? (yes/no)
+    inputType: confirm
+
+  - id: implement
+    type: llm
+    agent: software-engineer
+    needs: [approve_plan]
+    useStandardTools: true
+    allowInsecure: true
+    prompt: |
+      Implement the following plan for the task:
+      ${{ inputs.task }}
+
+      Plan:
+      ${{ steps.plan.output.plan_summary }}
+
+      Detailed Steps:
+      ${{ steps.plan.output.detailed_steps.join('\n') }}
+
+      Use your tools to modify or create the necessary files.
+    outputSchema:
+      type: object
+      properties:
+        summary: { type: string }
+        files_changed: { type: array, items: { type: string } }
+      required: [summary]
+
+  - id: verify
+    type: llm
+    agent: tester
+    needs: [implement]
+    useStandardTools: true
+    allowInsecure: true
+    prompt: |
+      Verify the changes made for the task:
+      ${{ inputs.task }}
+
+      Files changed:
+      ${{ steps.implement.output.files_changed.join(', ') }}
+
+      Run relevant tests and perform any necessary checks to ensure the implementation is correct and hasn't introduced regressions.
+    outputSchema:
+      type: object
+      properties:
+        test_results: { type: string }
+        success: { type: boolean }
+      required: [test_results, success]
+
+  - id: final_review
+    type: human
+    needs: [verify]
+    message: |
+      Implementation Complete for: ${{ inputs.task }}
+
+      Summary of changes:
+      ${{ steps.implement.output.summary }}
+
+      Test Results:
+      ${{ steps.verify.output.test_results }}
+
+      Status: ${{ steps.verify.output.success ? 'PASSED' : 'FAILED' }}
+
+      Should we finalize these changes? (yes/no)
+    inputType: confirm

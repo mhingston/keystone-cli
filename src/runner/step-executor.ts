@@ -78,6 +78,8 @@ export interface StepExecutorOptions {
   stepExecutionId?: string;
   artifactRoot?: string;
   redactForStorage?: (value: unknown) => unknown;
+  debug?: boolean;
+  allowInsecure?: boolean;
   // Dependency injection for testing
   getAdapter?: typeof getAdapter;
   executeStep?: typeof executeStep;

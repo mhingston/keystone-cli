@@ -12,6 +12,8 @@ import decomposeImplementWorkflow from './templates/decompose-implement.yaml' wi
 import decomposeWorkflow from './templates/decompose-problem.yaml' with { type: 'text' };
 import decomposeResearchWorkflow from './templates/decompose-research.yaml' with { type: 'text' };
 import decomposeReviewWorkflow from './templates/decompose-review.yaml' with { type: 'text' };
+import devWorkflow from './templates/dev.yaml' with { type: 'text' };
+import testerAgent from './templates/agents/tester.md' with { type: 'text' };
 // Default templates
 import scaffoldWorkflow from './templates/scaffold-feature.yaml' with { type: 'text' };
 import scaffoldGenerateWorkflow from './templates/scaffold-generate.yaml' with { type: 'text' };
@@ -186,6 +188,14 @@ storage:
       {
         path: '.keystone/workflows/agents/summarizer.md',
         content: summarizerAgent,
+      },
+      {
+        path: '.keystone/workflows/dev.yaml',
+        content: devWorkflow,
+      },
+      {
+        path: '.keystone/workflows/agents/tester.md',
+        content: testerAgent,
       },
     ];
 
@@ -746,6 +756,57 @@ program
       console.log(`   You can now run ./${options.outfile} anywhere!`);
     } else {
       console.error(`\n✗ Compilation failed with exit code ${result.status}`);
+      process.exit(1);
+    }
+  });
+
+// ===== keystone dev =====
+program
+  .command('dev')
+  .description('Run the self-bootstrapping DevMode workflow')
+  .argument('<task>', 'The development task to perform')
+  .option('--auto-approve', 'Skip the plan approval step', false)
+  .action(async (task, options) => {
+    try {
+      // Find the dev workflow path
+      // Priority: 
+      // 1. Local .keystone/workflows/dev.yaml
+      // 2. Embedded resource
+      let devPath: string;
+      try {
+        devPath = WorkflowRegistry.resolvePath('dev');
+      } catch {
+        // Fallback to searching in templates if not indexed yet
+        devPath = join(process.cwd(), '.keystone/workflows/dev.yaml');
+        if (!existsSync(devPath)) {
+          console.error('✗ Dev workflow not found. Run "keystone init" to seed it.');
+          process.exit(1);
+        }
+      }
+
+      console.log(`🏗️  Starting DevMode for task: ${task}\n`);
+
+      // Import WorkflowRunner dynamically
+      const { WorkflowRunner } = await import('./runner/workflow-runner.ts');
+      const { WorkflowParser } = await import('./parser/workflow-parser.ts');
+      const logger = new ConsoleLogger();
+
+      const workflow = WorkflowParser.loadWorkflow(devPath);
+      const runner = new WorkflowRunner(workflow, {
+        inputs: { task, auto_approve: options.auto_approve },
+        workflowDir: dirname(devPath),
+        logger,
+        allowInsecure: true, // Trusted internal workflow
+      });
+
+      const outputs = await runner.run();
+      if (Object.keys(outputs).length > 0) {
+        console.log('\nDevMode Summary:');
+        console.log(JSON.stringify(runner.redact(outputs), null, 2));
+      }
+      process.exit(0);
+    } catch (error) {
+      console.error('\n✗ DevMode failed:', error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
