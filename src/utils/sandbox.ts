@@ -24,6 +24,9 @@
 import * as vm from 'node:vm';
 import { ProcessSandbox } from './process-sandbox.ts';
 
+/** Default timeout for script execution in milliseconds */
+const DEFAULT_TIMEOUT_MS = 5000;
+
 export interface SandboxOptions {
   timeout?: number;
   memoryLimit?: number; // Note: memoryLimit is not enforced by node:vm
@@ -75,15 +78,15 @@ export class SafeSandbox {
     if (!SafeSandbox.warned) {
       console.warn(
         '\n⚠️  SECURITY WARNING: Using Bun/Node.js built-in VM for script execution.\n' +
-          '   This sandbox is NOT secure against malicious code.\n' +
-          '   Only run workflows from trusted sources.\n'
+        '   This sandbox is NOT secure against malicious code.\n' +
+        '   Only run workflows from trusted sources.\n'
       );
       SafeSandbox.warned = true;
     }
 
     const sandbox = { ...context };
     return vm.runInNewContext(code, sandbox, {
-      timeout: options.timeout || 5000,
+      timeout: options.timeout || DEFAULT_TIMEOUT_MS,
       displayErrors: true,
     });
   }

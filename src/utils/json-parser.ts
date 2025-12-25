@@ -1,5 +1,20 @@
 /**
  * Robustly extract JSON from a string that may contain other text or Markdown blocks.
+ *
+ * Extraction Strategy (in order):
+ * 1. Try to extract from Markdown code blocks (```json ... ```)
+ * 2. Find balanced { } or [ ] brackets using a simple parser
+ * 3. Fall back to parsing the entire trimmed string
+ *
+ * Known Limitations:
+ * - Nested JSON within string values may cause false-positive bracket matching
+ *   in edge cases where the outer JSON is malformed
+ * - Very deeply nested structures may be slow (O(n) parsing)
+ * - Does not validate JSON schema, only syntax
+ *
+ * @param text - The text to extract JSON from (e.g., LLM response)
+ * @returns The parsed JSON value, or throws if no valid JSON found
+ * @throws Error if no valid JSON can be extracted
  */
 export function extractJson(text: string): unknown {
   if (!text) return null;

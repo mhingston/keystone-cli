@@ -58,6 +58,18 @@ export class MemoryDb {
     `);
   }
 
+  /**
+   * Store an embedding and its associated text/metadata.
+   *
+   * Note: The async signature provides interface compatibility with potentially
+   * async backends (e.g., remote vector DBs). The current implementation uses
+   * synchronous bun:sqlite operations internally.
+   *
+   * @param text - The text content to store
+   * @param embedding - The embedding vector (384 dimensions)
+   * @param metadata - Optional metadata to associate with the entry
+   * @returns The generated entry ID
+   */
   async store(
     text: string,
     embedding: number[],
@@ -83,6 +95,17 @@ export class MemoryDb {
     return id;
   }
 
+  /**
+   * Search for similar embeddings using vector similarity.
+   *
+   * Note: The async signature provides interface compatibility with potentially
+   * async backends (e.g., remote vector DBs). The current implementation uses
+   * synchronous bun:sqlite operations internally.
+   *
+   * @param embedding - The query embedding vector
+   * @param limit - Maximum number of results to return (default: 5)
+   * @returns Array of matching entries with distance scores
+   */
   async search(embedding: number[], limit = 5): Promise<MemoryEntry[]> {
     const query = `
       SELECT 

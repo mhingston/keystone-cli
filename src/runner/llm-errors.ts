@@ -44,7 +44,7 @@ export class LLMProviderError extends Error {
         let retryAfterMs: number | undefined;
         const retryAfterHeader = response.headers.get('Retry-After');
         if (retryAfterHeader) {
-            const seconds = parseInt(retryAfterHeader, 10);
+            const seconds = Number.parseInt(retryAfterHeader, 10);
             if (!isNaN(seconds)) {
                 retryAfterMs = seconds * 1000;
             }

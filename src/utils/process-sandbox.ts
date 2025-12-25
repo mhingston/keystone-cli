@@ -11,8 +11,11 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+/** Default timeout for script execution in milliseconds */
+const DEFAULT_TIMEOUT_MS = 5000;
+
 export interface ProcessSandboxOptions {
-    /** Timeout in milliseconds (default: 5000) */
+    /** Timeout in milliseconds (default: DEFAULT_TIMEOUT_MS = 5000) */
     timeout?: number;
     /** Memory limit in bytes (enforced via ulimit on Unix) */
     memoryLimit?: number;
@@ -49,7 +52,7 @@ export class ProcessSandbox {
         context: Record<string, unknown> = {},
         options: ProcessSandboxOptions = {}
     ): Promise<unknown> {
-        const timeout = options.timeout ?? 5000;
+        const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
         const tempDir = join(tmpdir(), `keystone-sandbox-${randomUUID()}`);
 
         try {
