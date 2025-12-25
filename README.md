@@ -411,7 +411,15 @@ Keystone supports several specialized step types:
   - `inputType: confirm`: Simple Enter-to-continue prompt.
   - `inputType: text`: Prompt for a string input, available via `${{ steps.id.output }}`.
 - `workflow`: Trigger another workflow as a sub-step.
-- `join`: Aggregate outputs from dependencies and enforce a completion condition (`all`, `any`, or a number).
+  - `outputMapping`: Map sub-workflow outputs to step outputs.
+    ```yaml
+    outputMapping:
+      final_result: result_from_subflow
+      status: state
+    ```
+- `join`: Aggregate outputs from dependencies and enforce a completion condition.
+  - `target`: `'steps'` (default) or `'branches'` (for foreach).
+  - `condition`: `'all'` (default), `'any'`, or a number.
 - `blueprint`: Generate a structured system blueprint with an agent (persisted as an artifact).
 - `script`: Run JavaScript in a sandboxed subprocess. Requires `allowInsecure: true`.
 - `sleep`: Pause execution for a specified duration.
@@ -448,7 +456,22 @@ Run the scheduler to resume runs when timers elapse:
 keystone scheduler --interval 30
 ```
 
-All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), `concurrency` (max parallel items for foreach), `transform` (post-process output using expressions), `learn` (auto-index for few-shot), and `reflexion` (self-correction loop).
+All steps support common features:
+- `needs`: Array of step IDs this step depends on.
+- `if`: Conditional expression.
+- `retry`: `{ count, backoff: 'linear'|'exponential', baseDelay }`.
+- `timeout`: Maximum execution time in milliseconds.
+- `foreach`: Iterate over an array in parallel.
+- `concurrency`: Limit parallel items for `foreach` (must be a positive integer).
+- `pool`: Assign step to a resource pool.
+- `compensate`: Step to run if the workflow rolls back.
+- `transform`: Post-process output using expressions.
+- `learn`: Auto-index for few-shot.
+- `reflexion`: Self-correction loop.
+- `auto_heal`: LLM-powered automatic error recovery.
+- `inputSchema` / `outputSchema`: JSON Schema validation.
+- `outputRetries`: Max retries for output validation failures.
+- `repairStrategy`: Strategy for output repair (`reask`, `repair`, `hybrid`).
 
 Workflows also support a top-level `concurrency` field to limit how many steps can run in parallel across the entire workflow. This must resolve to a positive integer (number or expression).
 
@@ -642,28 +665,45 @@ inputs:
     secret: true  # Redacted in logs and at rest
 ```
 
-### Typed Step Input/Output Schemas
+Schema validation errors include path-level details and are surfaced before/after step execution.
 
-Validate step inputs and outputs using JSON Schema.
+### Resource Pools
+
+Manage concurrency for external resources (like APIs or databases) across a workflow using `pools`.
 
 ```yaml
-- id: process_data
-  type: script
-  run: return { count: inputs.items.length, valid: true }
-  inputSchema:
-    type: object
-    properties:
-      items: { type: array, items: { type: string } }
-    required: [items]
-  outputSchema:
-    type: object
-    properties:
-      count: { type: number }
-      valid: { type: boolean }
-    required: [count, valid]
+name: rate-limited-workflow
+pools:
+  api_pool: 2  # Limit to 2 concurrent steps using this pool
+
+steps:
+  - id: step1
+    type: request
+    url: ...
+    pool: api_pool
+  
+  - id: step2
+    type: request
+    url: ...
+    pool: api_pool
 ```
 
-Schema validation errors include path-level details and are surfaced before/after step execution.
+### Compensations (Rollback)
+
+Define "undo" actions for steps that have side effects. Compensations run in reverse order (LIFO) if a workflow fails or is cancelled.
+
+```yaml
+- id: create_user
+  type: request
+  url: https://api.example.com/users
+  compensate:
+    id: delete_user
+    type: request
+    url: https://api.example.com/users/${{ steps.create_user.outputs.id }}
+    method: DELETE
+```
+
+You can also define a workflow-level `compensate` step to handle overall cleanup.
 
 ---
 
