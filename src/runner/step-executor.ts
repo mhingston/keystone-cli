@@ -80,6 +80,7 @@ export interface StepExecutorOptions {
   redactForStorage?: (value: unknown) => unknown;
   // Dependency injection for testing
   getAdapter?: typeof getAdapter;
+  executeStep?: typeof executeStep;
   sandbox?: typeof SafeSandbox;
 }
 
@@ -184,6 +185,7 @@ export async function executeStep(
     artifactRoot,
     redactForStorage,
     getAdapter: injectedGetAdapter,
+    executeStep: injectedExecuteStep,
     sandbox: injectedSandbox,
   } = options;
 
@@ -220,15 +222,18 @@ export async function executeStep(
         result = await executeLlmStep(
           step,
           context,
-          (s, c) =>
-            executeStep(s, c, logger, {
+          (s, c) => {
+            const exec = injectedExecuteStep || executeStep;
+            return exec(s, c, logger, {
               ...options,
               stepExecutionId: undefined,
-            }),
+            });
+          },
           logger,
           mcpManager,
           workflowDir,
-          abortSignal
+          abortSignal,
+          injectedGetAdapter
         );
         break;
       case 'memory':

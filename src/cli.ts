@@ -24,6 +24,9 @@ import { ConfigLoader } from './utils/config-loader.ts';
 import { ConsoleLogger } from './utils/logger.ts';
 import { generateMermaidGraph, renderWorkflowAsAscii } from './utils/mermaid.ts';
 import { WorkflowRegistry } from './utils/workflow-registry.ts';
+import { TestHarness } from './runner/test-harness.ts';
+import type { TestDefinition } from './parser/test-schema.ts';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 import pkg from '../package.json' with { type: 'json' };
 
@@ -404,6 +407,84 @@ program
           error instanceof Error ? error.message : error
         );
       }
+      process.exit(1);
+    }
+  });
+
+// ===== keystone test =====
+program
+  .command('test')
+  .description('Run workflow tests with fixtures and snapshots')
+  .argument('[path]', 'Test file or directory to run (default: .keystone/tests/)')
+  .option('-u, --update', 'Update snapshots on mismatch or failure')
+  .action(async (pathArg, options) => {
+    const testPath = pathArg || '.keystone/tests/';
+
+    try {
+      let files: string[] = [];
+      if (existsSync(testPath) && (testPath.endsWith('.yaml') || testPath.endsWith('.yml'))) {
+        files = [testPath];
+      } else if (existsSync(testPath)) {
+        const glob = new Bun.Glob('**/*.test.{yaml,yml}');
+        for await (const file of glob.scan(testPath)) {
+          files.push(join(testPath, file));
+        }
+      }
+
+      if (files.length === 0) {
+        console.log('⊘ No test files found.');
+        return;
+      }
+
+      console.log(`🧪 Running ${files.length} test(s)...\n`);
+
+      let totalPassed = 0;
+      let totalFailed = 0;
+
+      for (const file of files) {
+        try {
+          const content = readFileSync(file, 'utf-8');
+          const testDef = parseYaml(content) as TestDefinition;
+
+          console.log(`  ▶ ${testDef.name} (${file})`);
+
+          const workflowPath = WorkflowRegistry.resolvePath(testDef.workflow);
+          const workflow = WorkflowParser.loadWorkflow(workflowPath);
+
+          const harness = new TestHarness(workflow, testDef.fixture);
+          const result = await harness.run();
+
+          if (!testDef.snapshot || options.update) {
+            testDef.snapshot = result;
+            writeFileSync(file, stringifyYaml(testDef));
+            console.log(`    ✓ Snapshot ${options.update ? 'updated' : 'initialized'}`);
+            totalPassed++;
+            continue;
+          }
+
+          // Compare snapshot (simple JSON stringify for now)
+          const expected = JSON.stringify(testDef.snapshot);
+          const actual = JSON.stringify(result);
+
+          if (expected !== actual) {
+            console.error(`    ✗ Snapshot mismatch in ${file}`);
+            totalFailed++;
+          } else {
+            console.log(`    ✓ Passed`);
+            totalPassed++;
+          }
+        } catch (error) {
+          console.error(`    ✗ Test failed: ${error instanceof Error ? error.message : String(error)}`);
+          totalFailed++;
+        }
+      }
+
+      console.log(`\nSummary: ${totalPassed} passed, ${totalFailed} failed.`);
+      if (totalFailed > 0) {
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error('✗ Test execution failed:', error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });

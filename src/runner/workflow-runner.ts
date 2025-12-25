@@ -36,7 +36,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) {}
+  ) { }
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -76,6 +76,7 @@ function getWakeAt(output: unknown): string | undefined {
 
 export interface RunOptions {
   inputs?: Record<string, unknown>;
+  secrets?: Record<string, string>;
   dbPath?: string;
   memoryDbPath?: string;
   resumeRunId?: string;
@@ -88,6 +89,7 @@ export interface RunOptions {
   debug?: boolean;
   dedup?: boolean;
   getAdapter?: typeof getAdapter;
+  executeStep?: typeof executeStep;
   depth?: number;
   allowSuccessResume?: boolean;
   resourcePoolManager?: ResourcePoolManager;
@@ -362,8 +364,8 @@ export class WorkflowRunner {
             if (parsed.__foreachItems && Array.isArray(parsed.__foreachItems)) {
               expectedCount = parsed.__foreachItems.length;
             }
-          } catch {
-            // Parse error, fall through to expression evaluation
+          } catch (_e) {
+            // ignore parse errors
           }
         }
 
@@ -621,7 +623,7 @@ export class WorkflowRunner {
    * Load secrets from environment
    */
   private loadSecrets(): Record<string, string> {
-    const secrets: Record<string, string> = {};
+    const secrets: Record<string, string> = { ...(this.options.secrets || {}) };
 
     // Common non-secret environment variables to exclude from redaction
     const blocklist = new Set([
@@ -673,7 +675,7 @@ export class WorkflowRunner {
   }
 
   private refreshRedactor(): void {
-    this.redactor = new Redactor(this.secrets, { forcedSecrets: this.secretValues });
+    this.redactor = new Redactor(this.loadSecrets(), { forcedSecrets: this.secretValues });
     this.logger = new RedactingLogger(this.rawLogger, this.redactor);
   }
 
@@ -747,9 +749,9 @@ export class WorkflowRunner {
           content:
             (step as import('../parser/schema.ts').FileStep).content !== undefined
               ? ExpressionEvaluator.evaluateString(
-                  (step as import('../parser/schema.ts').FileStep).content as string,
-                  context
-                )
+                (step as import('../parser/schema.ts').FileStep).content as string,
+                context
+              )
               : undefined,
           op: step.op,
           allowOutsideCwd: step.allowOutsideCwd,
@@ -828,9 +830,9 @@ export class WorkflowRunner {
           input:
             (step as import('../parser/schema.ts').EngineStep).input !== undefined
               ? ExpressionEvaluator.evaluateObject(
-                  (step as import('../parser/schema.ts').EngineStep).input,
-                  context
-                )
+                (step as import('../parser/schema.ts').EngineStep).input,
+                context
+              )
               : undefined,
           env,
           cwd: ExpressionEvaluator.evaluateString(
@@ -977,7 +979,7 @@ export class WorkflowRunner {
 
     const baseContext: ExpressionContext = {
       inputs: this.inputs,
-      secrets: this.secrets,
+      secrets: this.loadSecrets(), // Access secrets from options
       secretValues: this.secretValues,
       steps: stepsContext,
       item,
@@ -1245,11 +1247,11 @@ export class WorkflowRunner {
     const idempotencyContextForRetry =
       idempotencyClaimed && scopedIdempotencyKey
         ? {
-            rawKey: idempotencyKey || scopedIdempotencyKey,
-            scopedKey: scopedIdempotencyKey,
-            ttlSeconds: idempotencyTtlSeconds,
-            claimed: true,
-          }
+          rawKey: idempotencyKey || scopedIdempotencyKey,
+          scopedKey: scopedIdempotencyKey,
+          ttlSeconds: idempotencyTtlSeconds,
+          claimed: true,
+        }
         : undefined;
 
     let stepToExecute = step;
@@ -1286,6 +1288,8 @@ export class WorkflowRunner {
         runId: this.runId,
         stepExecutionId: stepExecId,
         redactForStorage: this.redactForStorage.bind(this),
+        getAdapter: this.options.getAdapter,
+        executeStep: this.options.executeStep,
       });
       if (result.status === 'failed') {
         throw new StepExecutionError(result);
@@ -1294,9 +1298,9 @@ export class WorkflowRunner {
         try {
           const outputForValidation =
             stepToExecute.type === 'engine' &&
-            result.output &&
-            typeof result.output === 'object' &&
-            'summary' in result.output
+              result.output &&
+              typeof result.output === 'object' &&
+              'summary' in result.output
               ? (result.output as { summary?: unknown }).summary
               : result.output;
           this.validateSchema(
@@ -2131,7 +2135,7 @@ Please provide a corrected response that exactly matches the required schema.`;
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-        '   Workflows can execute arbitrary shell commands and access your environment.\n'
+      '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     this.redactAtRest = ConfigLoader.load().storage?.redact_secrets_at_rest ?? true;

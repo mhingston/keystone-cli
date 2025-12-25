@@ -249,12 +249,12 @@ Notes:
 2. Mocks should cover LLM, HTTP, shell, and file steps.
 3. Snapshot diffs must be readable and reviewable.
 Tasks:
-1. Add `keystone test` to run workflows in a test harness with fixture inputs.
-2. Provide snapshot outputs with an update/accept workflow.
-3. Add deterministic LLM mocks, HTTP stubs, and time control utilities.
-4. Support per-test config (env, secrets, idempotency, retries).
-5. Add smoke tests for the test harness and snapshot update flow.
-6. Document recommended test patterns and add sample tests.
+1. [x] Add `keystone test` to run workflows in a test harness with fixture inputs.
+2. [x] Provide snapshot outputs with an update/accept workflow.
+3. [x] Add deterministic LLM mocks, HTTP stubs, and time control utilities.
+4. [x] Support per-test config (env, secrets, idempotency, retries).
+5. [x] Add smoke tests for the test harness and snapshot update flow.
+6. [x] Document recommended test patterns and add sample tests.
 
 ### Debug bundles for sharing workflow state and logs (Descoped)
 Goal: Provide a one-command way to package the data needed for support and reproduction.

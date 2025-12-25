@@ -28,7 +28,8 @@ export async function executeLlmStep(
   logger: Logger = new ConsoleLogger(),
   mcpManager?: MCPManager,
   workflowDir?: string,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  getAdapterFn?: typeof getAdapter
 ): Promise<StepResult> {
   const agentPath = resolveAgentPath(step.agent, workflowDir);
   const agent = parseAgent(agentPath);
@@ -38,7 +39,7 @@ export async function executeLlmStep(
   const prompt = ExpressionEvaluator.evaluateString(step.prompt, context);
 
   const fullModelString = provider ? `${provider}:${model}` : model;
-  const { adapter, resolvedModel } = getAdapter(fullModelString);
+  const { adapter, resolvedModel } = (getAdapterFn || getAdapter)(fullModelString);
 
   // Inject schema instructions if present
   let systemPrompt = agent.systemPrompt;
