@@ -6,6 +6,7 @@ import {
   CopilotAdapter,
   LocalEmbeddingAdapter,
   OpenAIAdapter,
+  OpenAIChatGPTAdapter,
   getAdapter,
 } from './llm-adapter';
 
@@ -313,7 +314,86 @@ describe('CopilotAdapter', () => {
 describe('LocalEmbeddingAdapter', () => {
   it('should throw on chat', async () => {
     const adapter = new LocalEmbeddingAdapter();
-    await expect(adapter.chat()).rejects.toThrow(/Local models in Keystone currently only support/);
+    await expect(adapter.chat([])).rejects.toThrow(/Local models in Keystone currently only support/);
+  });
+});
+
+describe('OpenAIChatGPTAdapter', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    // @ts-ignore
+    global.fetch = mock();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('should call the ChatGPT API correctly with store: false and ID filtering', async () => {
+    const mockResponse = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'hello',
+            reasoning: { encrypted_content: 'r1' },
+          },
+        },
+      ],
+    };
+
+    const authSpy = spyOn(AuthManager, 'getOpenAIChatGPTToken').mockResolvedValue('chatgpt-token');
+
+    // @ts-ignore
+    global.fetch.mockResolvedValue(
+      new Response(JSON.stringify(mockResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const adapter = new OpenAIChatGPTAdapter();
+    // Use any to allow testing ID stripping logic
+    const response = await adapter.chat([{ role: 'user', content: 'hi', id: 'msg_1' } as any]);
+
+    expect(response.message.content).toBe('hello');
+    expect(response.message.reasoning?.encrypted_content).toBe('r1');
+
+    // @ts-ignore
+    const fetchMock = global.fetch as MockFetch;
+    // @ts-ignore
+    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
+    const [url, init] = fetchMock.mock.calls[0] as [string, any];
+
+    expect(url).toBe('https://api.openai.com/v1/chat/completions');
+    expect(init.headers.Authorization).toBe('Bearer chatgpt-token');
+
+    const body = JSON.parse(init.body);
+    expect(body.messages[0].id).toBeUndefined();
+    expect(body.store).toBe(false);
+    expect(body.include).toContain('reasoning.encrypted_content');
+
+    authSpy.mockRestore();
+  });
+
+  it('should handle usage limits gracefully', async () => {
+    const mockError = 'Your ChatGPT subscription limit has been reached.';
+
+    spyOn(AuthManager, 'getOpenAIChatGPTToken').mockResolvedValue('chatgpt-token');
+
+    // @ts-ignore
+    global.fetch.mockResolvedValue(
+      new Response(mockError, {
+        status: 429,
+        statusText: 'Too Many Requests',
+      })
+    );
+
+    const adapter = new OpenAIChatGPTAdapter();
+    await expect(adapter.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(
+      /ChatGPT subscription limit reached/
+    );
   });
 });
 
@@ -326,9 +406,11 @@ describe('getAdapter', () => {
         openai: { type: 'openai', api_key_env: 'OPENAI_API_KEY' },
         anthropic: { type: 'anthropic', api_key_env: 'ANTHROPIC_API_KEY' },
         copilot: { type: 'copilot' },
+        'chatgpt-provider': { type: 'openai-chatgpt' },
       },
       model_mappings: {
         'claude-*': 'anthropic',
+        'gpt-5*': 'chatgpt-provider',
         'gpt-*': 'openai',
         'copilot:*': 'copilot',
       },
@@ -370,6 +452,12 @@ describe('getAdapter', () => {
     const { adapter, resolvedModel } = getAdapter('local');
     expect(adapter).toBeInstanceOf(LocalEmbeddingAdapter);
     expect(resolvedModel).toBe('Xenova/all-MiniLM-L6-v2');
+  });
+
+  it('should return OpenAIChatGPTAdapter for openai-chatgpt provider', () => {
+    const { adapter, resolvedModel } = getAdapter('gpt-5.1');
+    expect(adapter).toBeInstanceOf(OpenAIChatGPTAdapter);
+    expect(resolvedModel).toBe('gpt-5.1');
   });
 
   it('should throw error for unknown provider', () => {

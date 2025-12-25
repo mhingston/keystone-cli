@@ -12,6 +12,10 @@ export interface LLMMessage {
   tool_call_id?: string;
   name?: string;
   tool_calls?: LLMToolCall[];
+  reasoning?: {
+    encrypted_content: string;
+    summary?: string;
+  };
 }
 
 export interface LLMToolCall {
@@ -246,10 +250,10 @@ export class AnthropicAdapter implements LLMAdapter {
 
     const anthropicTools = options?.tools
       ? options.tools.map((t) => ({
-          name: t.function.name,
-          description: t.function.description,
-          input_schema: t.function.parameters,
-        }))
+        name: t.function.name,
+        description: t.function.description,
+        input_schema: t.function.parameters,
+      }))
       : undefined;
 
     const response = await fetch(`${this.baseUrl}/messages`, {
@@ -410,6 +414,119 @@ export class AnthropicAdapter implements LLMAdapter {
   }
 }
 
+export class OpenAIChatGPTAdapter implements LLMAdapter {
+  private baseUrl: string;
+
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || Bun.env.OPENAI_CHATGPT_BASE_URL || 'https://api.openai.com/v1';
+  }
+
+  private filterMessages(messages: LLMMessage[]): LLMMessage[] {
+    // Stateless mode requires stripping all IDs and filtering out item_references
+    return messages.map((m) => {
+      // Create a shallow copy and remove id if it exists
+      // biome-ignore lint/unused-variables: id is intentionally stripped
+      const { id, ...rest } = m as any;
+
+      if (m.tool_calls) {
+        return {
+          ...rest,
+          tool_calls: m.tool_calls.map((tc) => {
+            // biome-ignore lint/unused-variables: id is intentionally stripped
+            const { id: tcId, ...tcRest } = tc;
+            return tcRest;
+          }),
+        };
+      }
+
+      // Preserve reasoning if present (it will be stripped of id if nested)
+      if (m.reasoning) {
+        return {
+          ...rest,
+          reasoning: m.reasoning,
+        };
+      }
+
+      return rest;
+    });
+  }
+
+  private normalizeModel(model: string): string {
+    // Map Keystone model names to Codex API expected names
+    if (model.includes('gpt-5')) return 'gpt-5-codex';
+    if (model.includes('gpt-4o-codex')) return 'gpt-4o';
+    return model;
+  }
+
+  async chat(
+    messages: LLMMessage[],
+    options?: {
+      model?: string;
+      tools?: LLMTool[];
+      onStream?: (chunk: string) => void;
+      signal?: AbortSignal;
+    }
+  ): Promise<LLMResponse> {
+    const isStreaming = !!options?.onStream;
+    const token = await AuthManager.getOpenAIChatGPTToken();
+    if (!token) {
+      throw new Error(
+        'OpenAI ChatGPT authentication not found. Please run "keystone auth login openai-chatgpt" first.'
+      );
+    }
+
+    const filteredMessages = this.filterMessages(messages);
+    const resolvedModel = this.normalizeModel(options?.model || 'gpt-5-codex');
+
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'OpenAI-Organization': '', // Ensure clear org context
+      },
+      body: JSON.stringify({
+        model: resolvedModel,
+        messages: filteredMessages,
+        tools: options?.tools,
+        stream: isStreaming,
+        // Critical for ChatGPT Plus/Pro backend compatibility
+        store: false,
+        include: ['reasoning.encrypted_content'],
+      }),
+      signal: options?.signal,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      // Handle usage limit messages gracefully
+      if (response.status === 429 && error.includes('limit')) {
+        throw new Error(
+          'ChatGPT subscription limit reached. Please wait and try again or switch to another provider.'
+        );
+      }
+      throw new Error(
+        `OpenAI ChatGPT API error: ${response.status} ${response.statusText} - ${error}`
+      );
+    }
+
+    if (isStreaming) {
+      if (!response.body) throw new Error('Response body is null');
+      return processOpenAIStream(response, options, 'OpenAIChatGPT');
+    }
+
+    const data = (await response.json()) as {
+      choices: { message: LLMMessage }[];
+      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    };
+
+    return {
+      message: data.choices[0].message,
+      usage: data.usage,
+    };
+  }
+}
+
 export class CopilotAdapter implements LLMAdapter {
   private baseUrl: string;
 
@@ -494,8 +611,8 @@ export class LocalEmbeddingAdapter implements LLMAdapter {
   ): Promise<LLMResponse> {
     throw new Error(
       'Local models in Keystone currently only support memory/embedding operations. ' +
-        'To use a local LLM for chat/generation, please use an OpenAI-compatible local server ' +
-        '(like Ollama, LM Studio, or LocalAI) and configure it as an OpenAI provider in your config.'
+      'To use a local LLM for chat/generation, please use an OpenAI-compatible local server ' +
+      '(like Ollama, LM Studio, or LocalAI) and configure it as an OpenAI provider in your config.'
     );
   }
 
@@ -537,6 +654,8 @@ export function getAdapter(model: string): { adapter: LLMAdapter; resolvedModel:
   let adapter: LLMAdapter;
   if (providerConfig.type === 'copilot') {
     adapter = new CopilotAdapter(providerConfig.base_url);
+  } else if (providerConfig.type === 'openai-chatgpt') {
+    adapter = new OpenAIChatGPTAdapter(providerConfig.base_url);
   } else {
     const apiKey = providerConfig.api_key_env ? Bun.env[providerConfig.api_key_env] : undefined;
 

@@ -1354,7 +1354,21 @@ auth
         console.error('✗ No token provided.');
         process.exit(1);
       }
-    } else if (providerName === 'openai' || providerName === 'anthropic') {
+    } else if (providerName === 'openai' || providerName === 'anthropic' || providerName === 'openai-chatgpt') {
+      if (providerName === 'openai-chatgpt') {
+        try {
+          await AuthManager.loginOpenAIChatGPT();
+          console.log('\n✓ Successfully logged in to OpenAI ChatGPT.');
+          return;
+        } catch (error) {
+          console.error(
+            '\n✗ Failed to login with OpenAI ChatGPT:',
+            error instanceof Error ? error.message : error
+          );
+          process.exit(1);
+        }
+      }
+
       let key = options.token; // Use --token if provided as the API key
 
       if (!key) {
@@ -1410,12 +1424,21 @@ auth
       }
     }
 
-    if (!providerName || providerName === 'openai') {
+    if (!providerName || providerName === 'openai' || providerName === 'openai-chatgpt') {
       if (auth.openai_api_key) {
         console.log('  ✓ OpenAI API key configured');
-      } else if (providerName) {
+      }
+      if (auth.openai_chatgpt) {
+        console.log('  ✓ OpenAI ChatGPT subscription (OAuth) authenticated');
+        if (auth.openai_chatgpt.expires_at) {
+          const expires = new Date(auth.openai_chatgpt.expires_at * 1000);
+          console.log(`    Session expires: ${expires.toLocaleString()}`);
+        }
+      }
+
+      if (providerName && !auth.openai_api_key && !auth.openai_chatgpt) {
         console.log(
-          `  ⊘ OpenAI API key not configured. Run "keystone auth login openai" to authenticate.`
+          `  ⊘ OpenAI authentication not configured. Run "keystone auth login openai" or "keystone auth login openai-chatgpt" to authenticate.`
         );
       }
     }
@@ -1443,6 +1466,8 @@ auth
     const { AuthManager } = await import('./utils/auth-manager.ts');
     const providerName = provider?.toLowerCase();
 
+    const auth = AuthManager.load();
+
     if (!providerName || providerName === 'github' || providerName === 'copilot') {
       AuthManager.save({
         github_token: undefined,
@@ -1450,9 +1475,14 @@ auth
         copilot_expires_at: undefined,
       });
       console.log('✓ Successfully logged out of GitHub.');
-    } else if (providerName === 'openai') {
-      AuthManager.save({ openai_api_key: undefined });
-      console.log('✓ Successfully cleared OpenAI API key.');
+    } else if (providerName === 'openai' || providerName === 'openai-chatgpt') {
+      AuthManager.save({
+        openai_api_key: providerName === 'openai' ? undefined : auth.openai_api_key,
+        openai_chatgpt: undefined,
+      });
+      console.log(
+        `✓ Successfully cleared ${providerName === 'openai' ? 'OpenAI API key and ' : ''}ChatGPT session.`
+      );
     } else if (providerName === 'anthropic') {
       AuthManager.save({ anthropic_api_key: undefined });
       console.log('✓ Successfully cleared Anthropic API key.');

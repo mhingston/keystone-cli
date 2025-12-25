@@ -6,7 +6,7 @@ export const ConfigSchema = z.object({
   providers: z
     .record(
       z.object({
-        type: z.enum(['openai', 'anthropic', 'copilot']).default('openai'),
+        type: z.enum(['openai', 'anthropic', 'copilot', 'openai-chatgpt']).default('openai'),
         base_url: z.string().optional(),
         api_key_env: z.string().optional(),
         default_model: z.string().optional(),

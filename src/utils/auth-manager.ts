@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 export interface AuthData {
@@ -16,6 +17,12 @@ export interface AuthData {
       refresh_token?: string;
     }
   >;
+  openai_chatgpt?: {
+    access_token: string;
+    refresh_token: string;
+    expires_at: number;
+    account_id?: string;
+  };
 }
 
 export const COPILOT_HEADERS = {
@@ -25,9 +32,9 @@ export const COPILOT_HEADERS = {
 };
 
 const GITHUB_CLIENT_ID = '013444988716b5155f4c'; // GitHub CLI Client ID
-
-/** Buffer time in seconds before token expiry to trigger refresh (5 minutes) */
 const TOKEN_REFRESH_BUFFER_SECONDS = 300;
+const OPENAI_CHATGPT_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+const OPENAI_CHATGPT_REDIRECT_URI = 'http://localhost:1455/callback';
 
 export class AuthManager {
   private static getAuthPath(): string {
@@ -199,6 +206,164 @@ export class AuthManager {
     } catch (error) {
       // Use ConsoleLogger as a safe fallback for top-level utility
       console.error('Error refreshing Copilot token:', error);
+      return undefined;
+    }
+  }
+
+  private static generateCodeVerifier(): string {
+    return randomBytes(32).toString('hex');
+  }
+
+  private static createCodeChallenge(verifier: string): string {
+    const hash = createHash('sha256').update(verifier).digest();
+    return hash.toString('base64url');
+  }
+
+  static async loginOpenAIChatGPT(): Promise<void> {
+    const verifier = AuthManager.generateCodeVerifier();
+    const challenge = AuthManager.createCodeChallenge(verifier);
+
+    return new Promise((resolve, reject) => {
+      let server: any;
+      const timeout = setTimeout(() => {
+        if (server) server.stop();
+        reject(new Error('Login timed out after 5 minutes'));
+      }, 5 * 60 * 1000);
+
+      server = Bun.serve({
+        port: 1455,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === '/callback') {
+            const code = url.searchParams.get('code');
+            if (code) {
+              try {
+                const response = await fetch('https://chatgpt.com/oauth/token', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                  body: new URLSearchParams({
+                    client_id: OPENAI_CHATGPT_CLIENT_ID,
+                    grant_type: 'authorization_code',
+                    code,
+                    redirect_uri: OPENAI_CHATGPT_REDIRECT_URI,
+                    code_verifier: verifier,
+                  }),
+                });
+
+                if (!response.ok) {
+                  const error = await response.text();
+                  throw new Error(`Failed to exchange code: ${response.status} - ${error}`);
+                }
+
+                const data = (await response.json()) as {
+                  access_token: string;
+                  refresh_token: string;
+                  expires_in: number;
+                };
+
+                AuthManager.save({
+                  openai_chatgpt: {
+                    access_token: data.access_token,
+                    refresh_token: data.refresh_token,
+                    expires_at: Math.floor(Date.now() / 1000) + data.expires_in,
+                  },
+                });
+
+                clearTimeout(timeout);
+                setTimeout(() => server.stop(), 100);
+                resolve();
+                return new Response(
+                  '<h1>Authentication Successful!</h1><p>You can close this window and return to the terminal.</p>',
+                  { headers: { 'Content-Type': 'text/html' } }
+                );
+              } catch (err) {
+                clearTimeout(timeout);
+                setTimeout(() => server.stop(), 100);
+                reject(err);
+                return new Response(`Error: ${err instanceof Error ? err.message : String(err)}`, {
+                  status: 500,
+                });
+              }
+            } else {
+              return new Response('Missing code parameter', { status: 400 });
+            }
+          }
+          return new Response('Not Found', { status: 404 });
+        },
+      });
+
+      const authUrl =
+        `https://chatgpt.com/oauth/authorize?` +
+        new URLSearchParams({
+          client_id: OPENAI_CHATGPT_CLIENT_ID,
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+          redirect_uri: OPENAI_CHATGPT_REDIRECT_URI,
+          response_type: 'code',
+          scope: 'openid profile email offline_access',
+        }).toString();
+
+      console.log('\nTo login with OpenAI ChatGPT:');
+      console.log('1. Visit the following URL in your browser:');
+      console.log(`   ${authUrl}\n`);
+      console.log('Waiting for authorization...');
+
+      // Attempt to open the browser
+      try {
+        const { platform } = process;
+        const command = platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
+        const { spawn } = require('node:child_process');
+        spawn(command, [authUrl]);
+      } catch (e) {
+        // Ignore if we can't open the browser automatically
+      }
+    });
+  }
+
+  static async getOpenAIChatGPTToken(): Promise<string | undefined> {
+    const auth = AuthManager.load();
+    if (!auth.openai_chatgpt) return undefined;
+
+    const { access_token, refresh_token, expires_at } = auth.openai_chatgpt;
+
+    // Check if valid
+    if (expires_at > Date.now() / 1000 + TOKEN_REFRESH_BUFFER_SECONDS) {
+      return access_token;
+    }
+
+    // Refresh
+    try {
+      const response = await fetch('https://chatgpt.com/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: OPENAI_CHATGPT_CLIENT_ID,
+          grant_type: 'refresh_token',
+          refresh_token,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to refresh token: ${response.statusText}`);
+      }
+
+      const data = (await response.json()) as {
+        access_token: string;
+        refresh_token: string;
+        expires_in: number;
+      };
+
+      AuthManager.save({
+        openai_chatgpt: {
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          expires_at: Math.floor(Date.now() / 1000) + data.expires_in,
+        },
+      });
+
+      return data.access_token;
+    } catch (error) {
+      console.error('Error refreshing OpenAI ChatGPT token:', error);
       return undefined;
     }
   }
