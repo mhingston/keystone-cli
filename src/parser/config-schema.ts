@@ -64,6 +64,21 @@ export const ConfigSchema = z.object({
       ])
     )
     .default({}),
+  engines: z
+    .object({
+      allowlist: z
+        .record(
+          z.object({
+            command: z.string(),
+            args: z.array(z.string()).optional(),
+            version: z.string(),
+            versionArgs: z.array(z.string()).optional().default(['--version']),
+          })
+        )
+        .default({}),
+      denylist: z.array(z.string()).default([]),
+    })
+    .default({}),
   concurrency: z
     .object({
       default: z.number().int().positive().default(10),
@@ -71,6 +86,7 @@ export const ConfigSchema = z.object({
         llm: 2,
         shell: 5,
         http: 10,
+        engine: 2,
       }),
     })
     .default({}),

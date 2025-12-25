@@ -1,0 +1,33 @@
+name: engine-example
+description: "Run an allowlisted external CLI and capture a structured summary"
+
+# Requires an allowlisted engine in .keystone/config.yaml:
+# engines:
+#   allowlist:
+#     bun:
+#       command: bun
+#       version: "1.3."
+#       versionArgs: ["--version"]
+
+inputs:
+  message:
+    type: string
+    default: "Hello engine"
+
+steps:
+  - id: run_engine
+    type: engine
+    command: bun
+    args:
+      - -e
+      - 'const fs = require("node:fs"); const input = fs.readFileSync(0, "utf8"); const data = input ? JSON.parse(input) : {}; const summary = { received: data.message || null }; fs.writeFileSync(process.env.KEYSTONE_ENGINE_SUMMARY_PATH, JSON.stringify(summary));'
+    input:
+      message: ${{ inputs.message }}
+    env:
+      PATH: ${{ env.PATH }}
+    cwd: .
+    outputSchema:
+      type: object
+      properties:
+        received: { type: string }
+      required: [received]

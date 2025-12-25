@@ -51,7 +51,7 @@ const InputSchema = z
     }
 
     if (value.values) {
-      if (!['string', 'number', 'boolean'].includes(type)) {
+      if (type !== 'string' && type !== 'number' && type !== 'boolean') {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `values cannot be used with type "${type}"`,
@@ -60,7 +60,11 @@ const InputSchema = z
       }
 
       for (const allowed of value.values) {
-        if (typeof allowed !== type) {
+        const matchesType =
+          (type === 'string' && typeof allowed === 'string') ||
+          (type === 'number' && typeof allowed === 'number') ||
+          (type === 'boolean' && typeof allowed === 'boolean');
+        if (!matchesType) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: `enum value ${JSON.stringify(allowed)} must be a ${type}`,
@@ -149,7 +153,27 @@ const AgentToolSchema = z.object({
 const JoinStepSchema = BaseStepSchema.extend({
   type: z.literal('join'),
   target: z.enum(['steps', 'branches']).optional().default('steps'),
-  condition: z.union([z.literal('all'), z.literal('any'), z.number().int().positive()]).default('all'),
+  condition: z
+    .union([z.literal('all'), z.literal('any'), z.number().int().positive()])
+    .default('all'),
+});
+
+const EngineConfigSchema = z.object({
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  input: z.any().optional(),
+  env: z.record(z.string()),
+  cwd: z.string(),
+});
+
+const EngineHandoffSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().optional(),
+  inputSchema: z.any().optional(),
+  engine: EngineConfigSchema.extend({
+    timeout: z.number().int().positive().optional(),
+    outputSchema: z.any().optional(),
+  }),
 });
 
 const LlmStepSchema = BaseStepSchema.extend({
@@ -182,6 +206,7 @@ const LlmStepSchema = BaseStepSchema.extend({
   useStandardTools: z.boolean().optional(),
   allowOutsideCwd: z.boolean().optional(),
   allowInsecure: z.boolean().optional(),
+  handoff: EngineHandoffSchema.optional(),
 });
 
 const OutputMappingItemSchema = z.union([
@@ -234,6 +259,10 @@ const ScriptStepSchema = BaseStepSchema.extend({
   allowInsecure: z.boolean().optional().default(false),
 });
 
+const EngineStepSchema = BaseStepSchema.extend({
+  type: z.literal('engine'),
+}).merge(EngineConfigSchema);
+
 const MemoryStepSchema = BaseStepSchema.extend({
   type: z.literal('memory'),
   op: z.enum(['search', 'store']),
@@ -257,6 +286,7 @@ export const StepSchema: z.ZodType<any> = z.lazy(() =>
     HumanStepSchema,
     SleepStepSchema,
     ScriptStepSchema,
+    EngineStepSchema,
     MemoryStepSchema,
     JoinStepSchema,
   ])
@@ -314,6 +344,7 @@ export type HumanStep = z.infer<typeof HumanStepSchema>;
 export type SleepStep = z.infer<typeof SleepStepSchema>;
 export type ScriptStep = z.infer<typeof ScriptStepSchema>;
 export type MemoryStep = z.infer<typeof MemoryStepSchema>;
+export type EngineStep = z.infer<typeof EngineStepSchema>;
 export type JoinStep = z.infer<typeof JoinStepSchema>;
 export type Workflow = z.infer<typeof WorkflowSchema>;
 export type AgentTool = z.infer<typeof AgentToolSchema>;

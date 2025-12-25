@@ -46,7 +46,7 @@ const ERROR_PATTERNS: Array<{
       const varName = match[1];
       const hints = [
         `Check if "${varName}" is defined in inputs, steps, or env`,
-        `Available root variables: inputs, steps, secrets, env, item, index`,
+        'Available root variables: inputs, steps, secrets, env, item, index',
       ];
       if (varName.startsWith('step')) {
         hints.push(`Did you mean "steps" (plural)?`);
@@ -59,7 +59,7 @@ const ERROR_PATTERNS: Array<{
     suggestions: (match) => [
       `Add the input "${match[1]}" when running the workflow`,
       `Example: keystone run workflow.yaml --input ${match[1]}="value"`,
-      `Or add a default value in the workflow inputs section`,
+      'Or add a default value in the workflow inputs section',
     ],
   },
   {
@@ -176,7 +176,7 @@ function getSourceSnippet(source: string, line: number, column: number, contextL
 
     // Add column indicator for error line
     if (i === line - 1 && column > 0) {
-      const indicator = ' '.repeat(lineNumWidth + 4 + column - 1) + '^';
+      const indicator = `${' '.repeat(lineNumWidth + 4 + column - 1)}^`;
       snippetLines.push(indicator);
     }
   }

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } fr
 import { existsSync, rmSync } from 'node:fs';
 import { WorkflowDb } from '../db/workflow-db';
 import type { Workflow } from '../parser/schema';
+import type { Logger } from '../utils/logger';
 import { WorkflowRunner } from './workflow-runner';
 
 describe('WorkflowRunner - Subflows & Compensations', () => {
@@ -73,14 +74,15 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
       outputs: {
         status1: '${{ steps.join.output.status.branch1 }}',
         status2: '${{ steps.join.output.status.branch2 }}',
-      }
+      },
     } as unknown as Workflow;
 
     const runner = new WorkflowRunner(workflow, { dbPath });
     const outputs = await runner.run();
     expect(outputs.status1).toBe('success');
     // status2 might be undefined or 'success' depending on race, but shouldn't fail the test
-    expect(['success', undefined]).toContain(outputs.status2 as any);
+    const status2 = typeof outputs.status2 === 'string' ? outputs.status2 : undefined;
+    expect(status2 === undefined || status2 === 'success').toBe(true);
   });
 
   it('should register and execute compensations on failure', async () => {
@@ -99,7 +101,7 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
             id: 'undo1',
             type: 'shell',
             run: 'echo "undoing step1"',
-          }
+          },
         },
         {
           id: 'step2',
@@ -110,19 +112,19 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
             id: 'undo2',
             type: 'shell',
             run: 'echo "undoing step2"',
-          }
+          },
         },
         {
           id: 'fail',
           type: 'shell',
           run: 'exit 1',
           needs: ['step2'],
-        }
-      ]
+        },
+      ],
     } as unknown as Workflow;
 
     const logs: string[] = [];
-    const logger = {
+    const logger: Logger = {
       log: (msg: string) => logs.push(msg),
       error: (msg: string) => logs.push(msg),
       warn: (msg: string) => logs.push(`WARN: ${msg}`),
@@ -130,7 +132,7 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
       debug: (msg: string) => logs.push(`DEBUG: ${msg}`),
     };
 
-    const runner = new WorkflowRunner(workflow, { dbPath: compDbPath, logger: logger as any });
+    const runner = new WorkflowRunner(workflow, { dbPath: compDbPath, logger });
 
     try {
       await runner.run();
@@ -139,12 +141,12 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
     }
 
     // Verify compensations ran in reverse order
-    const undo2Index = logs.findIndex(l => l.includes('undoing step2'));
-    const undo1Index = logs.findIndex(l => l.includes('undoing step1'));
+    const undo2Index = logs.findIndex((l) => l.includes('undoing step2'));
+    const undo1Index = logs.findIndex((l) => l.includes('undoing step1'));
 
     if (undo2Index === -1 || undo1Index === -1 || undo2Index >= undo1Index) {
       console.log('--- COMPENSATION LOGS ---');
-      console.log(logs.filter(l => l.includes('undoing') || l.includes('rollback')).join('\n'));
+      console.log(logs.filter((l) => l.includes('undoing') || l.includes('rollback')).join('\n'));
       console.log('--- END ---');
     }
 
@@ -179,28 +181,28 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
           type: 'shell',
           run: 'echo "after_join"',
           needs: ['early_join'],
-        }
+        },
       ],
       outputs: {
-        order: '${{ steps }}'
-      }
+        order: '${{ steps }}',
+      },
     } as unknown as Workflow;
 
     const logs: string[] = [];
-    const logger = {
+    const logger: Logger = {
       log: (msg: string) => logs.push(msg),
       error: (msg: string) => logs.push(msg),
-      warn: () => { },
-      info: () => { },
-      debug: () => { },
+      warn: () => {},
+      info: () => {},
+      debug: () => {},
     };
 
-    const runner = new WorkflowRunner(workflow, { dbPath, logger: logger as any });
+    const runner = new WorkflowRunner(workflow, { dbPath, logger });
     await runner.run();
 
     // Verify after_join started BEFORE slow finished
-    const afterJoinStart = logs.findIndex(l => l.includes('Executing step: after_join'));
-    const slowFinished = logs.findIndex(l => l.includes('Step slow completed'));
+    const afterJoinStart = logs.findIndex((l) => l.includes('Executing step: after_join'));
+    const slowFinished = logs.findIndex((l) => l.includes('Step slow completed'));
 
     expect(afterJoinStart).toBeGreaterThan(-1);
     expect(slowFinished).toBeGreaterThan(-1);
@@ -224,27 +226,27 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
           type: 'shell',
           run: 'exit 1',
           needs: [],
-        }
-      ]
+        },
+      ],
     } as unknown as Workflow;
 
     const logs: string[] = [];
-    const logger = {
+    const logger: Logger = {
       log: (msg: string) => logs.push(msg),
       error: (msg: string) => logs.push(msg),
-      warn: () => { },
-      info: () => { },
-      debug: () => { },
+      warn: () => {},
+      info: () => {},
+      debug: () => {},
     };
 
-    const runner = new WorkflowRunner(workflow, { dbPath: wfCompDbPath, logger: logger as any });
+    const runner = new WorkflowRunner(workflow, { dbPath: wfCompDbPath, logger });
     try {
       await runner.run();
     } catch (e) {
       // Expected failure
     }
 
-    const wfUndoIndex = logs.findIndex(l => l.includes('undoing workflow'));
+    const wfUndoIndex = logs.findIndex((l) => l.includes('undoing workflow'));
     if (wfUndoIndex === -1) {
       console.log('--- WF COMP LOGS ---');
       console.log(logs.join('\n'));

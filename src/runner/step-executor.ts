@@ -3,6 +3,7 @@ import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
 // Removed synchronous file I/O imports - using Bun's async file API instead
 import type {
+  EngineStep,
   FileStep,
   HumanStep,
   MemoryStep,
@@ -14,6 +15,7 @@ import type {
   WorkflowStep,
 } from '../parser/schema.ts';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
+import { executeEngineStep } from './engine-executor.ts';
 import { getAdapter } from './llm-adapter.ts';
 import { detectShellInjectionRisk, executeShell } from './shell-executor.ts';
 
@@ -42,7 +44,7 @@ export class WorkflowWaitingError extends Error {
   constructor(
     public readonly message: string,
     public readonly stepId: string,
-    public readonly wakeAt: string
+    public readonly wakeAt?: string
   ) {
     super(message);
     this.name = 'WorkflowWaitingError';
@@ -70,6 +72,10 @@ export interface StepExecutorOptions {
   workflowDir?: string;
   dryRun?: boolean;
   abortSignal?: AbortSignal;
+  runId?: string;
+  stepExecutionId?: string;
+  artifactRoot?: string;
+  redactForStorage?: (value: unknown) => unknown;
   // Dependency injection for testing
   getAdapter?: typeof getAdapter;
   sandbox?: typeof SafeSandbox;
@@ -102,7 +108,7 @@ async function executeJoinStep(
       if (depContext.status) {
         statusMap[depId] = depContext.status;
       }
-      
+
       // Determine effective status:
       // If status is success but error exists (allowFailure), treat as failed for the join condition
       const isRealSuccess = depContext.status === 'success' && !depContext.error;
@@ -119,13 +125,13 @@ async function executeJoinStep(
   const total = step.needs.length;
   // Use realStatusMap to count successes/failures
   const successCount = Object.values(realStatusMap).filter((s) => s === 'success').length;
-  
+
   // Note: We use the strict success count.
   // If a step was skipped, it's neither success nor failed in this binary map?
-  // Skipped steps usually mean "not run". 
+  // Skipped steps usually mean "not run".
   // If we want skipped steps to count as success? Probably not.
   // Let's check skipped.
-  
+
   let passed = false;
 
   if (condition === 'all') {
@@ -171,6 +177,10 @@ export async function executeStep(
     workflowDir,
     dryRun,
     abortSignal,
+    runId,
+    stepExecutionId,
+    artifactRoot,
+    redactForStorage,
     getAdapter: injectedGetAdapter,
     sandbox: injectedSandbox,
   } = options;
@@ -208,7 +218,11 @@ export async function executeStep(
         result = await executeLlmStep(
           step,
           context,
-          (s, c) => executeStep(s, c, logger, options),
+          (s, c) =>
+            executeStep(s, c, logger, {
+              ...options,
+              stepExecutionId: undefined,
+            }),
           logger,
           mcpManager,
           workflowDir,
@@ -226,6 +240,15 @@ export async function executeStep(
         break;
       case 'script':
         result = await executeScriptStep(step, context, logger, injectedSandbox, abortSignal);
+        break;
+      case 'engine':
+        result = await executeEngineStepWrapper(step, context, logger, {
+          abortSignal,
+          runId,
+          stepExecutionId,
+          artifactRoot,
+          redactForStorage,
+        });
         break;
       case 'join':
         // Join is handled by the runner logic for aggregation, but we need a placeholder here
@@ -331,6 +354,67 @@ async function executeShellStep(
       stderr: result.stderr,
       exitCode: result.exitCode,
     },
+    status: 'success',
+  };
+}
+
+async function executeEngineStepWrapper(
+  step: EngineStep,
+  context: ExpressionContext,
+  logger: Logger,
+  options: {
+    abortSignal?: AbortSignal;
+    runId?: string;
+    stepExecutionId?: string;
+    artifactRoot?: string;
+    redactForStorage?: (value: unknown) => unknown;
+  }
+): Promise<StepResult> {
+  const engineResult = await executeEngineStep(step, context, {
+    logger,
+    abortSignal: options.abortSignal,
+    runId: options.runId,
+    stepExecutionId: options.stepExecutionId,
+    artifactRoot: options.artifactRoot,
+    redactForStorage: options.redactForStorage,
+  });
+
+  const output = {
+    summary: engineResult.summary ?? null,
+    stdout: engineResult.stdout,
+    stderr: engineResult.stderr,
+    exitCode: engineResult.exitCode,
+    summarySource: engineResult.summarySource,
+    summaryFormat: engineResult.summaryFormat,
+    artifactPath: engineResult.artifactPath,
+  };
+
+  if (engineResult.exitCode !== 0) {
+    return {
+      output,
+      status: 'failed',
+      error: `Engine exited with code ${engineResult.exitCode}: ${engineResult.stderr}`,
+    };
+  }
+
+  if (engineResult.summaryError) {
+    return {
+      output,
+      status: 'failed',
+      error: `Engine summary parse failed: ${engineResult.summaryError}`,
+    };
+  }
+
+  if (engineResult.summary === null) {
+    return {
+      output,
+      status: 'failed',
+      error: `Engine step "${step.id}" did not produce a structured summary`,
+    };
+  }
+
+  return {
+    output,
     status: 'success',
   };
 }
@@ -598,10 +682,11 @@ async function executeRequestStep(
     status: response.ok ? 'success' : 'failed',
     error: response.ok
       ? undefined
-      : `HTTP ${response.status}: ${response.statusText}${responseText
-        ? `\nResponse Body: ${responseText.substring(0, 500)}${responseText.length > 500 ? '...' : ''}`
-        : ''
-      }`,
+      : `HTTP ${response.status}: ${response.statusText}${
+          responseText
+            ? `\nResponse Body: ${responseText.substring(0, 500)}${responseText.length > 500 ? '...' : ''}`
+            : ''
+        }`,
   };
 }
 
@@ -629,10 +714,10 @@ async function executeHumanStep(
       output:
         step.inputType === 'confirm'
           ? answer === true ||
-          (typeof answer === 'string' &&
-            (answer.toLowerCase() === 'true' ||
-              answer.toLowerCase() === 'yes' ||
-              answer.toLowerCase() === 'y'))
+            (typeof answer === 'string' &&
+              (answer.toLowerCase() === 'true' ||
+                answer.toLowerCase() === 'yes' ||
+                answer.toLowerCase() === 'y'))
           : answer,
       status: 'success',
     };
@@ -721,7 +806,6 @@ async function executeSleepStep(
   }
 
   await new Promise((resolve, reject) => {
-    let timeoutId: ReturnType<typeof setTimeout>;
     const onAbort = () => {
       clearTimeout(timeoutId);
       reject(new Error('Step canceled'));
@@ -731,7 +815,7 @@ async function executeSleepStep(
         abortSignal.removeEventListener('abort', onAbort);
       }
     };
-    timeoutId = setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       cleanup();
       resolve(undefined);
     }, duration);
@@ -767,7 +851,7 @@ async function executeScriptStep(
     if (!step.allowInsecure) {
       throw new Error(
         'Script execution is disabled by default because Bun uses an insecure VM sandbox. ' +
-        "Set 'allowInsecure: true' on the script step to run it anyway."
+          "Set 'allowInsecure: true' on the script step to run it anyway."
       );
     }
 
@@ -835,7 +919,7 @@ async function executeMemoryStep(
       const embedding = await adapter.embed(text, resolvedModel);
       const metadata = step.metadata
         ? // biome-ignore lint/suspicious/noExplicitAny: metadata typing
-        (ExpressionEvaluator.evaluateObject(step.metadata, context) as Record<string, any>)
+          (ExpressionEvaluator.evaluateObject(step.metadata, context) as Record<string, any>)
         : {};
 
       const id = await memoryDb.store(text, embedding, metadata);

@@ -208,7 +208,7 @@ export async function executeShell(
       const abortHandler = () => {
         try {
           proc.kill();
-        } catch { }
+        } catch {}
       };
       if (abortSignal) {
         abortSignal.addEventListener('abort', abortHandler, { once: true });
@@ -233,7 +233,7 @@ export async function executeShell(
           if (typeof (proc as unknown as { kill?: () => void }).kill === 'function') {
             (proc as unknown as { kill: () => void }).kill();
           }
-        } catch { }
+        } catch {}
       };
       if (abortSignal) {
         abortSignal.addEventListener('abort', abortHandler, { once: true });

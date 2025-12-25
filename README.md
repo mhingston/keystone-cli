@@ -163,6 +163,14 @@ mcp_servers:
     env:
       GITHUB_PERSONAL_ACCESS_TOKEN: "your-github-pat" # Or omit if GITHUB_TOKEN is in your .env
 
+engines:
+  allowlist:
+    codex:
+      command: codex
+      version: "1.2.3"
+      versionArgs: ["--version"]
+  denylist: ["bash", "sh"]
+
 storage:
   retention_days: 30
   redact_secrets_at_rest: true
@@ -322,6 +330,7 @@ Keystone supports several specialized step types:
   - `maxIterations`: Number (default `10`). Maximum number of tool-calling loops allowed for the agent.
   - `allowInsecure`: Boolean (default `false`). Set `true` to allow risky tool execution.
   - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow tools to access files outside of the current working directory.
+  - `handoff`: Optional engine tool definition that lets the LLM delegate work to an allowlisted external CLI with structured inputs.
 - `request`: Make HTTP requests (GET, POST, etc.).
   - `allowInsecure`: Boolean (default `false`). If `true`, skips SSRF protections and allows non-HTTPS/local URLs.
 - `file`: Read, write, or append to files.
@@ -335,6 +344,10 @@ Keystone supports several specialized step types:
 - `sleep`: Pause execution for a specified duration.
   - `durable`: Boolean (default `false`). If `true` and duration >= 60s, the wait is persisted and can resume after restarts.
 - `memory`: Store or retrieve information from the semantic memory vector database.
+- `engine`: Run an allowlisted external CLI and capture a structured summary.
+  - `env` and `cwd` are required and must be explicit.
+  - `input` is sent to stdin (objects/arrays are JSON-encoded).
+  - Summary is parsed from stdout or a file at `KEYSTONE_ENGINE_SUMMARY_PATH` and stored as an artifact.
 
 ### Human Steps in Non-Interactive Mode
 If stdin is not a TTY (CI, piped input), `human` steps suspend. Resume by providing an answer via inputs using the step id and `__answer`:
@@ -365,6 +378,67 @@ keystone scheduler --interval 30
 All steps support common features like `needs` (dependencies), `if` (conditionals), `retry`, `timeout`, `foreach` (parallel iteration), `concurrency` (max parallel items for foreach), `transform` (post-process output using expressions), `learn` (auto-index for few-shot), and `reflexion` (self-correction loop).
 
 Workflows also support a top-level `concurrency` field to limit how many steps can run in parallel across the entire workflow. This must be a positive integer.
+
+### Engine Steps
+Engine steps run allowlisted external CLIs and capture a structured summary for safe chaining.
+
+**Configuration (`.keystone/config.yaml`)**
+```yaml
+engines:
+  allowlist:
+    codex:
+      command: codex
+      version: "1.2.3"
+      versionArgs: ["--version"]
+```
+
+**Workflow example**
+```yaml
+- id: run_engine
+  type: engine
+  command: codex
+  args: ["run"]
+  cwd: .
+  env:
+    PATH: ${{ env.PATH }}
+  input:
+    task: "Summarize the repository"
+  outputSchema:
+    type: object
+    properties:
+      summary: { type: string }
+    required: [summary]
+```
+
+The engine can optionally write a summary file to `KEYSTONE_ENGINE_SUMMARY_PATH`. Otherwise, Keystone attempts to parse JSON/YAML from stdout and stores the summary as an artifact.
+
+### LLM Handoff to Engine
+Use `handoff` to expose an engine tool to the LLM with structured inputs:
+
+```yaml
+- id: delegate
+  type: llm
+  agent: planner
+  prompt: "Decide what to run and delegate to the engine."
+  handoff:
+    name: run_engine
+    inputSchema:
+      type: object
+      properties:
+        task: { type: string }
+      required: [task]
+    engine:
+      command: codex
+      args: ["run"]
+      cwd: .
+      env:
+        PATH: ${{ env.PATH }}
+      outputSchema:
+        type: object
+        properties:
+          summary: { type: string }
+        required: [summary]
+```
 
 ### Self-Healing Steps
 Steps can be configured to automatically recover from failures using an LLM agent.

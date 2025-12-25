@@ -81,7 +81,7 @@ export class WorkflowRegistry {
       if (existsSync(fullPath)) return fullPath;
     }
 
-    const searchPaths = this.getSearchPaths();
+    const searchPaths = WorkflowRegistry.getSearchPaths();
     if (baseDir) {
       searchPaths.unshift(baseDir);
       // Also check .keystone/workflows relative to baseDir if any

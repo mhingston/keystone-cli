@@ -18,6 +18,8 @@ describe('ConfigLoader', () => {
       model_mappings: {},
       storage: { retention_days: 30, redact_secrets_at_rest: true },
       mcp_servers: {},
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     };
 
     ConfigLoader.setConfig(mockConfig);
@@ -43,6 +45,8 @@ describe('ConfigLoader', () => {
       },
       storage: { retention_days: 30, redact_secrets_at_rest: true },
       mcp_servers: {},
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     };
     ConfigLoader.setConfig(mockConfig);
 

@@ -4,8 +4,8 @@ import { type ExpressionContext, ExpressionEvaluator } from '../expression/evalu
 import type { Step } from '../parser/schema.ts';
 import { StepStatus, WorkflowStatus } from '../types/status.ts';
 import type { Logger } from '../utils/logger.ts';
+import type { ResourcePoolManager } from './resource-pool.ts';
 import { WorkflowSuspendedError } from './step-executor.ts';
-import { ResourcePoolManager } from './resource-pool.ts';
 import type { ForeachStepContext, StepContext } from './workflow-runner.ts';
 
 export type ExecuteStepCallback = (
@@ -24,7 +24,7 @@ export class ForeachExecutor {
     private executeStepFn: ExecuteStepCallback,
     private abortSignal?: AbortSignal,
     private resourcePool?: ResourcePoolManager
-  ) { }
+  ) {}
 
   /**
    * Aggregate outputs from multiple iterations of a foreach step

@@ -178,14 +178,15 @@ Notes:
 1. Engines should be allowlisted and version-pinned; env and cwd must be explicit.
 2. Structured summaries should be schema-validated to enable safe chaining.
 3. Engine steps should respect idempotency, redaction, and timeouts.
+4. Example template lives at `src/templates/engine-example.yaml`.
 Tasks:
-1. Add `engine` step type and schema (command, args, input, env, timeout, cwd, outputSchema).
-2. Define an engine allowlist with pinned versions and enforce it at runtime.
-3. Implement an executor that spawns the external CLI, streams logs, and captures stdout/stderr and exit status.
-4. Parse a structured summary (JSON/YAML or file output), validate it, and store it as an artifact.
-5. Add optional `handoff` support so `llm` steps can delegate to an engine with structured inputs.
-6. Add safety controls (allowlists/denylists, idempotencyKey, redaction) with defaults.
-7. Provide examples and docs for engine handoffs and summaries.
+1. [x] Add `engine` step type and schema (command, args, input, env, timeout, cwd, outputSchema).
+2. [x] Define an engine allowlist with pinned versions and enforce it at runtime.
+3. [x] Implement an executor that spawns the external CLI, streams logs, and captures stdout/stderr and exit status.
+4. [x] Parse a structured summary (JSON/YAML or file output), validate it, and store it as an artifact.
+5. [x] Add optional `handoff` support so `llm` steps can delegate to an engine with structured inputs.
+6. [x] Add safety controls (allowlists/denylists, idempotencyKey, redaction) with defaults.
+7. [x] Provide examples and docs for engine handoffs and summaries.
 
 ### Blueprint -> Plan -> Engineer workflow specialization
 Goal: Produce a system blueprint artifact before planning and generation to ensure consistency across parallel work.

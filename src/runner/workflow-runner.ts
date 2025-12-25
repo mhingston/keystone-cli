@@ -6,11 +6,7 @@ import { MemoryDb } from '../db/memory-db.ts';
 import { type RunStatus, WorkflowDb } from '../db/workflow-db.ts';
 import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
-import {
-  type Step,
-  type Workflow,
-  type WorkflowStep,
-} from '../parser/schema.ts';
+import type { Step, Workflow, WorkflowStep } from '../parser/schema.ts';
 import { WorkflowParser } from '../parser/workflow-parser.ts';
 import { StepStatus, type StepStatusType, WorkflowStatus } from '../types/status.ts';
 import { ConfigLoader } from '../utils/config-loader.ts';
@@ -23,7 +19,12 @@ import { type LLMMessage, getAdapter } from './llm-adapter.ts';
 import { MCPManager } from './mcp-manager.ts';
 import { ResourcePoolManager } from './resource-pool.ts';
 import { withRetry } from './retry.ts';
-import { type StepResult, WorkflowSuspendedError, WorkflowWaitingError, executeStep } from './step-executor.ts';
+import {
+  type StepResult,
+  WorkflowSuspendedError,
+  WorkflowWaitingError,
+  executeStep,
+} from './step-executor.ts';
 import { withTimeout } from './timeout.ts';
 
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
@@ -35,7 +36,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) { }
+  ) {}
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -65,6 +66,12 @@ class StepExecutionError extends Error {
     super(result.error || 'Step failed');
     this.name = 'StepExecutionError';
   }
+}
+
+function getWakeAt(output: unknown): string | undefined {
+  if (!output || typeof output !== 'object') return undefined;
+  const wakeAt = (output as { wakeAt?: unknown }).wakeAt;
+  return typeof wakeAt === 'string' ? wakeAt : undefined;
 }
 
 export interface RunOptions {
@@ -427,9 +434,11 @@ export class WorkflowRunner {
           let effectiveStatus = exec.status as StepContext['status'];
           if (exec.status === StepStatus.WAITING) {
             const timer = await this.db.getTimerByStep(this.runId, stepId);
-            if (timer && timer.wake_at && new Date(timer.wake_at) <= new Date()) {
+            const timerId = timer?.id;
+            const wakeAt = timer?.wake_at;
+            if (timerId && wakeAt && new Date(wakeAt) <= new Date()) {
               // Timer elapsed!
-              await this.db.completeTimer(timer.id);
+              await this.db.completeTimer(timerId);
               await this.db.completeStep(exec.id, StepStatus.SUCCESS, output);
               effectiveStatus = StepStatus.SUCCESS;
             }
@@ -518,6 +527,8 @@ export class WorkflowRunner {
             memoryDb: this.memoryDb,
             workflowDir: this.options.workflowDir,
             dryRun: this.options.dryRun,
+            runId: this.runId,
+            redactForStorage: this.redactForStorage.bind(this),
           });
 
           if (result.status === 'success') {
@@ -525,7 +536,12 @@ export class WorkflowRunner {
             await this.db.updateCompensationStatus(compRecord.id, 'success', result.output);
           } else {
             this.logger.error(`  ✗ Compensation ${stepDef.id} failed: ${result.error}`);
-            await this.db.updateCompensationStatus(compRecord.id, 'failed', result.output, result.error);
+            await this.db.updateCompensationStatus(
+              compRecord.id,
+              'failed',
+              result.output,
+              result.error
+            );
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
@@ -536,9 +552,10 @@ export class WorkflowRunner {
         // 2. Recursive rollback for sub-workflows
         // Try to find if this step was a workflow step with a subRunId
         const stepExec = await this.db.getMainStep(this.runId, compRecord.step_id);
-        if (stepExec && stepExec.output) {
+        const stepOutput = stepExec?.output;
+        if (stepOutput) {
           try {
-            const output = JSON.parse(stepExec.output);
+            const output = JSON.parse(stepOutput);
             const subRunId = output?.__subRunId;
             if (subRunId) {
               await this.cascadeRollback(subRunId, errorReason);
@@ -551,7 +568,9 @@ export class WorkflowRunner {
 
       this.logger.log('  Rollback completed.\n');
     } catch (error) {
-      this.logger.error(`  ⚠️ Error during rollback processing: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `  ⚠️ Error during rollback processing: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
@@ -672,9 +691,7 @@ export class WorkflowRunner {
     try {
       const result = validateJsonSchema(schema, data);
       if (result.valid) return;
-      const details = result.errors
-        .map((line: string) => `  - ${line}`)
-        .join('\n');
+      const details = result.errors.map((line: string) => `  - ${line}`).join('\n');
       throw new Error(
         `${kind === 'input' ? 'Input' : 'Output'} schema validation failed for step "${stepId}":\n${details}`
       );
@@ -712,7 +729,10 @@ export class WorkflowRunner {
           }
         }
         return stripUndefined({
-          run: ExpressionEvaluator.evaluateString((step as import('../parser/schema.ts').ShellStep).run, context),
+          run: ExpressionEvaluator.evaluateString(
+            (step as import('../parser/schema.ts').ShellStep).run,
+            context
+          ),
           dir: step.dir ? ExpressionEvaluator.evaluateString(step.dir, context) : undefined,
           env,
           allowInsecure: step.allowInsecure,
@@ -720,10 +740,16 @@ export class WorkflowRunner {
       }
       case 'file':
         return stripUndefined({
-          path: ExpressionEvaluator.evaluateString((step as import('../parser/schema.ts').FileStep).path, context),
+          path: ExpressionEvaluator.evaluateString(
+            (step as import('../parser/schema.ts').FileStep).path,
+            context
+          ),
           content:
             (step as import('../parser/schema.ts').FileStep).content !== undefined
-              ? ExpressionEvaluator.evaluateString((step as import('../parser/schema.ts').FileStep).content as string, context)
+              ? ExpressionEvaluator.evaluateString(
+                  (step as import('../parser/schema.ts').FileStep).content as string,
+                  context
+                )
               : undefined,
           op: step.op,
           allowOutsideCwd: step.allowOutsideCwd,
@@ -737,7 +763,10 @@ export class WorkflowRunner {
           }
         }
         return stripUndefined({
-          url: ExpressionEvaluator.evaluateString((step as import('../parser/schema.ts').RequestStep).url, context),
+          url: ExpressionEvaluator.evaluateString(
+            (step as import('../parser/schema.ts').RequestStep).url,
+            context
+          ),
           method: step.method,
           headers,
           body: step.body ? ExpressionEvaluator.evaluateObject(step.body, context) : undefined,
@@ -746,7 +775,10 @@ export class WorkflowRunner {
       }
       case 'human':
         return stripUndefined({
-          message: ExpressionEvaluator.evaluateString((step as import('../parser/schema.ts').HumanStep).message, context),
+          message: ExpressionEvaluator.evaluateString(
+            (step as import('../parser/schema.ts').HumanStep).message,
+            context
+          ),
           inputType: step.inputType,
         });
       case 'sleep': {
@@ -780,6 +812,33 @@ export class WorkflowRunner {
           run: step.run,
           allowInsecure: step.allowInsecure,
         });
+      case 'engine': {
+        const env: Record<string, string> = {};
+        for (const [key, value] of Object.entries(step.env || {})) {
+          env[key] = ExpressionEvaluator.evaluateString(value as string, context);
+        }
+        return stripUndefined({
+          command: ExpressionEvaluator.evaluateString(
+            (step as import('../parser/schema.ts').EngineStep).command,
+            context
+          ),
+          args: (step as import('../parser/schema.ts').EngineStep).args?.map((arg) =>
+            ExpressionEvaluator.evaluateString(arg, context)
+          ),
+          input:
+            (step as import('../parser/schema.ts').EngineStep).input !== undefined
+              ? ExpressionEvaluator.evaluateObject(
+                  (step as import('../parser/schema.ts').EngineStep).input,
+                  context
+                )
+              : undefined,
+          env,
+          cwd: ExpressionEvaluator.evaluateString(
+            (step as import('../parser/schema.ts').EngineStep).cwd,
+            context
+          ),
+        });
+      }
       case 'memory':
         return stripUndefined({
           op: step.op,
@@ -847,11 +906,15 @@ export class WorkflowRunner {
       }
 
       if (config.values) {
-        if (!['string', 'number', 'boolean'].includes(type)) {
+        if (type !== 'string' && type !== 'number' && type !== 'boolean') {
           throw new Error(`Input "${key}" cannot use enum values with type "${type}"`);
         }
         for (const allowed of config.values) {
-          if (typeof allowed !== type) {
+          const matchesType =
+            (type === 'string' && typeof allowed === 'string') ||
+            (type === 'number' && typeof allowed === 'number') ||
+            (type === 'boolean' && typeof allowed === 'boolean');
+          if (!matchesType) {
             throw new Error(
               `Input "${key}" enum value ${JSON.stringify(allowed)} must be a ${type}`
             );
@@ -1182,11 +1245,11 @@ export class WorkflowRunner {
     const idempotencyContextForRetry =
       idempotencyClaimed && scopedIdempotencyKey
         ? {
-          rawKey: idempotencyKey || scopedIdempotencyKey,
-          scopedKey: scopedIdempotencyKey,
-          ttlSeconds: idempotencyTtlSeconds,
-          claimed: true,
-        }
+            rawKey: idempotencyKey || scopedIdempotencyKey,
+            scopedKey: scopedIdempotencyKey,
+            ttlSeconds: idempotencyTtlSeconds,
+            claimed: true,
+          }
         : undefined;
 
     let stepToExecute = step;
@@ -1220,16 +1283,26 @@ export class WorkflowRunner {
         workflowDir: this.options.workflowDir,
         dryRun: this.options.dryRun,
         abortSignal: this.abortSignal,
+        runId: this.runId,
+        stepExecutionId: stepExecId,
+        redactForStorage: this.redactForStorage.bind(this),
       });
       if (result.status === 'failed') {
         throw new StepExecutionError(result);
       }
       if (result.status === 'success' && stepToExecute.outputSchema) {
         try {
+          const outputForValidation =
+            stepToExecute.type === 'engine' &&
+            result.output &&
+            typeof result.output === 'object' &&
+            'summary' in result.output
+              ? (result.output as { summary?: unknown }).summary
+              : result.output;
           this.validateSchema(
             'output',
             stepToExecute.outputSchema,
-            result.output,
+            outputForValidation,
             stepToExecute.id
           );
         } catch (error) {
@@ -1272,6 +1345,9 @@ export class WorkflowRunner {
               workflowDir: this.options.workflowDir,
               dryRun: this.options.dryRun,
               abortSignal: this.abortSignal,
+              runId: this.runId,
+              stepExecutionId: stepExecId,
+              redactForStorage: this.redactForStorage.bind(this),
             });
 
             if (repairResult.status === 'failed') {
@@ -1380,19 +1456,13 @@ export class WorkflowRunner {
       }
 
       if (result.status === StepStatus.WAITING) {
-        const wakeAt = (result.output as any)?.wakeAt;
+        const wakeAt = getWakeAt(result.output);
         const waitError = `Waiting until ${wakeAt}`;
         // Avoid creating duplicate timers for the same step execution
         const existingTimer = await this.db.getTimerByStep(this.runId, step.id);
         if (!existingTimer) {
           const timerId = randomUUID();
-          await this.db.createTimer(
-            timerId,
-            this.runId,
-            step.id,
-            'sleep',
-            wakeAt
-          );
+          await this.db.createTimer(timerId, this.runId, step.id, 'sleep', wakeAt);
         }
         if (dedupEnabled && idempotencyClaimed) {
           await this.recordIdempotencyResult(
@@ -1408,9 +1478,7 @@ export class WorkflowRunner {
           stepExecId,
           StepStatus.WAITING,
           persistedOutput,
-          this.redactAtRest
-            ? this.redactor.redact(waitError)
-            : waitError,
+          this.redactAtRest ? this.redactor.redact(waitError) : waitError,
           result.usage
         );
         result.error = waitError;
@@ -1525,7 +1593,12 @@ export class WorkflowRunner {
               reflexionAttempts: currentAttempt + 1,
             };
 
-            return this.executeStepInternal(newStep, nextContext, stepExecId, idempotencyContextForRetry);
+            return this.executeStepInternal(
+              newStep,
+              nextContext,
+              stepExecId,
+              idempotencyContextForRetry
+            );
           } catch (healError) {
             this.logger.error(
               `  ✗ Reflexion failed: ${healError instanceof Error ? healError.message : String(healError)}`
@@ -1561,7 +1634,12 @@ export class WorkflowRunner {
               autoHealAttempts: currentAttempt + 1,
             };
 
-            return this.executeStepInternal(newStep, nextContext, stepExecId, idempotencyContextForRetry);
+            return this.executeStepInternal(
+              newStep,
+              nextContext,
+              stepExecId,
+              idempotencyContextForRetry
+            );
           } catch (healError) {
             this.logger.error(
               `  ✗ Auto-heal failed: ${healError instanceof Error ? healError.message : String(healError)}`
@@ -1582,7 +1660,12 @@ export class WorkflowRunner {
             this.logger.log(`  ↻ Retrying step ${step.id} after manual intervention`);
             // We use the modified step if provided, else original
             const stepToRun = action.modifiedStep || step;
-            return this.executeStepInternal(stepToRun, context, stepExecId, idempotencyContextForRetry);
+            return this.executeStepInternal(
+              stepToRun,
+              context,
+              stepExecId,
+              idempotencyContextForRetry
+            );
           }
           if (action.type === 'skip') {
             this.logger.log(`  ⏭️ Skipping step ${step.id} manually`);
@@ -1717,6 +1800,8 @@ Do not change the 'id' or 'type' or 'auto_heal' fields.
       memoryDb: this.memoryDb,
       workflowDir: this.options.workflowDir,
       dryRun: this.options.dryRun,
+      runId: this.runId,
+      redactForStorage: this.redactForStorage.bind(this),
     });
 
     if (result.status !== 'success' || !result.output) {
@@ -1933,7 +2018,7 @@ Please provide a corrected response that exactly matches the required schema.`;
       }
 
       if (result.status === 'waiting') {
-        const wakeAt = (result.output as any)?.wakeAt;
+        const wakeAt = getWakeAt(result.output);
         throw new WorkflowWaitingError(result.error || `Waiting until ${wakeAt}`, step.id, wakeAt);
       }
 
@@ -1978,7 +2063,8 @@ Please provide a corrected response that exactly matches the required schema.`;
     try {
       const output = await subRunner.run();
 
-      const rawOutputs = (typeof output === 'object' && output !== null && !Array.isArray(output)) ? output : {};
+      const rawOutputs =
+        typeof output === 'object' && output !== null && !Array.isArray(output) ? output : {};
       const mappedOutputs: Record<string, unknown> = {};
 
       // Handle explicit output mapping
@@ -2045,7 +2131,7 @@ Please provide a corrected response that exactly matches the required schema.`;
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-      '   Workflows can execute arbitrary shell commands and access your environment.\n'
+        '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     this.redactAtRest = ConfigLoader.load().storage?.redact_secrets_at_rest ?? true;
@@ -2146,7 +2232,10 @@ Please provide a corrected response that exactly matches the required schema.`;
 
             let dependenciesMet = false;
             if (step.type === 'join') {
-              dependenciesMet = this.isJoinConditionMet(step as import('../parser/schema.ts').JoinStep, completedSteps);
+              dependenciesMet = this.isJoinConditionMet(
+                step as import('../parser/schema.ts').JoinStep,
+                completedSteps
+              );
             } else {
               dependenciesMet = step.needs.every((dep: string) => completedSteps.has(dep));
             }
@@ -2163,7 +2252,9 @@ Please provide a corrected response that exactly matches the required schema.`;
               const promise = (async () => {
                 let release: (() => void) | undefined;
                 try {
-                  this.logger.debug(`[${stepIndex}/${totalSteps}] ⏳ Waiting for pool: ${poolName}`);
+                  this.logger.debug(
+                    `[${stepIndex}/${totalSteps}] ⏳ Waiting for pool: ${poolName}`
+                  );
                   release = await this.resourcePool.acquire(poolName, { signal: this.abortSignal });
 
                   this.logger.log(
@@ -2210,7 +2301,7 @@ Please provide a corrected response that exactly matches the required schema.`;
         await this.processCompensations(msg);
 
         // Re-throw to be caught by the outer block (which calls stop)
-        // Actually, the outer caller usually handles this. 
+        // Actually, the outer caller usually handles this.
         // But we want to ensure rollback happens BEFORE final status update if possible.
         throw error;
       }
@@ -2219,7 +2310,6 @@ Please provide a corrected response that exactly matches the required schema.`;
       const failedSteps = remainingSteps.filter(
         (id) => this.stepContexts.get(id)?.status === StepStatus.FAILED
       );
-
 
       // Evaluate outputs
       const outputs = this.evaluateOutputs();
@@ -2537,7 +2627,10 @@ Please provide a corrected response that exactly matches the required schema.`;
         return;
       }
 
-      const workflowPath = WorkflowRegistry.resolvePath(runRecord.workflow_name, this.options.workflowDir);
+      const workflowPath = WorkflowRegistry.resolvePath(
+        runRecord.workflow_name,
+        this.options.workflowDir
+      );
       const workflow = WorkflowParser.loadWorkflow(workflowPath);
 
       const subRunner = new WorkflowRunner(workflow, {
@@ -2556,10 +2649,9 @@ Please provide a corrected response that exactly matches the required schema.`;
 
       // Trigger its compensations
       // We call the private method directly since we're in the same class (different instance)
-      // but TypeScript might complain if it's strictly private. 
+      // but TypeScript might complain if it's strictly private.
       // Actually, in TS, private is accessible by other instances of the same class.
       await subRunner.processCompensations(errorReason);
-
     } catch (error) {
       this.logger.error(
         `  ⚠️ Failed to cascade rollback to ${subRunId}: ${error instanceof Error ? error.message : String(error)}`

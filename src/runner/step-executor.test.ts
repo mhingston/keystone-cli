@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import type { MemoryDb } from '../db/memory-db';
 import type { ExpressionContext } from '../expression/evaluator';
 import type {
+  EngineStep,
   FileStep,
   HumanStep,
   RequestStep,
@@ -23,6 +24,7 @@ import type {
   SleepStep,
   WorkflowStep,
 } from '../parser/schema';
+import { ConfigLoader } from '../utils/config-loader';
 import type { SafeSandbox } from '../utils/sandbox';
 import type { getAdapter } from './llm-adapter';
 import { executeStep } from './step-executor';
@@ -82,6 +84,10 @@ describe('step-executor', () => {
       inputs: {},
       steps: {},
     };
+  });
+
+  afterEach(() => {
+    ConfigLoader.clear();
   });
 
   describe('shell', () => {
@@ -312,6 +318,64 @@ describe('step-executor', () => {
       });
       expect(result.status).toBe('failed');
       expect(result.error).toBe('Script failed');
+    });
+  });
+
+  describe('engine', () => {
+    const artifactRoot = join(tempDir, 'engine-artifacts');
+
+    const setEngineConfig = (
+      allowlist: Record<string, { command: string; version: string; versionArgs?: string[] }>
+    ) => {
+      ConfigLoader.setConfig({
+        default_provider: 'openai',
+        providers: {},
+        model_mappings: {},
+        storage: { retention_days: 30, redact_secrets_at_rest: true },
+        mcp_servers: {},
+        engines: { allowlist, denylist: [] },
+        concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
+      });
+    };
+
+    it('should execute engine command and parse summary', async () => {
+      const version = (Bun.version || process.versions?.bun || '') as string;
+      setEngineConfig({ bun: { command: 'bun', version } });
+
+      const step: EngineStep = {
+        id: 'e1',
+        type: 'engine',
+        command: 'bun',
+        args: ['-e', 'console.log(JSON.stringify({ ok: true }))'],
+        env: { PATH: process.env.PATH || '' },
+        cwd: process.cwd(),
+      };
+
+      const result = await executeStep(step, context, undefined, { artifactRoot });
+      expect(result.status).toBe('success');
+      const output = result.output as { summary: { ok: boolean }; artifactPath?: string };
+      expect(output.summary).toEqual({ ok: true });
+      expect(output.artifactPath).toBeTruthy();
+
+      const artifactText = await Bun.file(output.artifactPath as string).text();
+      expect(artifactText).toContain('"ok": true');
+    });
+
+    it('should fail when engine command is not allowlisted', async () => {
+      setEngineConfig({});
+
+      const step: EngineStep = {
+        id: 'e1',
+        type: 'engine',
+        command: 'bun',
+        args: ['-e', 'console.log(JSON.stringify({ ok: true }))'],
+        env: { PATH: process.env.PATH || '' },
+        cwd: process.cwd(),
+      };
+
+      const result = await executeStep(step, context, undefined, { artifactRoot });
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('allowlist');
     });
   });
 

@@ -47,6 +47,8 @@ describe('MCPManager', () => {
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30, redact_secrets_at_rest: true },
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     } as unknown as Config);
 
     const manager = new MCPManager();
@@ -68,6 +70,8 @@ describe('MCPManager', () => {
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30, redact_secrets_at_rest: true },
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     } as unknown as Config);
 
     const initSpy = spyOn(MCPClient.prototype, 'initialize').mockResolvedValue({
@@ -133,6 +137,8 @@ describe('MCPManager', () => {
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30, redact_secrets_at_rest: true },
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     } as unknown as Config);
 
     // Mock initialize to take some time
@@ -176,6 +182,8 @@ describe('MCPManager', () => {
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30, redact_secrets_at_rest: true },
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     } as unknown as Config);
 
     const createLocalSpy = spyOn(MCPClient, 'createLocal').mockImplementation(

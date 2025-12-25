@@ -334,6 +334,8 @@ describe('getAdapter', () => {
       },
       storage: { retention_days: 30, redact_secrets_at_rest: true },
       mcp_servers: {},
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     });
   });
 
@@ -378,6 +380,8 @@ describe('getAdapter', () => {
       model_mappings: {},
       storage: { retention_days: 30, redact_secrets_at_rest: true },
       mcp_servers: {},
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     });
 
     expect(() => getAdapter('unknown-model')).toThrow();

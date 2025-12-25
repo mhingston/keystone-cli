@@ -19,11 +19,11 @@ import scaffoldPlanWorkflow from './templates/scaffold-plan.yaml' with { type: '
 
 import { WorkflowDb, type WorkflowRun } from './db/workflow-db.ts';
 import { WorkflowParser } from './parser/workflow-parser.ts';
+import { WorkflowSuspendedError, WorkflowWaitingError } from './runner/step-executor.ts';
 import { ConfigLoader } from './utils/config-loader.ts';
 import { ConsoleLogger } from './utils/logger.ts';
 import { generateMermaidGraph, renderWorkflowAsAscii } from './utils/mermaid.ts';
 import { WorkflowRegistry } from './utils/workflow-registry.ts';
-import { WorkflowSuspendedError, WorkflowWaitingError } from './runner/step-executor.ts';
 
 import pkg from '../package.json' with { type: 'json' };
 
@@ -104,6 +104,13 @@ model_mappings:
 #   filesystem:
 #     command: npx
 #     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+# engines:
+#   allowlist:
+#     codex:
+#       command: codex
+#       version: "1.2.3"
+#       versionArgs: ["--version"]
 
 storage:
   retention_days: 30
@@ -889,7 +896,9 @@ timersCmd
         const id = timer.id.slice(0, 8);
         const run = timer.run_id.slice(0, 8);
         const wakeAt = timer.wake_at ? new Date(timer.wake_at).toLocaleString() : 'N/A';
-        const statusStr = timer.completed_at ? ` (DONE at ${new Date(timer.completed_at).toLocaleTimeString()})` : '';
+        const statusStr = timer.completed_at
+          ? ` (DONE at ${new Date(timer.completed_at).toLocaleTimeString()})`
+          : '';
 
         console.log(
           `${id.padEnd(10)} ${run.padEnd(15)} ${timer.step_id.padEnd(20)} ${timer.timer_type.padEnd(

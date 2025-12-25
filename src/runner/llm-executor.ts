@@ -16,7 +16,7 @@ interface ToolDefinition {
   name: string;
   description?: string;
   parameters: unknown;
-  source: 'agent' | 'step' | 'mcp' | 'standard';
+  source: 'agent' | 'step' | 'mcp' | 'standard' | 'handoff';
   execution?: Step;
   mcpClient?: MCPClient;
 }
@@ -83,6 +83,14 @@ export async function executeLlmStep(
 
   const localMcpClients: MCPClient[] = [];
   const allTools: ToolDefinition[] = [];
+  const ensureUniqueToolName = (name: string): string => {
+    if (!allTools.some((tool) => tool.name === name)) return name;
+    let suffix = 1;
+    while (allTools.some((tool) => tool.name === `${name}-${suffix}`)) {
+      suffix++;
+    }
+    return `${name}-${suffix}`;
+  };
 
   try {
     // 1. Add agent tools
@@ -134,7 +142,39 @@ export async function executeLlmStep(
       }
     }
 
-    // 4. Add MCP tools
+    // 4. Add Engine handoff tool
+    if (step.handoff) {
+      const toolName = ensureUniqueToolName(step.handoff.name || 'handoff');
+      const description =
+        step.handoff.description || `Delegate to engine ${step.handoff.engine.command}`;
+      const parameters = step.handoff.inputSchema || {
+        type: 'object',
+        properties: {},
+        additionalProperties: true,
+      };
+
+      const handoffStep: Step = {
+        id: `${step.id}-handoff`,
+        type: 'engine',
+        command: step.handoff.engine.command,
+        args: step.handoff.engine.args,
+        env: step.handoff.engine.env,
+        cwd: step.handoff.engine.cwd,
+        timeout: step.handoff.engine.timeout,
+        outputSchema: step.handoff.engine.outputSchema,
+        input: step.handoff.engine.input ?? '${{ args }}',
+      };
+
+      allTools.push({
+        name: toolName,
+        description,
+        parameters,
+        source: 'handoff',
+        execution: handoffStep,
+      });
+    }
+
+    // 5. Add MCP tools
     const mcpServersToConnect: (string | MCPServerConfig)[] = [...(step.mcpServers || [])];
     if (step.useGlobalMcp && mcpManager) {
       const globalServers = mcpManager.getGlobalServers();

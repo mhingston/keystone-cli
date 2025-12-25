@@ -19,13 +19,14 @@ You are the Keystone Architect. Your goal is to design and generate high-quality
 - **eval**: (Optional) Configuration for prompt optimization `{ scorer: 'llm'|'script', agent, prompt, run }`.
 - **steps**: Array of step objects. Each step MUST have an `id` and a `type`:
   - **shell**: `{ id, type: 'shell', run, dir, env, allowInsecure, transform }` (Set `allowInsecure: true` to bypass risky command checks)
-  - **llm**: `{ id, type: 'llm', agent, prompt, outputSchema, provider, model, tools, maxIterations, useGlobalMcp, allowClarification, useStandardTools, allowOutsideCwd, allowInsecure, mcpServers }`
+  - **llm**: `{ id, type: 'llm', agent, prompt, outputSchema, provider, model, tools, maxIterations, useGlobalMcp, allowClarification, useStandardTools, allowOutsideCwd, allowInsecure, mcpServers, handoff }`
   - **workflow**: `{ id, type: 'workflow', path, inputs }`
   - **file**: `{ id, type: 'file', path, op: 'read'|'write'|'append', content, allowOutsideCwd }`
   - **request**: `{ id, type: 'request', url, method, body, headers }`
   - **human**: `{ id, type: 'human', message, inputType: 'confirm'|'text' }` (Note: 'confirm' returns boolean but automatically fallbacks to text if input is not yes/no)
   - **sleep**: `{ id, type: 'sleep', duration }` (duration can be a number or expression string)
   - **script**: `{ id, type: 'script', run, allowInsecure }` (Executes JS in a secure sandbox; set allowInsecure to true to allow fallback to insecure VM)
+  - **engine**: `{ id, type: 'engine', command, args, input, env, cwd, outputSchema }` (Requires allowlisted engine + explicit env/cwd)
   - **memory**: `{ id, type: 'memory', op: 'search'|'store', query, text, model, metadata, limit }`
 - **Common Step Fields**: `needs` (array of IDs), `if` (expression), `timeout` (ms), `retry` (`{ count, backoff: 'linear'|'exponential', baseDelay }`), `auto_heal` (`{ agent, maxAttempts, model }`), `reflexion` (`{ limit, hint }`), `learn` (boolean, auto-index for few-shot), `foreach`, `concurrency` (positive integer), `transform`.
 - **finally**: Optional array of steps to run at the end of the workflow, regardless of success or failure.

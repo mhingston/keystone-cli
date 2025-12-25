@@ -548,6 +548,8 @@ You are a test agent.`;
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30, redact_secrets_at_rest: true },
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     });
 
     const manager = new MCPManager();
@@ -637,6 +639,75 @@ You are a test agent.`;
     expect(toolExecuted).toBe(true);
   });
 
+  it('should expose handoff tool and execute engine step', async () => {
+    let chatCount = 0;
+    const handoffChat = mock(async () => {
+      chatCount++;
+      if (chatCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-handoff',
+                type: 'function',
+                function: { name: 'handoff', arguments: '{"task":"do it"}' },
+              },
+            ],
+          },
+        };
+      }
+      return {
+        message: { role: 'assistant', content: 'done' },
+      };
+    }) as unknown as typeof originalOpenAIChat;
+
+    const originalChat = OpenAIAdapter.prototype.chat;
+    OpenAIAdapter.prototype.chat = handoffChat;
+
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'trigger handoff',
+      needs: [],
+      maxIterations: 5,
+      handoff: {
+        name: 'handoff',
+        inputSchema: {
+          type: 'object',
+          properties: { task: { type: 'string' } },
+          required: ['task'],
+        },
+        engine: {
+          command: 'bun',
+          args: ['-e', 'console.log("ok")'],
+          env: { PATH: '${{ env.PATH }}' },
+          cwd: '.',
+          outputSchema: { type: 'object' },
+        },
+      },
+    };
+    const context: ExpressionContext = { inputs: {}, steps: {} };
+    let capturedStep: Step | undefined;
+    const executeStepFn = mock(async (s: Step) => {
+      capturedStep = s;
+      return { status: 'success' as const, output: { summary: { ok: true } } };
+    });
+
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>
+    );
+
+    expect(capturedStep?.type).toBe('engine');
+    expect(chatCount).toBe(2);
+
+    OpenAIAdapter.prototype.chat = originalChat;
+  });
+
   it('should handle global MCP server name without manager', async () => {
     const step: LlmStep = {
       id: 'l1',
@@ -675,6 +746,8 @@ You are a test agent.`;
       model_mappings: {},
       default_provider: 'openai',
       storage: { retention_days: 30, redact_secrets_at_rest: true },
+      engines: { allowlist: {}, denylist: [] },
+      concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
     });
 
     const manager = new MCPManager();

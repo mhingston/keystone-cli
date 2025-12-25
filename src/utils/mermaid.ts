@@ -38,6 +38,9 @@ export function generateMermaidGraph(workflow: Workflow): string {
       case 'workflow':
         style = ':::workflow';
         break;
+      case 'engine':
+        style = ':::engine';
+        break;
       default:
         style = ':::default';
     }
@@ -66,6 +69,7 @@ export function generateMermaidGraph(workflow: Workflow): string {
   lines.push('  classDef file fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px;');
   lines.push('  classDef request fill:#fffde7,stroke:#fbc02d,stroke-width:1px;');
   lines.push('  classDef workflow fill:#fce4ec,stroke:#c2185b,stroke-width:2px;');
+  lines.push('  classDef engine fill:#e0f7fa,stroke:#006064,stroke-width:2px;');
   lines.push('  classDef default fill:#fff,stroke:#333,stroke-width:1px;');
 
   return lines.join('\n');
