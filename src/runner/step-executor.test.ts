@@ -44,7 +44,7 @@ interface RequestOutput {
 
 const mockRl = {
   question: mock(() => Promise.resolve('')),
-  close: mock(() => {}),
+  close: mock(() => { }),
 };
 
 describe('step-executor', () => {
@@ -307,6 +307,36 @@ describe('step-executor', () => {
       });
       expect(result.status).toBe('failed');
       expect(result.error).toBe('Script failed');
+    });
+
+    it('should inject console that redirects to logger', async () => {
+      const logger = { log: mock(() => { }) };
+      // @ts-ignore
+      const step = {
+        id: 's1',
+        type: 'script',
+        run: 'console.log("hello from script")',
+        allowInsecure: true,
+      };
+
+      // Use a real sandbox or a very thin mock that actually executes the code
+      // SafeSandbox.execute uses ProcessSandbox by default which won't easily let us mock console
+      // but we can pass a mock sandbox that we control.
+      const mockSandbox = {
+        execute: async (code: string, context: any) => {
+          if (context.console && typeof context.console.log === 'function') {
+            context.console.log('hello from script');
+          }
+          return 'ok';
+        },
+      };
+
+      const result = await executeStep(step, context, logger as any, {
+        sandbox: mockSandbox as any,
+      });
+
+      expect(result.status).toBe('success');
+      expect(logger.log).toHaveBeenCalledWith('hello from script');
     });
   });
 
@@ -713,7 +743,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('success');
       expect(result.output).toBe(true);
       expect(mockRl.question).toHaveBeenCalled();
@@ -731,7 +761,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('success');
       expect(result.output).toBe('user response');
     });
@@ -748,19 +778,19 @@ describe('step-executor', () => {
       // Test 'yes'
       mockRl.question.mockResolvedValue('yes');
       // @ts-ignore
-      let result = await executeStep(step, context, { log: () => {} });
+      let result = await executeStep(step, context, { log: () => { } });
       expect(result.output).toBe(true);
 
       // Test 'no'
       mockRl.question.mockResolvedValue('no');
       // @ts-ignore
-      result = await executeStep(step, context, { log: () => {} });
+      result = await executeStep(step, context, { log: () => { } });
       expect(result.output).toBe(false);
 
       // Test empty string (default to true)
       mockRl.question.mockResolvedValue('');
       // @ts-ignore
-      result = await executeStep(step, context, { log: () => {} });
+      result = await executeStep(step, context, { log: () => { } });
       expect(result.output).toBe(true);
     });
 
@@ -776,7 +806,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('success');
       expect(result.output).toBe('some custom response');
     });
@@ -793,7 +823,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('suspended');
       expect(result.error).toBe('Proceed?');
     });
