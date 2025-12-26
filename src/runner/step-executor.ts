@@ -532,7 +532,7 @@ async function executeFileStep(
     }
 
     case 'write': {
-      if (!step.content) {
+      if (step.content === undefined) {
         throw new Error('Content is required for write operation');
       }
       const content = ExpressionEvaluator.evaluateString(step.content, context);
@@ -551,7 +551,7 @@ async function executeFileStep(
     }
 
     case 'append': {
-      if (!step.content) {
+      if (step.content === undefined) {
         throw new Error('Content is required for append operation');
       }
       const content = ExpressionEvaluator.evaluateString(step.content, context);
@@ -654,7 +654,7 @@ async function executeRequestStep(
 
     // Evaluate body
     let body: string | undefined;
-    if (step.body) {
+  if (step.body !== undefined) {
       const evaluatedBody = ExpressionEvaluator.evaluateObject(step.body, context);
 
       const contentType = Object.entries(headers).find(
@@ -688,10 +688,18 @@ async function executeRequestStep(
     let currentMethod = step.method;
     let currentBody = body;
     const currentHeaders: Record<string, string> = { ...headers };
+    const safeCrossOriginHeaders = new Set(['accept', 'accept-language', 'user-agent']);
     const removeHeader = (name: string) => {
       const target = name.toLowerCase();
       for (const key of Object.keys(currentHeaders)) {
         if (key.toLowerCase() === target) {
+          delete currentHeaders[key];
+        }
+      }
+    };
+    const stripCrossOriginHeaders = () => {
+      for (const key of Object.keys(currentHeaders)) {
+        if (!safeCrossOriginHeaders.has(key.toLowerCase())) {
           delete currentHeaders[key];
         }
       }
@@ -718,25 +726,37 @@ async function executeRequestStep(
         const nextUrl = new URL(location, currentUrl).href;
         await validateRemoteUrl(nextUrl, { allowInsecure: step.allowInsecure });
 
-        const fromOrigin = new URL(currentUrl).origin;
-        const toOrigin = new URL(nextUrl).origin;
-        if (fromOrigin !== toOrigin) {
-          removeHeader('authorization');
-          removeHeader('proxy-authorization');
-          removeHeader('cookie');
-        }
-
+        let nextMethod = currentMethod;
+        let nextBody = currentBody;
         if (
           response.status === 303 ||
           ((response.status === 301 || response.status === 302) &&
             currentMethod !== 'GET' &&
             currentMethod !== 'HEAD')
         ) {
-          currentMethod = 'GET';
-          currentBody = undefined;
+          nextMethod = 'GET';
+          nextBody = undefined;
           removeHeader('content-type');
         }
 
+        const fromOrigin = new URL(currentUrl).origin;
+        const toOrigin = new URL(nextUrl).origin;
+        if (fromOrigin !== toOrigin) {
+          removeHeader('authorization');
+          removeHeader('proxy-authorization');
+          removeHeader('cookie');
+          if (!step.allowInsecure) {
+            if (nextMethod !== 'GET' && nextMethod !== 'HEAD') {
+              throw new Error(
+                `Cross-origin redirect blocked for ${nextMethod} request. Set allowInsecure to true to override.`
+              );
+            }
+            stripCrossOriginHeaders();
+          }
+        }
+
+        currentMethod = nextMethod;
+        currentBody = nextBody;
         currentUrl = nextUrl;
         continue;
       }

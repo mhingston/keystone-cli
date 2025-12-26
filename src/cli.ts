@@ -50,7 +50,8 @@ program
  * @returns Record of parsed inputs
  */
 const parseInputs = (pairs?: string[]): Record<string, unknown> => {
-  const inputs: Record<string, unknown> = {};
+  const inputs: Record<string, unknown> = Object.create(null);
+  const blockedKeys = new Set(['__proto__', 'prototype', 'constructor']);
   if (!pairs) return inputs;
   for (const pair of pairs) {
     const index = pair.indexOf('=');
@@ -64,6 +65,10 @@ const parseInputs = (pairs?: string[]): Record<string, unknown> => {
     // Validate key format (no special characters that could cause issues)
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
       console.warn(`⚠️  Invalid input key: "${key}" (use alphanumeric and underscores only)`);
+      continue;
+    }
+    if (blockedKeys.has(key)) {
+      console.warn(`⚠️  Invalid input key: "${key}" (reserved keyword)`);
       continue;
     }
 

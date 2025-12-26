@@ -56,7 +56,9 @@ export class WorkflowRegistry {
               inputs: workflow.inputs,
             });
           } catch (e) {
-            // Skip invalid workflows during listing
+            WorkflowRegistry.logger.warn(
+              `Skipping invalid workflow ${fullPath}: ${e instanceof Error ? e.message : String(e)}`
+            );
           }
         }
       } catch (e) {

@@ -1,11 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { type Agent, AgentSchema } from './schema';
+import { ResourceLoader } from '../utils/resource-loader';
 
 export function parseAgent(filePath: string): Agent {
-  const content = readFileSync(filePath, 'utf8');
+  const content = ResourceLoader.readFile(filePath);
+  if (content === null) {
+    throw new Error(`Agent file not found at ${filePath}`);
+  }
   // Flexible regex to handle both standard and single-line frontmatter
   const match = content.match(/^---[\r\n]*([\s\S]*?)[\r\n]*---(?:\r?\n?([\s\S]*))?$/);
 
@@ -58,7 +61,7 @@ export function resolveAgentPath(agentName: string, baseDir?: string): string {
   );
 
   for (const path of possiblePaths) {
-    if (existsSync(path)) {
+    if (ResourceLoader.exists(path)) {
       return path;
     }
   }

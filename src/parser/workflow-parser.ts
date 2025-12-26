@@ -18,6 +18,7 @@ export class WorkflowParser {
         throw new Error(`Workflow file not found at ${path}`);
       }
       const raw = yaml.load(content);
+      WorkflowParser.normalizeAliases(raw);
       const workflow = WorkflowSchema.parse(raw);
       const workflowDir = dirname(path);
 
@@ -48,6 +49,31 @@ export class WorkflowParser {
         throw new Error(`Failed to parse workflow at ${path}: ${error.message}`);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Normalize legacy or alias field names before schema validation.
+   */
+  private static normalizeAliases(value: unknown): void {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        WorkflowParser.normalizeAliases(item);
+      }
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    if ('autoHeal' in record && !('auto_heal' in record)) {
+      record.auto_heal = record.autoHeal;
+    }
+    if ('autoHeal' in record) {
+      delete record.autoHeal;
+    }
+
+    for (const child of Object.values(record)) {
+      WorkflowParser.normalizeAliases(child);
     }
   }
 
@@ -251,9 +277,10 @@ export class WorkflowParser {
       }
     }
 
-    while (queue.length > 0) {
-      const stepId = queue.shift();
-      if (!stepId) continue;
+    let queueIndex = 0;
+    while (queueIndex < queue.length) {
+      const stepId = queue[queueIndex];
+      queueIndex += 1;
       result.push(stepId);
 
       // Find all steps that depend on this step (O(1) lookup)

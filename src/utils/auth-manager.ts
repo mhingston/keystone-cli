@@ -522,6 +522,7 @@ export class AuthManager {
   static async loginOpenAIChatGPT(): Promise<void> {
     const verifier = AuthManager.generateCodeVerifier();
     const challenge = AuthManager.createCodeChallenge(verifier);
+    const state = randomBytes(16).toString('hex');
 
     return new Promise((resolve, reject) => {
       const serverRef: { current?: ReturnType<typeof Bun.serve> } = {};
@@ -542,6 +543,13 @@ export class AuthManager {
           const url = new URL(req.url);
           if (url.pathname === '/callback') {
             const code = url.searchParams.get('code');
+            const returnedState = url.searchParams.get('state');
+            if (!returnedState || returnedState !== state) {
+              clearTimeout(timeout);
+              setTimeout(stopServer, 100);
+              reject(new Error('Invalid OAuth state'));
+              return new Response('Invalid state parameter', { status: 400 });
+            }
             if (code) {
               try {
                 const response = await fetch('https://chatgpt.com/oauth/token', {
@@ -605,6 +613,7 @@ export class AuthManager {
         redirect_uri: OPENAI_CHATGPT_REDIRECT_URI,
         response_type: 'code',
         scope: 'openid profile email offline_access',
+        state,
       }).toString()}`;
 
       AuthManager.logger.log('\nTo login with OpenAI ChatGPT:');

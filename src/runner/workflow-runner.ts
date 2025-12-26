@@ -783,7 +783,10 @@ export class WorkflowRunner {
           ),
           method: step.method,
           headers,
-          body: step.body ? ExpressionEvaluator.evaluateObject(step.body, context) : undefined,
+          body:
+            step.body !== undefined
+              ? ExpressionEvaluator.evaluateObject(step.body, context)
+              : undefined,
           allowInsecure: step.allowInsecure,
         });
       }

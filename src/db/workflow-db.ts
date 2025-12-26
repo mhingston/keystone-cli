@@ -130,6 +130,16 @@ export class WorkflowDb {
     throw lastError || new Error('SQLite operation failed after retries');
   }
 
+  private formatExpiresAt(ttlSeconds?: number): string | null {
+    if (!ttlSeconds || ttlSeconds <= 0) return null;
+    const date = new Date(Date.now() + ttlSeconds * 1000);
+    return date
+      .toISOString()
+      .replace('T', ' ')
+      .replace('Z', '')
+      .replace(/\.\d{3}$/, '');
+  }
+
   private initSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workflow_runs (
@@ -453,7 +463,7 @@ export class WorkflowDb {
       const stmt = this.db.prepare(`
         SELECT * FROM idempotency_records
         WHERE idempotency_key = ?
-        AND (expires_at IS NULL OR expires_at > datetime('now'))
+        AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
       `);
       return stmt.get(key) as IdempotencyRecord | null;
     });
@@ -468,7 +478,7 @@ export class WorkflowDb {
         DELETE FROM idempotency_records
         WHERE idempotency_key = ?
         AND expires_at IS NOT NULL
-        AND expires_at < datetime('now')
+        AND datetime(expires_at) < datetime('now')
       `);
       const result = stmt.run(key);
       return result.changes;
@@ -486,7 +496,7 @@ export class WorkflowDb {
     ttlSeconds?: number
   ): Promise<boolean> {
     return await this.withRetry(() => {
-      const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null;
+      const expiresAt = this.formatExpiresAt(ttlSeconds);
       const stmt = this.db.prepare(`
         INSERT OR IGNORE INTO idempotency_records
         (idempotency_key, run_id, step_id, status, output, error, created_at, expires_at)
@@ -507,7 +517,7 @@ export class WorkflowDb {
     ttlSeconds?: number
   ): Promise<boolean> {
     return await this.withRetry(() => {
-      const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null;
+      const expiresAt = this.formatExpiresAt(ttlSeconds);
       const stmt = this.db.prepare(`
         UPDATE idempotency_records
         SET status = ?, run_id = ?, step_id = ?, output = NULL, error = NULL, created_at = datetime('now'), expires_at = ?
@@ -541,7 +551,7 @@ export class WorkflowDb {
     ttlSeconds?: number
   ): Promise<void> {
     await this.withRetry(() => {
-      const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null;
+      const expiresAt = this.formatExpiresAt(ttlSeconds);
       const stmt = this.db.prepare(`
         INSERT OR REPLACE INTO idempotency_records
         (idempotency_key, run_id, step_id, status, output, error, created_at, expires_at)
@@ -566,7 +576,7 @@ export class WorkflowDb {
     return await this.withRetry(() => {
       const stmt = this.db.prepare(`
         DELETE FROM idempotency_records
-        WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
+        WHERE expires_at IS NOT NULL AND datetime(expires_at) < datetime('now')
       `);
       const result = stmt.run();
       return result.changes;

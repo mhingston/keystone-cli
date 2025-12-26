@@ -218,15 +218,27 @@ export async function executeShell(
     const maxOutputBytes = LIMITS.MAX_PROCESS_OUTPUT_BYTES;
 
     if (canUseSpawn) {
-      // Robust splitting that handles single and double quotes
+      // Split command into args without invoking a shell (handles quotes and escapes)
       const args: string[] = [];
       let current = '';
       let inQuote = false;
       let quoteChar = '';
+      let escapeNext = false;
 
       for (let i = 0; i < command.length; i++) {
         const char = command[i];
-        if ((char === "'" || char === '"') && (i === 0 || command[i - 1] !== '\\')) {
+        if (escapeNext) {
+          current += char;
+          escapeNext = false;
+          continue;
+        }
+
+        if (char === '\\' && quoteChar !== "'") {
+          escapeNext = true;
+          continue;
+        }
+
+        if (char === "'" || char === '"') {
           if (inQuote && char === quoteChar) {
             inQuote = false;
             quoteChar = '';
@@ -236,14 +248,21 @@ export async function executeShell(
           } else {
             current += char;
           }
-        } else if (/\s/.test(char) && !inQuote) {
+          continue;
+        }
+
+        if (/\s/.test(char) && !inQuote) {
           if (current) {
             args.push(current);
             current = '';
           }
-        } else {
-          current += char;
+          continue;
         }
+
+        current += char;
+      }
+      if (escapeNext) {
+        current += '\\';
       }
       if (current) args.push(current);
 
