@@ -1,80 +1,8 @@
 import { ConfigLoader } from '../utils/config-loader';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
-import { MCPClient } from './mcp-client';
+import { MCPClient, validateRemoteUrl } from './mcp-client';
 
 export type MCPClientFactory = Pick<typeof MCPClient, 'createLocal' | 'createRemote'>;
-
-// Private/internal IP ranges that should be blocked for SSRF protection
-const PRIVATE_IP_RANGES = [
-  /^127\./, // Loopback
-  /^10\./, // Class A private
-  /^172\.(1[6-9]|2\d|3[01])\./, // Class B private
-  /^192\.168\./, // Class C private
-  /^169\.254\./, // Link-local
-  /^::1$/, // IPv6 loopback
-  /^fe80:/i, // IPv6 link-local
-  /^fc00:/i, // IPv6 unique local
-  /^fd00:/i, // IPv6 unique local
-  /^localhost$/i, // localhost hostname
-];
-
-/**
- * Check if a hostname resolves to a private/internal IP address.
- * Returns true if the URL is safe to access.
- */
-async function isUrlSafe(url: string): Promise<{ safe: boolean; reason?: string }> {
-  try {
-    const parsed = new URL(url);
-
-    // Block non-HTTPS by default (HTTP is only allowed with explicit flag)
-    if (parsed.protocol !== 'https:') {
-      return {
-        safe: false,
-        reason: `Only HTTPS URLs are allowed for remote MCP servers (got ${parsed.protocol})`,
-      };
-    }
-
-    const hostname = parsed.hostname;
-
-    // Check for obvious private hostnames
-    for (const pattern of PRIVATE_IP_RANGES) {
-      if (pattern.test(hostname)) {
-        return {
-          safe: false,
-          reason: `Access to private/internal address "${hostname}" is not allowed`,
-        };
-      }
-    }
-
-    // DNS resolution check for hostname -> IP mapping
-    const dns = await import('node:dns/promises');
-    try {
-      const addresses = await dns.resolve4(hostname).catch(() => []);
-      const addresses6 = await dns.resolve6(hostname).catch(() => []);
-      const allAddresses = [...addresses, ...addresses6];
-
-      for (const addr of allAddresses) {
-        for (const pattern of PRIVATE_IP_RANGES) {
-          if (pattern.test(addr)) {
-            return {
-              safe: false,
-              reason: `Hostname "${hostname}" resolves to private address "${addr}"`,
-            };
-          }
-        }
-      }
-    } catch {
-      // DNS resolution failed - allow the request (let the connection fail naturally)
-    }
-
-    return { safe: true };
-  } catch (error) {
-    return {
-      safe: false,
-      reason: `Invalid URL: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-}
 
 export interface MCPServerConfig {
   name: string;
@@ -156,14 +84,11 @@ export class MCPManager {
 
       let client: MCPClient;
       try {
-        if (config.type === 'remote') {
-          if (!config.url) throw new Error('Remote MCP server missing URL');
+          if (config.type === 'remote') {
+            if (!config.url) throw new Error('Remote MCP server missing URL');
 
-          // SSRF Protection: Validate URL before connecting
-          const urlCheck = await isUrlSafe(config.url);
-          if (!urlCheck.safe) {
-            throw new Error(`SSRF Protection: ${urlCheck.reason}`);
-          }
+            // SSRF Protection: Validate URL before connecting
+            await validateRemoteUrl(config.url);
 
           const headers = { ...(config.headers || {}) };
 

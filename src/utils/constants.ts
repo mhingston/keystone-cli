@@ -31,6 +31,8 @@ export const LIMITS = {
   MAX_SEARCH_LINE_LENGTH: 2000,
   /** Maximum bytes to read from HTTP responses */
   MAX_HTTP_RESPONSE_BYTES: 2 * 1024 * 1024,
+  /** Maximum bytes to capture from process stdout/stderr */
+  MAX_PROCESS_OUTPUT_BYTES: 2 * 1024 * 1024,
   /** Maximum messages to keep in LLM conversation history */
   MAX_MESSAGE_HISTORY: 50,
   /** Maximum bytes to keep per tool output in LLM history */

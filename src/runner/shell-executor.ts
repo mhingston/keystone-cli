@@ -25,10 +25,10 @@
  * See SECURITY.md for more details.
  */
 
-import { $ } from 'bun';
 import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
 import type { ShellStep } from '../parser/schema.ts';
+import { LIMITS } from '../utils/constants.ts';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
 
 /**
@@ -45,15 +45,18 @@ import { ConsoleLogger, type Logger } from '../utils/logger.ts';
  *     # Avoid patterns like: sh -c "echo $USER_INPUT" where USER_INPUT is raw
  * ```
  */
-export function escapeShellArg(arg: string): string {
+export function escapeShellArg(arg: unknown): string {
+  const value = arg === null || arg === undefined ? '' : String(arg);
   // Replace single quotes with '\'' (end quote, escaped quote, start quote)
-  return `'${arg.replace(/'/g, "'\\''")}'`;
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 export interface ShellResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
 }
 
 /**
@@ -101,13 +104,57 @@ const DANGEROUS_PATTERNS: RegExp[] = [
 // Combine all patterns into single regex for O(m) matching instead of O(n×m)
 const COMBINED_DANGEROUS_PATTERN = new RegExp(DANGEROUS_PATTERNS.map((r) => r.source).join('|'));
 
+const TRUNCATED_SUFFIX = '... [truncated output]';
+
+async function readStreamWithLimit(
+  stream: ReadableStream<Uint8Array> | null | undefined,
+  maxBytes: number
+): Promise<{ text: string; truncated: boolean }> {
+  if (!stream) return { text: '', truncated: false };
+  if (maxBytes <= 0) {
+    try {
+      await stream.cancel?.();
+    } catch {}
+    return { text: TRUNCATED_SUFFIX, truncated: true };
+  }
+
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytesRead = 0;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+
+    if (bytesRead + value.byteLength > maxBytes) {
+      const allowed = maxBytes - bytesRead;
+      if (allowed > 0) {
+        text += decoder.decode(value.slice(0, allowed), { stream: true });
+      }
+      text += decoder.decode();
+      try {
+        await reader.cancel();
+      } catch {}
+      return { text: `${text}${TRUNCATED_SUFFIX}`, truncated: true };
+    }
+
+    bytesRead += value.byteLength;
+    text += decoder.decode(value, { stream: true });
+  }
+
+  text += decoder.decode();
+  return { text, truncated: false };
+}
+
 export function detectShellInjectionRisk(command: string): boolean {
   // Use combined pattern for single-pass matching
   return COMBINED_DANGEROUS_PATTERN.test(command);
 }
 
 /**
- * Execute a shell command using Bun.$
+ * Execute a shell command using Bun.spawn
  */
 export async function executeShell(
   step: ShellStep,
@@ -166,6 +213,9 @@ export async function executeShell(
     let stdoutString = '';
     let stderrString = '';
     let exitCode = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    const maxOutputBytes = LIMITS.MAX_PROCESS_OUTPUT_BYTES;
 
     if (canUseSpawn) {
       // Robust splitting that handles single and double quotes
@@ -214,46 +264,45 @@ export async function executeShell(
         abortSignal.addEventListener('abort', abortHandler, { once: true });
       }
 
-      const stdoutText = await new Response(proc.stdout).text();
-      const stderrText = await new Response(proc.stderr).text();
+      const stdoutPromise = readStreamWithLimit(proc.stdout, maxOutputBytes);
+      const stderrPromise = readStreamWithLimit(proc.stderr, maxOutputBytes);
 
       // Wait for exit
       exitCode = await proc.exited;
-      stdoutString = stdoutText;
-      stderrString = stderrText;
+      const [stdoutResult, stderrResult] = await Promise.all([stdoutPromise, stderrPromise]);
+      stdoutString = stdoutResult.text;
+      stderrString = stderrResult.text;
+      stdoutTruncated = stdoutResult.truncated;
+      stderrTruncated = stderrResult.truncated;
       if (abortSignal) {
         abortSignal.removeEventListener('abort', abortHandler);
       }
     } else {
       // Fallback to sh -c for complex commands (pipes, redirects, quotes)
-      // Execute command using sh -c to allow shell parsing
-      let proc = $`sh -c ${command}`.quiet();
+      const proc = Bun.spawn(['sh', '-c', command], {
+        cwd,
+        env: mergedEnv,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
       const abortHandler = () => {
         try {
-          if (typeof (proc as unknown as { kill?: () => void }).kill === 'function') {
-            (proc as unknown as { kill: () => void }).kill();
-          }
+          proc.kill();
         } catch {}
       };
       if (abortSignal) {
         abortSignal.addEventListener('abort', abortHandler, { once: true });
       }
 
-      // Apply environment variables - merge with Bun.env to preserve system PATH and other variables
-      if (Object.keys(env).length > 0) {
-        proc = proc.env({ ...Bun.env, ...env });
-      }
+      const stdoutPromise = readStreamWithLimit(proc.stdout, maxOutputBytes);
+      const stderrPromise = readStreamWithLimit(proc.stderr, maxOutputBytes);
 
-      // Apply working directory
-      if (cwd) {
-        proc = proc.cwd(cwd);
-      }
-
-      // Execute and capture result
-      const result = await proc;
-      stdoutString = await result.text();
-      stderrString = result.stderr ? result.stderr.toString() : '';
-      exitCode = result.exitCode;
+      exitCode = await proc.exited;
+      const [stdoutResult, stderrResult] = await Promise.all([stdoutPromise, stderrPromise]);
+      stdoutString = stdoutResult.text;
+      stderrString = stderrResult.text;
+      stdoutTruncated = stdoutResult.truncated;
+      stderrTruncated = stderrResult.truncated;
       if (abortSignal) {
         abortSignal.removeEventListener('abort', abortHandler);
       }
@@ -263,6 +312,8 @@ export async function executeShell(
       stdout: stdoutString,
       stderr: stderrString,
       exitCode,
+      stdoutTruncated,
+      stderrTruncated,
     };
   } catch (error) {
     // Handle shell execution errors (Bun throws ShellError with exitCode, stdout, stderr)

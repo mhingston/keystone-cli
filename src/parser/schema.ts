@@ -348,6 +348,8 @@ const EvalSchema = z.object({
   agent: z.string().optional(),
   prompt: z.string().optional(),
   run: z.string().optional(), // for script scorer
+  allowInsecure: z.boolean().optional(),
+  allowSecrets: z.boolean().optional(),
 });
 
 // ===== Workflow Schema =====

@@ -189,8 +189,26 @@ globalThis.console = __keystone_console;
       let stderr = '';
       let timedOut = false;
 
+      const useMemoryLimit = typeof options.memoryLimit === 'number' && options.memoryLimit > 0;
+      const isWindows = process.platform === 'win32';
+      let command = 'bun';
+      let args = ['run', scriptPath];
+
+      if (useMemoryLimit) {
+        if (isWindows) {
+          options.logger?.warn?.(
+            'ProcessSandbox: memoryLimit is not supported on Windows; running without a limit.'
+          );
+        } else {
+          const limitKb = Math.max(1, Math.floor(options.memoryLimit as number / 1024));
+          const escapedPath = scriptPath.replace(/'/g, "'\\''");
+          command = 'sh';
+          args = ['-c', `ulimit -v ${limitKb}; exec bun run '${escapedPath}'`];
+        }
+      }
+
       // Spawn bun with minimal environment
-      const child = spawn('bun', ['run', scriptPath], {
+      const child = spawn(command, args, {
         cwd: options.cwd,
         env: {
           // Only pass essential environment variables

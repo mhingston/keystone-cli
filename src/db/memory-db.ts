@@ -16,6 +16,7 @@ export class MemoryDb {
   private db: Database;
   // Cache connections by path to avoid reloading extensions
   private static connectionCache = new Map<string, { db: Database; refCount: number }>();
+  static readonly EMBEDDING_DIMENSION = 384;
 
   constructor(public readonly dbPath = '.keystone/memory.db') {
     const cached = MemoryDb.connectionCache.get(dbPath);
@@ -44,7 +45,7 @@ export class MemoryDb {
     this.db.run(`
       CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
         id TEXT PRIMARY KEY,
-        embedding FLOAT[384]
+        embedding FLOAT[${MemoryDb.EMBEDDING_DIMENSION}]
       );
     `);
 
@@ -56,6 +57,14 @@ export class MemoryDb {
         created_at TEXT NOT NULL
       );
     `);
+  }
+
+  private static assertEmbeddingDimension(embedding: number[]): void {
+    if (embedding.length !== MemoryDb.EMBEDDING_DIMENSION) {
+      throw new Error(
+        `Embedding dimension mismatch: expected ${MemoryDb.EMBEDDING_DIMENSION}, got ${embedding.length}`
+      );
+    }
   }
 
   /**
@@ -77,6 +86,7 @@ export class MemoryDb {
   ): Promise<string> {
     const id = randomUUID();
     const createdAt = new Date().toISOString();
+    MemoryDb.assertEmbeddingDimension(embedding);
 
     // bun:sqlite transaction wrapper ensures atomicity synchronously
     const insertTransaction = this.db.transaction(() => {
@@ -107,6 +117,7 @@ export class MemoryDb {
    * @returns Array of matching entries with distance scores
    */
   async search(embedding: number[], limit = 5): Promise<MemoryEntry[]> {
+    MemoryDb.assertEmbeddingDimension(embedding);
     const query = `
       SELECT 
         v.id, 

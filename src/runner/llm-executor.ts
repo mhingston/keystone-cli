@@ -192,19 +192,22 @@ export async function executeLlmStep(
 
   const localMcpClients: MCPClient[] = [];
   const allTools: ToolDefinition[] = [];
-  const ensureUniqueToolName = (name: string): string => {
-    if (!allTools.some((tool) => tool.name === name)) return name;
-    let suffix = 1;
-    while (allTools.some((tool) => tool.name === `${name}-${suffix}`)) {
-      suffix++;
+  const toolRegistry = new Map<string, string>();
+  const registerTool = (tool: ToolDefinition) => {
+    const existing = toolRegistry.get(tool.name);
+    if (existing) {
+      throw new Error(
+        `Duplicate tool name "${tool.name}" from ${tool.source}; already defined by ${existing}. Rename one of them.`
+      );
     }
-    return `${name}-${suffix}`;
+    toolRegistry.set(tool.name, tool.source);
+    allTools.push(tool);
   };
 
   try {
     // 1. Add agent tools
     for (const tool of agent.tools) {
-      allTools.push({
+      registerTool({
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters || {
@@ -220,7 +223,7 @@ export async function executeLlmStep(
     // 2. Add step tools
     if (step.tools) {
       for (const tool of step.tools) {
-        allTools.push({
+        registerTool({
           name: tool.name,
           description: tool.description,
           parameters: tool.parameters || {
@@ -237,7 +240,7 @@ export async function executeLlmStep(
     // 3. Add Standard tools
     if (step.useStandardTools) {
       for (const tool of STANDARD_TOOLS) {
-        allTools.push({
+        registerTool({
           name: tool.name,
           description: tool.description,
           parameters: tool.parameters || {
@@ -253,7 +256,7 @@ export async function executeLlmStep(
 
     // 4. Add Engine handoff tool
     if (step.handoff) {
-      const toolName = ensureUniqueToolName(step.handoff.name || 'handoff');
+      const toolName = step.handoff.name || 'handoff';
       const description =
         step.handoff.description || `Delegate to engine ${step.handoff.engine.command}`;
       const parameters = step.handoff.inputSchema || {
@@ -274,7 +277,7 @@ export async function executeLlmStep(
         input: step.handoff.engine.input ?? '${{ args }}',
       };
 
-      allTools.push({
+      registerTool({
         name: toolName,
         description,
         parameters,
@@ -329,7 +332,7 @@ export async function executeLlmStep(
             if (client) {
               const mcpTools = await client.listTools();
               for (const tool of mcpTools) {
-                allTools.push({
+                registerTool({
                   name: tool.name,
                   description: tool.description,
                   parameters: tool.inputSchema,
@@ -360,6 +363,11 @@ export async function executeLlmStep(
     }));
 
     if (step.allowClarification) {
+      if (toolRegistry.has('ask')) {
+        throw new Error(
+          'Tool name "ask" is reserved for clarification. Rename your tool or disable allowClarification.'
+        );
+      }
       llmTools.push({
         type: 'function' as const,
         function: {

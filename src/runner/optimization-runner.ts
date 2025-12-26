@@ -117,13 +117,18 @@ export class OptimizationRunner {
     if (!evalConfig) return 0;
 
     if (evalConfig.scorer === 'script') {
-      const { executeStep } = await import('./step-executor');
+      if (!evalConfig.allowInsecure) {
+        throw new Error(
+          'Eval script execution is disabled by default. Set eval.allowInsecure: true to enable.'
+        );
+      }
+      const allowSecrets = evalConfig.allowSecrets === true;
 
       // Create a context with outputs available
       const context = {
         inputs: this.inputs,
         steps: {},
-        secrets: this.secrets,
+        secrets: allowSecrets ? this.secrets : {},
         env: this.workflow.env,
         outputs, // Direct access
         output: outputs, // For convenience

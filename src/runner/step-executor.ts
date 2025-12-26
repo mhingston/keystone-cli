@@ -369,6 +369,8 @@ async function executeShellStep(
         stdout: result.stdout,
         stderr: result.stderr,
         exitCode: result.exitCode,
+        stdoutTruncated: result.stdoutTruncated,
+        stderrTruncated: result.stderrTruncated,
       },
       status: 'failed',
       error: `Shell command exited with code ${result.exitCode}: ${result.stderr}`,
@@ -380,6 +382,8 @@ async function executeShellStep(
       stdout: result.stdout,
       stderr: result.stderr,
       exitCode: result.exitCode,
+      stdoutTruncated: result.stdoutTruncated,
+      stderrTruncated: result.stderrTruncated,
     },
     status: 'success',
   };
@@ -411,6 +415,8 @@ async function executeEngineStepWrapper(
     stdout: engineResult.stdout,
     stderr: engineResult.stderr,
     exitCode: engineResult.exitCode,
+    stdoutTruncated: engineResult.stdoutTruncated,
+    stderrTruncated: engineResult.stderrTruncated,
     summarySource: engineResult.summarySource,
     summaryFormat: engineResult.summaryFormat,
     artifactPath: engineResult.artifactPath,
@@ -556,7 +562,7 @@ async function executeFileStep(
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      fs.appendFileSync(targetPath, content);
+      await fs.promises.appendFile(targetPath, content);
 
       return {
         output: { path: targetPath, bytes: content.length },
@@ -1001,7 +1007,13 @@ async function executeMemoryStep(
   }
 
   try {
-    const { adapter, resolvedModel } = getAdapterFn(step.model || 'local');
+    const requestedModel = step.model || 'local';
+    if (requestedModel !== 'local' && !requestedModel.startsWith('local:')) {
+      throw new Error(
+        'Memory steps only support local embeddings. Use model: local (or local:<model>) or omit the model.'
+      );
+    }
+    const { adapter, resolvedModel } = getAdapterFn(requestedModel);
     if (!adapter.embed) {
       throw new Error(`Provider for model ${step.model || 'local'} does not support embeddings`);
     }

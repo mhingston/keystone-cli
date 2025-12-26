@@ -399,7 +399,7 @@ describe('step-executor', () => {
     };
 
     const mockGetAdapter = mock((model) => {
-      if (model === 'no-embed') return { adapter: {}, resolvedModel: model };
+      if (model === 'local:no-embed') return { adapter: {}, resolvedModel: model };
       return {
         adapter: {
           embed: mock((text) => Promise.resolve([0.1, 0.2, 0.3])),
@@ -420,7 +420,13 @@ describe('step-executor', () => {
 
     it('should fail if adapter does not support embedding', async () => {
       // @ts-ignore
-      const step = { id: 'm1', type: 'memory', op: 'store', text: 'foo', model: 'no-embed' };
+      const step = {
+        id: 'm1',
+        type: 'memory',
+        op: 'store',
+        text: 'foo',
+        model: 'local:no-embed',
+      };
       // @ts-ignore
       const result = await executeStep(step, context, undefined, {
         memoryDb: mockMemoryDb as unknown as MemoryDb,
@@ -428,6 +434,18 @@ describe('step-executor', () => {
       });
       expect(result.status).toBe('failed');
       expect(result.error).toContain('does not support embeddings');
+    });
+
+    it('should fail for non-local embedding models', async () => {
+      // @ts-ignore
+      const step = { id: 'm1', type: 'memory', op: 'store', text: 'foo', model: 'openai' };
+      // @ts-ignore
+      const result = await executeStep(step, context, undefined, {
+        memoryDb: mockMemoryDb as unknown as MemoryDb,
+        getAdapter: mockGetAdapter as unknown as typeof getAdapter,
+      });
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('only support local embeddings');
     });
 
     it('should store memory', async () => {

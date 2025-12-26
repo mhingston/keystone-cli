@@ -50,11 +50,51 @@ class LRUCache<K, V> {
 }
 
 const VERSION_CACHE = new LRUCache<string, string>(LIMITS.VERSION_CACHE_MAX_SIZE);
+const TRUNCATED_SUFFIX = '... [truncated output]';
+
+function createOutputLimiter(maxBytes: number) {
+  let bytes = 0;
+  let text = '';
+  let truncated = false;
+
+  const append = (chunk: Buffer | string) => {
+    if (truncated || maxBytes <= 0) {
+      truncated = true;
+      return;
+    }
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const remaining = maxBytes - bytes;
+    if (remaining <= 0) {
+      truncated = true;
+      return;
+    }
+    if (buffer.length <= remaining) {
+      text += buffer.toString();
+      bytes += buffer.length;
+      return;
+    }
+    text += buffer.subarray(0, remaining).toString();
+    bytes = maxBytes;
+    truncated = true;
+  };
+
+  const finalize = () => (truncated ? `${text}${TRUNCATED_SUFFIX}` : text);
+
+  return {
+    append,
+    finalize,
+    get truncated() {
+      return truncated;
+    },
+  };
+}
 
 export interface EngineExecutionResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
   summary: unknown | null;
   summarySource?: 'file' | 'stdout';
   summaryFormat?: 'json' | 'yaml';
@@ -115,17 +155,17 @@ async function runCommand(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
+    const stdoutLimiter = createOutputLimiter(LIMITS.MAX_PROCESS_OUTPUT_BYTES);
+    const stderrLimiter = createOutputLimiter(LIMITS.MAX_PROCESS_OUTPUT_BYTES);
 
     if (child.stdout) {
       child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
+        stdoutLimiter.append(chunk);
       });
     }
     if (child.stderr) {
       child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
+        stderrLimiter.append(chunk);
       });
     }
 
@@ -150,7 +190,11 @@ async function runCommand(
       if (abortSignal) {
         abortSignal.removeEventListener('abort', abortHandler);
       }
-      resolve({ stdout, stderr, exitCode: code ?? 0 });
+      resolve({
+        stdout: stdoutLimiter.finalize(),
+        stderr: stderrLimiter.finalize(),
+        exitCode: code ?? 0,
+      });
     });
   });
 }
@@ -314,6 +358,8 @@ export async function executeEngineStep(
   let stderr = '';
   let stdoutBuffer = '';
   let stderrBuffer = '';
+  const stdoutLimiter = createOutputLimiter(LIMITS.MAX_PROCESS_OUTPUT_BYTES);
+  const stderrLimiter = createOutputLimiter(LIMITS.MAX_PROCESS_OUTPUT_BYTES);
 
   const flushLines = (buffer: string, writer: (line: string) => void): string => {
     let next = buffer;
@@ -344,7 +390,7 @@ export async function executeEngineStep(
     if (child.stdout) {
       child.stdout.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
-        stdout += text;
+        stdoutLimiter.append(chunk);
         stdoutBuffer += text;
         stdoutBuffer = flushLines(stdoutBuffer, (line) => logger.log(line));
       });
@@ -359,7 +405,7 @@ export async function executeEngineStep(
     if (child.stderr) {
       child.stderr.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
-        stderr += text;
+        stderrLimiter.append(chunk);
         stderrBuffer += text;
         stderrBuffer = flushLines(stderrBuffer, (line) => logger.error(line));
       });
@@ -391,6 +437,9 @@ export async function executeEngineStep(
       resolve(code ?? 0);
     });
   });
+
+  stdout = stdoutLimiter.finalize();
+  stderr = stderrLimiter.finalize();
 
   let summary: unknown | null = null;
   let summarySource: 'file' | 'stdout' | undefined;
@@ -431,6 +480,8 @@ export async function executeEngineStep(
     stdout,
     stderr,
     exitCode,
+    stdoutTruncated: stdoutLimiter.truncated,
+    stderrTruncated: stderrLimiter.truncated,
     summary,
     summarySource,
     summaryFormat,
