@@ -133,14 +133,17 @@ keystone ui
 
 `keystone init` seeds these workflows under `.keystone/workflows/` (and the agents they rely on under `.keystone/workflows/agents/`):
 
+Top-level workflows:
 - `scaffold-feature`: Interactive workflow scaffolder. Prompts for requirements, plans files, generates content, and writes them.
+- `decompose-problem`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
+- `dev`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
+
+Sub-workflows:
 - `scaffold-plan`: Generates a file plan from `requirements` input.
 - `scaffold-generate`: Generates file contents from `requirements` plus a `files` plan.
-- `decompose-problem`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
 - `decompose-research`: Runs a single research task (`task`) with optional `context`/`constraints`.
 - `decompose-implement`: Runs a single implementation task (`task`) with optional `research` findings.
 - `decompose-review`: Reviews a single implementation task (`task`) with optional `implementation` results.
-- `dev`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
 
 Example runs:
 ```bash
@@ -148,7 +151,7 @@ keystone run scaffold-feature
 keystone run decompose-problem -i problem="Add caching to the API" -i context="Node/Bun service"
 ```
 
-The sub-workflows are used by the top-level workflows, but can be run directly if you want just one phase.
+Sub-workflows are used by the top-level workflows, but can be run directly if you want just one phase.
 
 ---
 
@@ -258,7 +261,7 @@ model: claude-3-5-sonnet-latest
 ```
 
 ### OpenAI Compatible Providers
-You can add any OpenAI-compatible provider (Groq, Together AI, Perplexity, Local Ollama, etc.) by setting the `type` to `openai` and providing the `base_url` and `api_key_env`.
+You can add any OpenAI-compatible provider (Together AI, Perplexity, Local Ollama, etc.) by setting the `type` to `openai` and providing the `base_url` and `api_key_env`.
 
 ### GitHub Copilot Support
 
