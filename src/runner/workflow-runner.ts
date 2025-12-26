@@ -94,6 +94,7 @@ export interface RunOptions {
   allowSuccessResume?: boolean;
   resourcePoolManager?: ResourcePoolManager;
   allowInsecure?: boolean;
+  artifactRoot?: string;
 }
 
 export interface StepContext {
@@ -540,6 +541,7 @@ export class WorkflowRunner {
             workflowDir: this.options.workflowDir,
             dryRun: this.options.dryRun,
             runId: this.runId,
+            artifactRoot: this.options.artifactRoot,
             redactForStorage: this.redactForStorage.bind(this),
           });
 
@@ -1331,6 +1333,7 @@ export class WorkflowRunner {
         abortSignal: this.abortSignal,
         runId: this.runId,
         stepExecutionId: stepExecId,
+        artifactRoot: this.options.artifactRoot,
         redactForStorage: this.redactForStorage.bind(this),
         getAdapter: this.options.getAdapter,
         executeStep: this.options.executeStep || executeStep,
@@ -1396,6 +1399,7 @@ export class WorkflowRunner {
               abortSignal: this.abortSignal,
               runId: this.runId,
               stepExecutionId: stepExecId,
+              artifactRoot: this.options.artifactRoot,
               redactForStorage: this.redactForStorage.bind(this),
               executeStep: this.options.executeStep || executeStep,
             });
@@ -1853,6 +1857,7 @@ Do not change the 'id' or 'type' or 'auto_heal' fields.
       dryRun: this.options.dryRun,
       debug: this.options.debug,
       runId: this.runId,
+      artifactRoot: this.options.artifactRoot,
       redactForStorage: this.redactForStorage.bind(this),
       allowInsecure: this.options.allowInsecure,
       executeStep: this.options.executeStep || executeStep,
@@ -2112,6 +2117,7 @@ Please provide a corrected response that exactly matches the required schema.`;
       workflowDir: subWorkflowDir,
       depth: this.depth + 1,
       dedup: this.options.dedup,
+      artifactRoot: this.options.artifactRoot,
     });
 
     try {

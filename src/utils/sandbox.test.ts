@@ -37,6 +37,24 @@ describe('SafeSandbox', () => {
     expect(result).toBe(10);
   });
 
+  it('should redirect console output to logger in vm mode', async () => {
+    const logs: string[] = [];
+    const logger = {
+      log: (msg: string) => logs.push(msg),
+      error: (_msg: string) => {},
+      warn: (_msg: string) => {},
+      info: (_msg: string) => {},
+    };
+
+    await SafeSandbox.execute('console.log("hello"); console.warn("warning");', {}, {
+      useProcessIsolation: false,
+      logger,
+    });
+
+    expect(logs).toContain('hello');
+    expect(logs).toContain('WARN: warning');
+  });
+
   it('should show warning only once when using vm mode', async () => {
     await SafeSandbox.execute('1', {}, { useProcessIsolation: false });
     // Second call should not show warning again (internal state tracking)

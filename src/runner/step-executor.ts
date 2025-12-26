@@ -956,15 +956,6 @@ async function executeScriptStep(
 
     const requireFn = createRequire(import.meta.url);
 
-    // Create a console wrapper that redirects to the logger
-    const scriptConsole = {
-      log: (...args: unknown[]) => _logger.log(args.map((a) => String(a)).join(' ')),
-      error: (...args: unknown[]) => _logger.log(`ERROR: ${args.map((a) => String(a)).join(' ')}`),
-      warn: (...args: unknown[]) => _logger.log(`WARN: ${args.map((a) => String(a)).join(' ')}`),
-      info: (...args: unknown[]) => _logger.log(`INFO: ${args.map((a) => String(a)).join(' ')}`),
-      debug: (...args: unknown[]) => _logger.log(`DEBUG: ${args.map((a) => String(a)).join(' ')}`),
-    };
-
     const result = await sandbox.execute(
       step.run,
       {
@@ -975,10 +966,10 @@ async function executeScriptStep(
         // biome-ignore lint/suspicious/noExplicitAny: args is dynamic
         args: (context as any).args,
         require: requireFn,
-        console: scriptConsole,
       },
       {
         timeout: step.timeout,
+        logger: _logger,
       }
     );
 

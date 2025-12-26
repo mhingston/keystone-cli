@@ -11,6 +11,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FILE_MODES, TIMEOUTS } from './constants.ts';
+import type { Logger } from './logger.ts';
 
 export interface ProcessSandboxOptions {
   /** Timeout in milliseconds (default: TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS) */
@@ -19,6 +20,8 @@ export interface ProcessSandboxOptions {
   memoryLimit?: number;
   /** Working directory for the subprocess */
   cwd?: string;
+  /** Logger for script output (console.log, etc) */
+  logger?: Logger;
 }
 
 export interface ProcessSandboxResult {
@@ -97,6 +100,9 @@ export class ProcessSandbox {
 // Context is sanitized through JSON parse/stringify to prevent prototype pollution
 const context = ${contextJson};
 
+// Capture essential functions before deleting dangerous globals
+const __write = process.stdout.write.bind(process.stdout);
+
 // Remove dangerous globals to prevent sandbox escape
 const dangerousGlobals = [
   'process',
@@ -133,6 +139,28 @@ for (const g of dangerousGlobals) {
 // Make context variables available
 Object.assign(globalThis, context);
 
+// Custom console that prefixes logs for the runner to intercept
+const __keystone_console = {
+  log: (...args) => {
+    __write('__SANDBOX_LOG__:' + args.join(' ') + '\\n');
+  },
+  error: (...args) => {
+    __write('__SANDBOX_LOG__:ERROR: ' + args.join(' ') + '\\n');
+  },
+  warn: (...args) => {
+    __write('__SANDBOX_LOG__:WARN: ' + args.join(' ') + '\\n');
+  },
+  info: (...args) => {
+    __write('__SANDBOX_LOG__:INFO: ' + args.join(' ') + '\\n');
+  },
+  debug: (...args) => {
+    __write('__SANDBOX_LOG__:DEBUG: ' + args.join(' ') + '\\n');
+  }
+};
+
+// Replace global console
+globalThis.console = __keystone_console;
+
 (async () => {
   try {
     // Execute the user code (wrap in async to support await)
@@ -140,9 +168,9 @@ Object.assign(globalThis, context);
       ${code}
     })();
     
-    console.log(JSON.stringify({ success: true, result: __result }));
+    __write(JSON.stringify({ success: true, result: __result }) + '\\n');
   } catch (error) {
-    console.log(JSON.stringify({ success: false, error: error.message || String(error) }));
+    __write(JSON.stringify({ success: false, error: error.message || String(error) }) + '\\n');
   }
 })();
 `;
@@ -179,9 +207,20 @@ Object.assign(globalThis, context);
         child.kill('SIGKILL');
       }, timeout);
 
-      // Collect stdout
+      // Collect stdout and intercept logs
+      let buffer = '';
       child.stdout.on('data', (data: Buffer) => {
-        stdout += data.toString();
+        buffer += data.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep the last (potentially incomplete) line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('__SANDBOX_LOG__:')) {
+            options.logger?.log(line.slice(16));
+          } else if (line) {
+            stdout += line + '\n';
+          }
+        }
       });
 
       // Collect stderr

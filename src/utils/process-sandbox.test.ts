@@ -106,4 +106,23 @@ describe('ProcessSandbox', () => {
     const promise = ProcessSandbox.execute('return {{{invalid}}}', {});
     await expect(promise).rejects.toThrow();
   });
+
+  it('should redirect console.log to provided logger', async () => {
+    const logs: string[] = [];
+    const logger = {
+      log: (msg: string) => logs.push(msg),
+      error: (msg: string) => logs.push(`ERROR: ${msg}`),
+      warn: (msg: string) => logs.push(`WARN: ${msg}`),
+      info: (msg: string) => logs.push(`INFO: ${msg}`),
+    };
+
+    await ProcessSandbox.execute(
+      'console.log("hello from sandbox"); console.warn("warning here"); return 42;',
+      {},
+      { logger }
+    );
+
+    expect(logs).toContain('hello from sandbox');
+    expect(logs).toContain('WARN: warning here');
+  });
 });

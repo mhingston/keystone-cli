@@ -23,7 +23,7 @@
 
 import * as vm from 'node:vm';
 import { TIMEOUTS } from './constants.ts';
-import { ConsoleLogger } from './logger.ts';
+import { ConsoleLogger, type Logger } from './logger.ts';
 import { ProcessSandbox } from './process-sandbox.ts';
 
 export interface SandboxOptions {
@@ -34,11 +34,41 @@ export interface SandboxOptions {
    * When false, uses node:vm which is faster but less secure.
    */
   useProcessIsolation?: boolean;
+  /** Logger for script output */
+  logger?: Logger;
 }
 
 export class SafeSandbox {
   private static warned = false;
   private static logger = new ConsoleLogger();
+
+  private static createLoggerConsole(logger?: Logger): {
+    log: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    info: (...args: unknown[]) => void;
+    debug: (...args: unknown[]) => void;
+  } {
+    if (!logger) {
+      return {
+        log: () => {},
+        error: () => {},
+        warn: () => {},
+        info: () => {},
+        debug: () => {},
+      };
+    }
+
+    const formatArgs = (args: unknown[]) => args.map((arg) => String(arg)).join(' ');
+
+    return {
+      log: (...args) => logger.log(formatArgs(args)),
+      error: (...args) => logger.log(`ERROR: ${formatArgs(args)}`),
+      warn: (...args) => logger.log(`WARN: ${formatArgs(args)}`),
+      info: (...args) => logger.log(`INFO: ${formatArgs(args)}`),
+      debug: (...args) => logger.log(`DEBUG: ${formatArgs(args)}`),
+    };
+  }
 
   /**
    * Execute a script in a sandbox.
@@ -58,6 +88,7 @@ export class SafeSandbox {
       return ProcessSandbox.execute(code, context, {
         timeout: options.timeout,
         memoryLimit: options.memoryLimit,
+        logger: options.logger,
       });
     }
 
@@ -78,13 +109,13 @@ export class SafeSandbox {
     if (!SafeSandbox.warned) {
       SafeSandbox.logger.warn(
         '\n⚠️  SECURITY WARNING: Using Bun/Node.js built-in VM for script execution.\n' +
-          '   This sandbox is NOT secure against malicious code.\n' +
-          '   Only run workflows from trusted sources.\n'
+        '   This sandbox is NOT secure against malicious code.\n' +
+        '   Only run workflows from trusted sources.\n'
       );
       SafeSandbox.warned = true;
     }
 
-    const sandbox = { ...context };
+    const sandbox = { ...context, console: SafeSandbox.createLoggerConsole(options.logger) };
     return vm.runInNewContext(code, sandbox, {
       timeout: options.timeout || TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS,
       displayErrors: true,
