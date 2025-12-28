@@ -198,34 +198,7 @@ describe('AnthropicAdapter Token Accumulation', () => {
   });
 });
 
-describe('LLM Adapter Utilities', () => {
-  beforeEach(() => {
-    mock.restore();
-  });
 
-  afterEach(() => {
-    mock.restore();
-  });
-
-  it('should register runtime resolver on Bun', () => {
-    if (typeof Bun === 'undefined') {
-      (global as any).Bun = { plugin: mock(() => { }) };
-    }
-
-    const pluginSpy = spyOn(Bun, 'plugin').mockImplementation(Object.assign(mock(() => { }), { clearAll: mock(() => { }) }) as any);
-
-    // @ts-ignore
-    const { ensureRuntimeResolver } = require('./llm-adapter');
-    ensureRuntimeResolver();
-
-    expect(pluginSpy).toHaveBeenCalled();
-
-    // Second call should return early
-    ensureRuntimeResolver();
-
-    pluginSpy.mockRestore();
-  });
-});
 
 describe('AnthropicAdapter', () => {
   const originalFetch = global.fetch;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { Redactor } from './redactor';
+import { Redactor, RedactionBuffer } from './redactor';
 
 describe('Redactor', () => {
   const secrets = {
@@ -123,7 +123,7 @@ describe('RedactionBuffer', () => {
   const redactor = new Redactor({ SECRET: 'super-secret-value' });
 
   it(' should redact secrets across chunks', () => {
-    const buffer = new (require('./redactor').RedactionBuffer)(redactor);
+    const buffer = new RedactionBuffer(redactor);
     const chunk1 = 'This is sup';
     const chunk2 = 'er-secret-value in parts.';
 
@@ -136,7 +136,7 @@ describe('RedactionBuffer', () => {
   });
 
   it('should not leak partial secrets in process()', () => {
-    const buffer = new (require('./redactor').RedactionBuffer)(redactor);
+    const buffer = new RedactionBuffer(redactor);
     // Secret is 18 chars long.
     // 'super-s' is 7 chars.
     const chunk = 'super-s';
@@ -149,7 +149,7 @@ describe('RedactionBuffer', () => {
 
   it('should handle multiple secrets in stream', () => {
     const multiRedactor = new Redactor({ S1: 'secret-one', S2: 'secret-two' });
-    const buffer = new (require('./redactor').RedactionBuffer)(multiRedactor);
+    const buffer = new RedactionBuffer(multiRedactor);
 
     const text = 'S1: secret-one, S2: secret-two';
     const out1 = buffer.process(text.substring(0, 15));

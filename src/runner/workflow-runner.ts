@@ -547,6 +547,12 @@ export class WorkflowRunner {
         secrets[key] = value;
       }
     }
+
+    // Explicit secrets from options take precedence over environment variables
+    if (this.options.secrets) {
+      Object.assign(secrets, this.options.secrets);
+    }
+
     return secrets;
   }
 

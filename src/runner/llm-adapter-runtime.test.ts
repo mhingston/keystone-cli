@@ -26,6 +26,7 @@ describe('LLM Adapter Runtime and Helpers', () => {
     const originalEnv = { ...process.env };
 
     beforeEach(() => {
+        resetRuntimeHelpers();
         ConfigLoader.clear();
         // Reset process.env
         for (const key in process.env) {

@@ -562,10 +562,7 @@ describe('WorkflowRunner', () => {
     const cacheKey = Bun.hash(
       JSON.stringify({
         type: step.type,
-        run: (step as { run?: string }).run,
-        prompt: (step as { prompt?: string }).prompt,
-        agent: (step as { agent?: string }).agent,
-        inputs: stepInputs,
+        inputs: stepInputs, // shell steps put 'run' in inputs
         env: (step as { env?: Record<string, string> }).env,
         version: 2,
       })
