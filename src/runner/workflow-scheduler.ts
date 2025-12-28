@@ -63,14 +63,16 @@ export class WorkflowScheduler {
         if (step.type === 'join') {
             return this.isJoinConditionMet(step as JoinStep);
         }
-        return step.needs.every((dep: string) => this.completedSteps.has(dep));
+        const needs = step.needs ?? [];
+        return needs.every((dep: string) => this.completedSteps.has(dep));
     }
 
     private isJoinConditionMet(step: JoinStep): boolean {
-        const total = step.needs.length;
+        const needs = step.needs ?? [];
+        const total = needs.length;
         if (total === 0) return true;
 
-        const successCount = step.needs.filter((dep) => this.completedSteps.has(dep)).length;
+        const successCount = needs.filter((dep) => this.completedSteps.has(dep)).length;
 
         if (step.condition === 'all') {
             return successCount === total;

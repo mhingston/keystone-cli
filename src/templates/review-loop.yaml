@@ -1,0 +1,96 @@
+name: review-loop
+description: "Generate, review, and refine output with a lightweight quality gate"
+
+inputs:
+  goal: { type: string }
+  context: { type: string, default: "" }
+  draft: { type: string, default: "" }
+  attempt: { type: number, default: 1 }
+  maxAttempts: { type: number, default: 2 }
+
+outputs:
+  draft: ${{ steps.iterate.output.draft || steps.refine.output || steps.generate.output || inputs.draft }}
+  review: ${{ steps.iterate.output.review || steps.review.output }}
+  attempts: ${{ steps.iterate.output.attempts || inputs.attempt }}
+
+steps:
+  - id: generate
+    type: llm
+    agent: general
+    if: ${{ !inputs.draft }}
+    prompt: |
+      Generate a draft for the goal.
+
+      Goal:
+      ${{ inputs.goal }}
+
+      Context:
+      ${{ inputs.context }}
+
+      Return only the draft text.
+
+  - id: review
+    type: llm
+    agent: general
+    prompt: |
+      Review the draft for correctness, completeness, and clarity.
+
+      Goal:
+      ${{ inputs.goal }}
+
+      Context:
+      ${{ inputs.context }}
+
+      Draft:
+      ${{ inputs.draft || steps.generate.output }}
+
+      Identify issues, risks, and missing details. Be specific.
+      Return only the structured JSON required by the schema.
+    outputSchema:
+      type: object
+      properties:
+        approved:
+          type: boolean
+        issues:
+          type: array
+          items: { type: string }
+        suggestions:
+          type: array
+          items: { type: string }
+      required: [approved]
+
+  - id: refine
+    type: llm
+    agent: general
+    if: ${{ steps.review.output.approved == false }}
+    prompt: |
+      Improve the draft based on the review feedback.
+
+      Goal:
+      ${{ inputs.goal }}
+
+      Context:
+      ${{ inputs.context }}
+
+      Draft:
+      ${{ inputs.draft || steps.generate.output }}
+
+      Review feedback:
+      ${{ steps.review.output }}
+
+      Return only the revised draft text.
+
+  - id: iterate
+    type: workflow
+    if: ${{ steps.review.output.approved == false && inputs.attempt < inputs.maxAttempts }}
+    path: review-loop.yaml
+    inputs:
+      goal: ${{ inputs.goal }}
+      context: ${{ inputs.context }}
+      draft: ${{ steps.refine.output }}
+      attempt: ${{ inputs.attempt + 1 }}
+      maxAttempts: ${{ inputs.maxAttempts }}
+    outputMapping:
+      draft: draft
+      review: review
+      attempts: attempts

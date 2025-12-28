@@ -21,6 +21,8 @@ import type {
   EngineStep,
   FileStep,
   HumanStep,
+  LlmStep,
+  PlanStep,
   RequestStep,
   ShellStep,
   SleepStep,
@@ -162,6 +164,76 @@ describe('step-executor', () => {
       expect(content).toBe('line 1\nline 2');
     });
 
+    it('should apply a unified diff patch', async () => {
+      const filePath = join(tempDir, 'patch.txt');
+      await executeStep(
+        {
+          id: 'w1',
+          type: 'file',
+          needs: [],
+          op: 'write',
+          path: filePath,
+          content: 'line1\nline2\nline3\n',
+        } as FileStep,
+        context
+      );
+
+      const diff = [
+        '--- a/patch.txt',
+        '+++ b/patch.txt',
+        '@@ -1,3 +1,3 @@',
+        ' line1',
+        '-line2',
+        '+line2 updated',
+        ' line3',
+        '',
+      ].join('\n');
+
+      const patchStep: FileStep = {
+        id: 'p1',
+        type: 'file',
+        needs: [],
+        op: 'patch',
+        path: filePath,
+        content: diff,
+      };
+
+      const result = await executeStep(patchStep, context);
+      expect(result.status).toBe('success');
+
+      const updated = await Bun.file(filePath).text();
+      expect(updated).toBe('line1\nline2 updated\nline3\n');
+    });
+
+    it('should apply a search/replace patch', async () => {
+      const filePath = join(tempDir, 'patch-search.txt');
+      writeFileSync(filePath, 'alpha beta gamma');
+
+      const patch = [
+        '<<<<<<< SEARCH',
+        'beta',
+        '=======',
+        'delta',
+        '>>>>>>> REPLACE',
+        '',
+      ].join('\n');
+
+      const patchStep: FileStep = {
+        id: 'p2',
+        type: 'file',
+        needs: [],
+        op: 'patch',
+        path: filePath,
+        content: patch,
+      };
+
+      const result = await executeStep(patchStep, context);
+      expect(result.status).toBe('success');
+
+      const updated = await Bun.file(filePath).text();
+      expect(updated).toBe('alpha delta gamma');
+    });
+
     it('should fail if file not found on read', async () => {
       const readStep: FileStep = {
         id: 'r1',
@@ -255,6 +327,40 @@ describe('step-executor', () => {
       const result = await executeStep(step, context);
       expect(result.status).toBe('failed');
       expect(result.error).toContain('Access denied');
+    });
+  });
+
+  describe('plan', () => {
+    it('should execute a plan step using the LLM executor', async () => {
+      const step: PlanStep = {
+        id: 'plan-1',
+        type: 'plan',
+        needs: [],
+        goal: 'Plan a simple task',
+      };
+
+      const executeLlmStep = mock(async (llmStep: LlmStep) => {
+        return {
+          status: 'success',
+          output: {
+            steps: [{ title: 'Do the thing', details: 'Step details' }],
+          },
+        };
+      });
+
+      const result = await executeStep(step, context, undefined, {
+        executeLlmStep,
+      });
+
+      expect(result.status).toBe('success');
+      expect(result.output).toEqual({
+        steps: [{ title: 'Do the thing', details: 'Step details' }],
+      });
+
+      const invokedStep = executeLlmStep.mock.calls[0][0] as LlmStep;
+      expect(invokedStep.type).toBe('llm');
+      expect(invokedStep.prompt).toContain('Plan a simple task');
+      expect(invokedStep.outputSchema).toBeDefined();
     });
   });
 

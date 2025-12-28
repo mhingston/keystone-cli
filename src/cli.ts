@@ -15,6 +15,7 @@ import decomposeWorkflow from './templates/decompose-problem.yaml' with { type: 
 import decomposeResearchWorkflow from './templates/decompose-research.yaml' with { type: 'text' };
 import decomposeReviewWorkflow from './templates/decompose-review.yaml' with { type: 'text' };
 import devWorkflow from './templates/dev.yaml' with { type: 'text' };
+import reviewLoopWorkflow from './templates/review-loop.yaml' with { type: 'text' };
 // Default templates
 import scaffoldWorkflow from './templates/scaffold-feature.yaml' with { type: 'text' };
 import scaffoldGenerateWorkflow from './templates/scaffold-generate.yaml' with { type: 'text' };
@@ -346,6 +347,10 @@ expression:
       {
         path: '.keystone/workflows/decompose-review.yaml',
         content: decomposeReviewWorkflow,
+      },
+      {
+        path: '.keystone/workflows/review-loop.yaml',
+        content: reviewLoopWorkflow,
       },
       {
         path: '.keystone/workflows/agents/keystone-architect.md',

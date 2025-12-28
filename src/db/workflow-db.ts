@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import './sqlite-setup.ts';
@@ -73,6 +74,16 @@ export interface CompensationRecord {
   completed_at: string | null;
 }
 
+export interface ThoughtEvent {
+  id: string;
+  run_id: string;
+  workflow_name: string;
+  step_id: string;
+  content: string;
+  source: 'thinking' | 'reasoning';
+  created_at: string;
+}
+
 export class WorkflowDb {
   private db: Database;
 
@@ -112,6 +123,9 @@ export class WorkflowDb {
   private getEventStmt!: any;
   private storeEventStmt!: any;
   private deleteEventStmt!: any;
+  private createThoughtStmt!: any;
+  private listThoughtEventsStmt!: any;
+  private listThoughtEventsByRunStmt!: any;
 
   constructor(public readonly dbPath = PathResolver.resolveDbPath()) {
     const dir = dirname(dbPath);
@@ -281,6 +295,21 @@ export class WorkflowDb {
       VALUES (?, ?, datetime('now'))
     `);
     this.deleteEventStmt = this.db.prepare('DELETE FROM events WHERE name = ?');
+    this.createThoughtStmt = this.db.prepare(`
+      INSERT INTO thought_events (id, run_id, workflow_name, step_id, content, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+    this.listThoughtEventsStmt = this.db.prepare(`
+      SELECT * FROM thought_events
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    this.listThoughtEventsByRunStmt = this.db.prepare(`
+      SELECT * FROM thought_events
+      WHERE run_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
   }
 
   /**
@@ -398,6 +427,25 @@ export class WorkflowDb {
         PRAGMA user_version = 3;
       `);
     }
+
+    // Version 4: Add thought events table
+    if (version < 4) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS thought_events (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          workflow_name TEXT NOT NULL,
+          step_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          source TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_thoughts_run ON thought_events(run_id);
+        CREATE INDEX IF NOT EXISTS idx_thoughts_created ON thought_events(created_at);
+        PRAGMA user_version = 4;
+      `);
+    }
   }
 
   private initSchema(): void {
@@ -481,6 +529,20 @@ export class WorkflowDb {
 
       CREATE INDEX IF NOT EXISTS idx_compensations_run ON compensations(run_id);
       CREATE INDEX IF NOT EXISTS idx_compensations_status ON compensations(status);
+
+      CREATE TABLE IF NOT EXISTS thought_events (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        workflow_name TEXT NOT NULL,
+        step_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_thoughts_run ON thought_events(run_id);
+      CREATE INDEX IF NOT EXISTS idx_thoughts_created ON thought_events(created_at);
     `);
   }
 
@@ -1067,6 +1129,36 @@ export class WorkflowDb {
       const stmt = this.db.prepare('DELETE FROM events');
       const result = stmt.run();
       return result.changes;
+    });
+  }
+
+  // ===== Thought Events =====
+
+  async storeThoughtEvent(
+    runId: string,
+    workflowName: string,
+    stepId: string,
+    content: string,
+    source: 'thinking' | 'reasoning'
+  ): Promise<void> {
+    await this.withRetry(() => {
+      this.createThoughtStmt.run(
+        randomUUID(),
+        runId,
+        workflowName,
+        stepId,
+        content,
+        source
+      );
+    });
+  }
+
+  async listThoughtEvents(limit = 20, runId?: string): Promise<ThoughtEvent[]> {
+    return await this.withRetry(() => {
+      if (runId) {
+        return this.listThoughtEventsByRunStmt.all(runId, limit) as ThoughtEvent[];
+      }
+      return this.listThoughtEventsStmt.all(limit) as ThoughtEvent[];
     });
   }
 }

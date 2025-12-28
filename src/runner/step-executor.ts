@@ -10,7 +10,9 @@ import type {
   EngineStep,
   FileStep,
   HumanStep,
+  LlmStep,
   MemoryStep,
+  PlanStep,
   RequestStep,
   ScriptStep,
   ShellStep,
@@ -36,6 +38,7 @@ import { SafeSandbox } from '../utils/sandbox.ts';
 import { executeLlmStep } from './llm-executor.ts';
 import { validateRemoteUrl } from './mcp-client.ts';
 import type { MCPManager } from './mcp-manager.ts';
+import type { WorkflowEvent } from './events.ts';
 
 export class WorkflowSuspendedError extends Error {
   constructor(
@@ -82,11 +85,13 @@ export interface StepExecutorOptions {
   dryRun?: boolean;
   abortSignal?: AbortSignal;
   runId?: string;
+  workflowName?: string;
   stepExecutionId?: string;
   artifactRoot?: string;
   redactForStorage?: (value: unknown) => unknown;
   debug?: boolean;
   allowInsecure?: boolean;
+  emitEvent?: (event: WorkflowEvent) => void;
   // Dependency injection for testing
   getAdapter?: typeof getAdapter;
   executeStep?: typeof executeStep;
@@ -95,6 +100,32 @@ export interface StepExecutorOptions {
 }
 
 import type { JoinStep } from '../parser/schema.ts';
+
+const DEFAULT_PLAN_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    steps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          details: { type: 'string' },
+          acceptance: { type: 'array', items: { type: 'string' } },
+          needs: { type: 'array', items: { type: 'string' } },
+          inputs: { type: 'object', additionalProperties: true },
+          workflow: { type: 'string' },
+          type: { type: 'string' },
+        },
+        required: ['title'],
+        additionalProperties: true,
+      },
+    },
+    notes: { type: 'string' },
+  },
+  required: ['steps'],
+};
 
 /**
  * Execute a join step
@@ -172,6 +203,80 @@ async function executeJoinStep(
     output: { inputs, status: statusMap },
     status: 'success',
   };
+}
+
+function buildPlanPrompt(goal: string, context: string, constraints: string): string {
+  return `You are a planner. Break the goal into a concise, ordered list of steps.
+
+Goal:
+${goal}
+
+Context:
+${context || 'None'}
+
+Constraints:
+${constraints || 'None'}
+
+Each step should be small, specific, and independently executable.
+Include any dependencies under "needs" and optional "workflow" or "inputs" when appropriate.
+
+Return only the structured JSON required by the schema.`;
+}
+
+async function executePlanStep(
+  step: PlanStep,
+  context: ExpressionContext,
+  logger: Logger,
+  options: StepExecutorOptions
+): Promise<StepResult> {
+  const goal = ExpressionEvaluator.evaluateString(step.goal, context);
+  const contextText = step.context
+    ? ExpressionEvaluator.evaluateString(step.context, context)
+    : '';
+  const constraintsText = step.constraints
+    ? ExpressionEvaluator.evaluateString(step.constraints, context)
+    : '';
+  const prompt = step.prompt
+    ? ExpressionEvaluator.evaluateString(step.prompt, context)
+    : buildPlanPrompt(goal, contextText, constraintsText);
+
+  const llmStep: LlmStep = {
+    id: step.id,
+    type: 'llm',
+    agent: step.agent || 'keystone-architect',
+    provider: step.provider,
+    model: step.model,
+    prompt,
+    tools: step.tools,
+    maxIterations: step.maxIterations,
+    maxMessageHistory: step.maxMessageHistory,
+    contextStrategy: step.contextStrategy,
+    qualityGate: step.qualityGate,
+    useGlobalMcp: step.useGlobalMcp,
+    allowClarification: step.allowClarification,
+    mcpServers: step.mcpServers,
+    useStandardTools: step.useStandardTools,
+    allowOutsideCwd: step.allowOutsideCwd,
+    allowInsecure: step.allowInsecure,
+    handoff: step.handoff,
+    outputSchema: step.outputSchema ?? DEFAULT_PLAN_OUTPUT_SCHEMA,
+    needs: [],
+  };
+
+  const execLlm = options.executeLlmStep || executeLlmStep;
+  const execStep = options.executeStep || executeStep;
+  return execLlm(
+    llmStep,
+    context,
+    (s, c) => execStep(s, c, logger, { ...options, stepExecutionId: undefined }),
+    logger,
+    options.mcpManager,
+    options.workflowDir,
+    options.abortSignal,
+    options.getAdapter,
+    options.emitEvent,
+    options.workflowName ? { runId: options.runId, workflow: options.workflowName } : undefined
+  );
 }
 
 /**
@@ -300,8 +405,13 @@ export async function executeStep(
           mcpManager,
           workflowDir,
           abortSignal,
-          injectedGetAdapter
+          injectedGetAdapter,
+          options.emitEvent,
+          options.workflowName ? { runId: options.runId, workflow: options.workflowName } : undefined
         );
+        break;
+      case 'plan':
+        result = await executePlanStep(step, context, logger, options);
         break;
       case 'wait':
         result = await executeWaitStep(step, context, logger, options);
@@ -339,6 +449,8 @@ export async function executeStep(
             abortSignal,
             runId,
             artifactRoot,
+            emitEvent: options.emitEvent,
+            workflowName: options.workflowName,
           }
         );
         break;
@@ -517,8 +629,198 @@ async function executeEngineStepWrapper(
   };
 }
 
+type DiffHunk = {
+  originalStart: number;
+  originalCount: number;
+  lines: string[];
+};
+
+type UnifiedDiff = {
+  originalFile: string | null;
+  newFile: string | null;
+  hunks: DiffHunk[];
+};
+
+type SearchReplaceBlock = {
+  search: string;
+  replace: string;
+};
+
+function normalizeDiffPath(diffPath: string): string {
+  return diffPath.replace(/^[ab]\//, '').replace(/\\/g, '/');
+}
+
+function assertDiffMatchesTarget(diffPath: string | null, targetPath: string): void {
+  if (!diffPath || diffPath === '/dev/null') return;
+
+  const normalizedDiff = normalizeDiffPath(diffPath);
+  const targetRelative = path.relative(process.cwd(), targetPath).replace(/\\/g, '/');
+  const targetBase = path.posix.basename(targetRelative);
+  const diffHasDir = normalizedDiff.includes('/');
+
+  if (normalizedDiff === targetRelative) return;
+  if (!diffHasDir && normalizedDiff === targetBase) return;
+
+  throw new Error(`Patch target "${normalizedDiff}" does not match "${targetRelative}"`);
+}
+
+function parseUnifiedDiff(patch: string): UnifiedDiff {
+  const lines = patch.split(/\r?\n/);
+  let originalFile: string | null = null;
+  let newFile: string | null = null;
+  const hunks: DiffHunk[] = [];
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.startsWith('--- ')) {
+      originalFile = line.slice(4).trim();
+      i++;
+      continue;
+    }
+    if (line.startsWith('+++ ')) {
+      newFile = line.slice(4).trim();
+      i++;
+      continue;
+    }
+    if (line.startsWith('@@')) {
+      const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (!match) {
+        throw new Error(`Invalid unified diff hunk header: ${line}`);
+      }
+
+      const originalStart = Number(match[1]);
+      const originalCount = match[2] ? Number(match[2]) : 1;
+      const hunkLines: string[] = [];
+      i++;
+
+      while (i < lines.length) {
+        const hunkLine = lines[i];
+        if (
+          hunkLine.startsWith('@@') ||
+          hunkLine.startsWith('diff --git') ||
+          hunkLine.startsWith('--- ') ||
+          hunkLine.startsWith('+++ ')
+        ) {
+          break;
+        }
+        if (hunkLine === '') {
+          i++;
+          break;
+        }
+        if (hunkLine.startsWith('\\')) {
+          i++;
+          continue;
+        }
+        if (!hunkLine || ![' ', '+', '-'].includes(hunkLine[0])) {
+          throw new Error(`Invalid unified diff line: ${hunkLine}`);
+        }
+        hunkLines.push(hunkLine);
+        i++;
+      }
+
+      hunks.push({ originalStart, originalCount, lines: hunkLines });
+      continue;
+    }
+    i++;
+  }
+
+  return { originalFile, newFile, hunks };
+}
+
+function applyUnifiedDiff(content: string, patch: string, targetPath: string): string {
+  const parsed = parseUnifiedDiff(patch);
+  if (parsed.hunks.length === 0) {
+    throw new Error('Unified diff has no hunks to apply');
+  }
+
+  assertDiffMatchesTarget(parsed.originalFile, targetPath);
+  assertDiffMatchesTarget(parsed.newFile, targetPath);
+
+  const newline = content.includes('\r\n') ? '\r\n' : '\n';
+  const lines = content.length === 0 ? [] : content.split(/\r?\n/);
+  const result: string[] = [];
+  let cursor = 0;
+
+  for (const hunk of parsed.hunks) {
+    const targetIndex = Math.max(0, hunk.originalStart - 1);
+    if (targetIndex < cursor) {
+      throw new Error('Unified diff hunks overlap or are out of order');
+    }
+
+    result.push(...lines.slice(cursor, targetIndex));
+    cursor = targetIndex;
+
+    for (const line of hunk.lines) {
+      const prefix = line[0];
+      const text = line.slice(1);
+
+      if (prefix === ' ') {
+        if (lines[cursor] !== text) {
+          throw new Error(`Hunk context mismatch at line ${cursor + 1}`);
+        }
+        result.push(text);
+        cursor++;
+        continue;
+      }
+
+      if (prefix === '-') {
+        if (lines[cursor] !== text) {
+          throw new Error(`Hunk delete mismatch at line ${cursor + 1}`);
+        }
+        cursor++;
+        continue;
+      }
+
+      if (prefix === '+') {
+        result.push(text);
+        continue;
+      }
+
+      throw new Error(`Invalid unified diff line: ${line}`);
+    }
+  }
+
+  result.push(...lines.slice(cursor));
+  return result.join(newline);
+}
+
+function parseSearchReplaceBlocks(patch: string): SearchReplaceBlock[] {
+  const blocks: SearchReplaceBlock[] = [];
+  const regex =
+    /<<<<<<< SEARCH\r?\n([\s\S]*?)\r?\n=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE\r?\n?/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(patch)) !== null) {
+    blocks.push({ search: match[1], replace: match[2] });
+  }
+
+  return blocks;
+}
+
+function applySearchReplaceBlocks(content: string, blocks: SearchReplaceBlock[]): string {
+  let updated = content;
+
+  for (const [index, block] of blocks.entries()) {
+    if (block.search.length === 0) {
+      throw new Error(`Search block ${index + 1} is empty`);
+    }
+    const firstIndex = updated.indexOf(block.search);
+    if (firstIndex === -1) {
+      throw new Error(`Search block ${index + 1} not found in target file`);
+    }
+    const secondIndex = updated.indexOf(block.search, firstIndex + block.search.length);
+    if (secondIndex !== -1) {
+      throw new Error(`Search block ${index + 1} is not unique in target file`);
+    }
+    updated = updated.replace(block.search, block.replace);
+  }
+
+  return updated;
+}
+
 /**
- * Execute a file step (read, write, append)
+ * Execute a file step (read, write, append, patch)
  */
 async function executeFileStep(
   step: FileStep,
@@ -569,7 +871,8 @@ async function executeFileStep(
   const targetPath = resolvedPath;
 
   if (dryRun && step.op !== 'read') {
-    const opVerb = step.op === 'write' ? 'write to' : 'append to';
+    const opVerb =
+      step.op === 'write' ? 'write to' : step.op === 'append' ? 'append to' : 'patch';
     _logger.log(`[DRY RUN] Would ${opVerb} file: ${targetPath}`);
     return {
       output: { path: targetPath, bytes: 0 },
@@ -631,6 +934,40 @@ async function executeFileStep(
 
       return {
         output: { path: targetPath, bytes: content.length },
+        status: 'success',
+      };
+    }
+
+    case 'patch': {
+      if (step.content === undefined) {
+        throw new Error('Content is required for patch operation');
+      }
+
+      if (!fs.existsSync(targetPath)) {
+        throw new Error(`File not found: ${targetPath}`);
+      }
+
+      const stat = fs.statSync(targetPath);
+      if (stat.size > LIMITS.MAX_FILE_READ_BYTES) {
+        throw new Error(
+          `File exceeds maximum read size of ${LIMITS.MAX_FILE_READ_BYTES} bytes: ${targetPath}`
+        );
+      }
+
+      const patch = ExpressionEvaluator.evaluateString(step.content, context);
+      const original = await Bun.file(targetPath).text();
+
+      let updated: string;
+      const searchReplaceBlocks = parseSearchReplaceBlocks(patch);
+      if (searchReplaceBlocks.length > 0) {
+        updated = applySearchReplaceBlocks(original, searchReplaceBlocks);
+      } else {
+        updated = applyUnifiedDiff(original, patch, targetPath);
+      }
+
+      await Bun.write(targetPath, updated);
+      return {
+        output: { path: targetPath, bytes: updated.length },
         status: 'success',
       };
     }

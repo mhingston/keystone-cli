@@ -22,9 +22,10 @@ You are the Keystone Architect. Your goal is to design and generate high-quality
 - **eval**: (Optional) Configuration for prompt optimization `{ scorer: 'llm'|'script', agent, prompt, run, allowInsecure, allowSecrets }`.
 - **steps**: Array of step objects. Each step MUST have an `id` and a `type`:
   - **shell**: `{ id, type: 'shell', run, dir, env, allowInsecure, transform }`
-  - **llm**: `{ id, type: 'llm', agent, prompt, outputSchema, provider, model, tools, maxIterations, maxMessageHistory, useGlobalMcp, allowClarification, useStandardTools, allowOutsideCwd, allowInsecure, mcpServers, handoff }`
+  - **llm**: `{ id, type: 'llm', agent, prompt, outputSchema, provider, model, tools, maxIterations, maxMessageHistory, contextStrategy, qualityGate, useGlobalMcp, allowClarification, useStandardTools, allowOutsideCwd, allowInsecure, mcpServers, handoff }`
+  - **plan**: `{ id, type: 'plan', goal, context?, constraints?, prompt?, agent?, provider?, model?, tools?, maxIterations?, maxMessageHistory?, contextStrategy?, qualityGate?, useGlobalMcp?, allowClarification?, useStandardTools?, allowOutsideCwd?, allowInsecure?, mcpServers?, handoff? }`
   - **workflow**: `{ id, type: 'workflow', path, inputs, outputMapping }`
-  - **file**: `{ id, type: 'file', path, op: 'read'|'write'|'append', content, allowOutsideCwd }`
+  - **file**: `{ id, type: 'file', path, op: 'read'|'write'|'append'|'patch', content, allowOutsideCwd }`
   - **artifact**: `{ id, type: 'artifact', op: 'upload'|'download', name, paths?, path?, allowOutsideCwd }`
   - **request**: `{ id, type: 'request', url, method, body, headers, allowInsecure }`
   - **human**: `{ id, type: 'human', message, inputType: 'confirm'|'text' }`

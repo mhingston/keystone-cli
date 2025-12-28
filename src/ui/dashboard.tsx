@@ -17,10 +17,21 @@ interface Run {
   exec_soft_failures?: number;
 }
 
+interface Thought {
+  id: string;
+  run_id: string;
+  workflow_name: string;
+  step_id: string;
+  content: string;
+  source: 'thinking' | 'reasoning';
+  created_at: string;
+}
+
 const logger = new ConsoleLogger();
 
 const Dashboard = () => {
   const [runs, setRuns] = useState<Run[]>([]);
+  const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Reuse database connection instead of creating new one every 2 seconds
@@ -81,6 +92,8 @@ const Dashboard = () => {
         })
       );
       setRuns(runsWithUsage);
+      const recentThoughts = (await db.listThoughtEvents(12)) as Thought[];
+      setThoughts(recentThoughts);
     } catch (error) {
       logger.error(`Failed to fetch runs: ${String(error)}`);
     } finally {
@@ -214,6 +227,36 @@ const Dashboard = () => {
         )}
       </Box>
 
+      <Box marginTop={1} borderStyle="round" borderColor="gray" flexDirection="column" paddingX={1}>
+        <Box marginBottom={1}>
+          <Text bold color="cyan">
+            THOUGHTS
+          </Text>
+        </Box>
+        {thoughts.length === 0 ? (
+          <Text italic color="gray">
+            No thought events yet.
+          </Text>
+        ) : (
+          thoughts.map((thought) => (
+            <Box key={thought.id} marginBottom={0}>
+              <Box width={10}>
+                <Text color="gray">{formatClock(thought.created_at)}</Text>
+              </Box>
+              <Box width={10}>
+                <Text color="gray">{thought.run_id.substring(0, 8)}</Text>
+              </Box>
+              <Box width={16}>
+                <Text color="gray">{thought.step_id}</Text>
+              </Box>
+              <Box flexGrow={1}>
+                <Text>{truncateText(thought.content, 120)}</Text>
+              </Box>
+            </Box>
+          ))
+        )}
+      </Box>
+
       <Box marginTop={1} paddingX={1}>
         <Text color="gray">
           <Text bold color="white">
@@ -293,6 +336,11 @@ const formatClock = (iso: string): string => {
   } catch {
     return '--:--:--';
   }
+};
+
+const truncateText = (value: string, maxLength: number): string => {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 };
 
 const formatFailCount = (failed = 0, softFailed = 0): string => {

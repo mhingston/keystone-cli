@@ -7,6 +7,7 @@ import type { Logger } from '../utils/logger.ts';
 import { executeLlmStep } from './llm-executor.ts';
 import type { MCPManager } from './mcp-manager.ts';
 import type { StepResult } from './step-executor.ts';
+import type { WorkflowEvent } from './events.ts';
 
 /**
  * Execute a blueprint step
@@ -23,6 +24,8 @@ export async function executeBlueprintStep(
     runId?: string;
     artifactRoot?: string;
     executeLlmStep?: typeof executeLlmStep;
+    emitEvent?: (event: WorkflowEvent) => void;
+    workflowName?: string;
   }
 ): Promise<StepResult> {
   const {
@@ -32,6 +35,8 @@ export async function executeBlueprintStep(
     runId,
     artifactRoot,
     executeLlmStep: injected,
+    emitEvent,
+    workflowName,
   } = options;
   const runLlmStep = injected || executeLlmStep;
 
@@ -123,7 +128,10 @@ export async function executeBlueprintStep(
     logger,
     mcpManager,
     workflowDir,
-    abortSignal
+    abortSignal,
+    undefined,
+    emitEvent,
+    workflowName ? { runId, workflow: workflowName } : undefined
   );
 
   if (llmResult.status !== 'success') {

@@ -3,15 +3,104 @@ import type { ExpressionContext } from '../expression/evaluator';
 import { ExpressionEvaluator } from '../expression/evaluator';
 import { parseAgent, resolveAgentPath } from '../parser/agent-parser';
 import type { AgentTool, LlmStep, Step } from '../parser/schema';
+import { ConfigLoader } from '../utils/config-loader';
 import { LIMITS } from '../utils/constants';
 import { extractJson } from '../utils/json-parser';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
 import { RedactionBuffer, Redactor } from '../utils/redactor';
-import { type LLMMessage, getAdapter } from './llm-adapter';
+import { type LLMAdapter, type LLMMessage, type LLMResponse, getAdapter } from './llm-adapter';
 import { MCPClient } from './mcp-client';
 import type { MCPManager, MCPServerConfig } from './mcp-manager';
 import { STANDARD_TOOLS, validateStandardToolSecurity } from './standard-tools';
 import type { StepResult } from './step-executor';
+import type { WorkflowEvent } from './events.ts';
+
+const SUMMARY_MESSAGE_NAME = 'context_summary';
+const SUMMARY_MESSAGE_MAX_BYTES = 4000;
+const SUMMARY_INPUT_MESSAGE_MAX_BYTES = 2000;
+const SUMMARY_INPUT_TOTAL_MAX_BYTES = 64 * 1024;
+const SUMMARY_MODEL_BY_PROVIDER_TYPE: Record<string, string> = {
+  openai: 'gpt-4o-mini',
+  'openai-chatgpt': 'gpt-4o-mini',
+  copilot: 'gpt-4o-mini',
+  anthropic: 'claude-3-haiku-20240307',
+  'anthropic-claude': 'claude-3-haiku-20240307',
+  'google-gemini': 'gemini-1.5-flash',
+};
+const THINKING_OPEN_TAG = '<thinking>';
+const THINKING_CLOSE_TAG = '</thinking>';
+
+type LlmEventContext = {
+  runId?: string;
+  workflow?: string;
+};
+
+class ThoughtStreamParser {
+  private buffer = '';
+  private thoughtBuffer = '';
+  private inThinking = false;
+
+  process(chunk: string): { output: string; thoughts: string[] } {
+    this.buffer += chunk;
+    const thoughts: string[] = [];
+    let output = '';
+
+    while (this.buffer.length > 0) {
+      const lower = this.buffer.toLowerCase();
+      if (!this.inThinking) {
+        const openIndex = lower.indexOf(THINKING_OPEN_TAG);
+        if (openIndex === -1) {
+          const keep = Math.max(0, this.buffer.length - (THINKING_OPEN_TAG.length - 1));
+          output += this.buffer.slice(0, keep);
+          this.buffer = this.buffer.slice(keep);
+          break;
+        }
+        output += this.buffer.slice(0, openIndex);
+        this.buffer = this.buffer.slice(openIndex + THINKING_OPEN_TAG.length);
+        this.inThinking = true;
+        continue;
+      }
+
+      const closeIndex = lower.indexOf(THINKING_CLOSE_TAG);
+      if (closeIndex === -1) {
+        const keep = Math.max(0, this.buffer.length - (THINKING_CLOSE_TAG.length - 1));
+        this.thoughtBuffer += this.buffer.slice(0, keep);
+        this.buffer = this.buffer.slice(keep);
+        break;
+      }
+      this.thoughtBuffer += this.buffer.slice(0, closeIndex);
+      this.buffer = this.buffer.slice(closeIndex + THINKING_CLOSE_TAG.length);
+      this.inThinking = false;
+      const thought = this.thoughtBuffer.trim();
+      if (thought) {
+        thoughts.push(thought);
+      }
+      this.thoughtBuffer = '';
+    }
+
+    return { output, thoughts };
+  }
+
+  flush(): { output: string; thoughts: string[] } {
+    const thoughts: string[] = [];
+    let output = '';
+
+    if (this.inThinking) {
+      this.thoughtBuffer += this.buffer;
+      const thought = this.thoughtBuffer.trim();
+      if (thought) {
+        thoughts.push(thought);
+      }
+    } else {
+      output = this.buffer;
+    }
+
+    this.buffer = '';
+    this.thoughtBuffer = '';
+    this.inThinking = false;
+    return { output, thoughts };
+  }
+}
 
 /**
  * Truncate message history to prevent unbounded memory growth.
@@ -119,6 +208,210 @@ function truncateMessages(
   return [...systemMessages, ...keep];
 }
 
+function extractThoughtBlocks(content: string): { content: string; thoughts: string[] } {
+  if (!content) return { content, thoughts: [] };
+  const thoughts: string[] = [];
+  let remaining = content;
+
+  while (true) {
+    const lower = remaining.toLowerCase();
+    const openIndex = lower.indexOf(THINKING_OPEN_TAG);
+    if (openIndex === -1) break;
+    const closeIndex = lower.indexOf(THINKING_CLOSE_TAG, openIndex + THINKING_OPEN_TAG.length);
+    if (closeIndex === -1) break;
+
+    const before = remaining.slice(0, openIndex);
+    const thought = remaining.slice(openIndex + THINKING_OPEN_TAG.length, closeIndex).trim();
+    const after = remaining.slice(closeIndex + THINKING_CLOSE_TAG.length);
+    if (thought) {
+      thoughts.push(thought);
+    }
+    remaining = `${before}${after}`;
+  }
+
+  return { content: remaining, thoughts };
+}
+
+function estimateConversationBytes(messages: LLMMessage[]): number {
+  return messages.reduce((total, msg) => total + estimateMessageBytes(msg), 0);
+}
+
+function resolveSummaryModel(fullModelString: string, resolvedModel: string): string {
+  try {
+    const providerName = ConfigLoader.getProviderForModel(fullModelString);
+    const config = ConfigLoader.load();
+    const providerType = config.providers[providerName]?.type;
+    return SUMMARY_MODEL_BY_PROVIDER_TYPE[providerType] ?? resolvedModel;
+  } catch {
+    return resolvedModel;
+  }
+}
+
+function formatMessageForSummary(message: LLMMessage): string {
+  const roleLabel = message.name ? `${message.role}(${message.name})` : message.role;
+  const parts: string[] = [];
+
+  if (typeof message.content === 'string' && message.content.length > 0) {
+    parts.push(message.content);
+  }
+  if (message.tool_calls && message.tool_calls.length > 0) {
+    parts.push(`tool_calls: ${safeJsonStringify(message.tool_calls)}`);
+  }
+  if (message.reasoning?.summary) {
+    parts.push(`reasoning_summary: ${message.reasoning.summary}`);
+  }
+
+  const combined = parts.join('\n').trim();
+  const trimmed = combined
+    ? truncateStringByBytes(combined, SUMMARY_INPUT_MESSAGE_MAX_BYTES)
+    : '';
+  return `[${roleLabel}]${trimmed ? ` ${trimmed}` : ''}`;
+}
+
+function buildSummaryInput(messages: LLMMessage[]): string {
+  const lines: string[] = [];
+  let remaining = SUMMARY_INPUT_TOTAL_MAX_BYTES;
+
+  for (const message of messages) {
+    const formatted = formatMessageForSummary(message);
+    const bytes = Buffer.byteLength(formatted, 'utf8');
+    if (bytes > remaining) {
+      if (remaining > 0) {
+        lines.push(truncateStringByBytes(formatted, remaining));
+      }
+      break;
+    }
+    lines.push(formatted);
+    remaining -= bytes;
+  }
+
+  return lines.join('\n');
+}
+
+async function summarizeMessagesIfNeeded(
+  messages: LLMMessage[],
+  options: {
+    maxHistory: number;
+    maxBytes: number;
+    adapter: LLMAdapter;
+    summaryModel: string;
+    abortSignal?: AbortSignal;
+  }
+): Promise<{ messages: LLMMessage[]; usage?: LLMResponse['usage']; summarized: boolean }> {
+  const systemMessages = messages.filter(
+    (m) => m.role === 'system' && m.name !== SUMMARY_MESSAGE_NAME
+  );
+  const summaryMessages = messages.filter(
+    (m) => m.role === 'system' && m.name === SUMMARY_MESSAGE_NAME
+  );
+  const nonSystemMessages = messages.filter((m) => m.role !== 'system');
+
+  const maxNonSystem = Math.max(0, options.maxHistory - systemMessages.length - 1);
+  const overCount = nonSystemMessages.length > maxNonSystem;
+  const overBytes =
+    options.maxBytes > 0 && estimateConversationBytes(messages) > options.maxBytes;
+
+  if (!overCount && !overBytes) {
+    return { messages, summarized: false };
+  }
+
+  if (maxNonSystem <= 0) {
+    return {
+      messages: truncateMessages(messages, options.maxHistory, options.maxBytes),
+      summarized: false,
+    };
+  }
+
+  const systemBytes = systemMessages.reduce((total, msg) => total + estimateMessageBytes(msg), 0);
+  const availableBytes =
+    options.maxBytes > 0
+      ? options.maxBytes - systemBytes - SUMMARY_MESSAGE_MAX_BYTES
+      : Number.POSITIVE_INFINITY;
+
+  const tail: LLMMessage[] = [];
+  let tailBytes = 0;
+  for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
+    if (tail.length >= maxNonSystem) break;
+    const msgBytes = estimateMessageBytes(nonSystemMessages[i]);
+    if (options.maxBytes > 0 && tailBytes + msgBytes > availableBytes) {
+      break;
+    }
+    tail.push(nonSystemMessages[i]);
+    tailBytes += msgBytes;
+  }
+
+  const keepCount = tail.length;
+  const summarizeCount = nonSystemMessages.length - keepCount;
+  if (summarizeCount <= 0) {
+    return { messages, summarized: false };
+  }
+
+  const toSummarize = nonSystemMessages.slice(0, summarizeCount);
+  const existingSummary = summaryMessages
+    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .filter((content) => content.trim().length > 0)
+    .join('\n');
+  const summaryInput = buildSummaryInput(toSummarize);
+
+  if (!summaryInput.trim() && !existingSummary.trim()) {
+    return {
+      messages: truncateMessages(messages, options.maxHistory, options.maxBytes),
+      summarized: false,
+    };
+  }
+
+  const promptParts: string[] = [];
+  if (existingSummary.trim()) {
+    promptParts.push(`Existing summary:\n${existingSummary}`);
+  }
+  if (summaryInput.trim()) {
+    promptParts.push(`Messages to summarize:\n${summaryInput}`);
+  }
+
+  const response = await options.adapter.chat(
+    [
+      {
+        role: 'system',
+        content:
+          'Summarize the conversation history for continued work. Focus on decisions, constraints, outputs, and open questions. Be concise and factual. Use short bullet points.',
+      },
+      {
+        role: 'user',
+        content: promptParts.join('\n\n'),
+      },
+    ],
+    {
+      model: options.summaryModel,
+      signal: options.abortSignal,
+    }
+  );
+
+  const summaryText =
+    typeof response.message.content === 'string' ? response.message.content.trim() : '';
+  if (!summaryText) {
+    throw new Error('Summary model returned empty content');
+  }
+
+  const summaryContent = truncateStringByBytes(
+    `Context summary:\n${summaryText}`,
+    SUMMARY_MESSAGE_MAX_BYTES
+  );
+
+  const summaryMessage: LLMMessage = {
+    role: 'system',
+    name: SUMMARY_MESSAGE_NAME,
+    content: summaryContent,
+  };
+
+  const combinedMessages = [...systemMessages, summaryMessage, ...tail.reverse()];
+
+  return {
+    messages: truncateMessages(combinedMessages, options.maxHistory, options.maxBytes),
+    usage: response.usage,
+    summarized: true,
+  };
+}
+
 interface ToolDefinition {
   name: string;
   description?: string;
@@ -136,7 +429,9 @@ export async function executeLlmStep(
   mcpManager?: MCPManager,
   workflowDir?: string,
   abortSignal?: AbortSignal,
-  getAdapterFn?: typeof getAdapter
+  getAdapterFn?: typeof getAdapter,
+  emitEvent?: (event: WorkflowEvent) => void,
+  eventContext?: LlmEventContext
 ): Promise<StepResult> {
   const agentPath = resolveAgentPath(step.agent, workflowDir);
   const agent = parseAgent(agentPath);
@@ -404,17 +699,106 @@ export async function executeLlmStep(
     const redactionBuffer = new RedactionBuffer(redactor);
     const maxHistory = step.maxMessageHistory || LIMITS.MAX_MESSAGE_HISTORY;
     const maxConversationBytes = LIMITS.MAX_CONVERSATION_BYTES;
+    const contextStrategy = step.contextStrategy || 'truncate';
+    const summaryModel =
+      contextStrategy === 'summary' || contextStrategy === 'auto'
+        ? resolveSummaryModel(fullModelString, resolvedModel)
+        : resolvedModel;
     const formatToolContent = (content: string): string =>
       truncateToolOutput(content, maxToolOutputBytes);
+    const eventTimestamp = () => new Date().toISOString();
+    const emitThought = (content: string, source: 'thinking' | 'reasoning') => {
+      const trimmed = redactor.redact(content.trim());
+      if (!trimmed) return;
+      logger.info(`💭 Thought (${source}): ${trimmed}`);
+      if (emitEvent && eventContext?.runId && eventContext?.workflow) {
+        emitEvent({
+          type: 'llm.thought',
+          timestamp: eventTimestamp(),
+          runId: eventContext.runId,
+          workflow: eventContext.workflow,
+          stepId: step.id,
+          content: trimmed,
+          source,
+        });
+      }
+    };
+    const thoughtStream = step.outputSchema ? null : new ThoughtStreamParser();
+    let streamedThoughts = 0;
+    const handleStreamChunk = (chunk: string) => {
+      const redactedChunk = redactionBuffer.process(chunk);
+      if (!thoughtStream) {
+        process.stdout.write(redactedChunk);
+        return;
+      }
+      const parsed = thoughtStream.process(redactedChunk);
+      if (parsed.output) {
+        process.stdout.write(parsed.output);
+      }
+      for (const thought of parsed.thoughts) {
+        emitThought(thought, 'thinking');
+        streamedThoughts += 1;
+      }
+    };
+    const flushStream = () => {
+      const flushed = redactionBuffer.flush();
+      if (!thoughtStream) {
+        process.stdout.write(flushed);
+        return;
+      }
+      const parsed = thoughtStream.process(flushed);
+      if (parsed.output) {
+        process.stdout.write(parsed.output);
+      }
+      for (const thought of parsed.thoughts) {
+        emitThought(thought, 'thinking');
+        streamedThoughts += 1;
+      }
+      const final = thoughtStream.flush();
+      if (final.output) {
+        process.stdout.write(final.output);
+      }
+      for (const thought of final.thoughts) {
+        emitThought(thought, 'thinking');
+        streamedThoughts += 1;
+      }
+    };
+    const applyContextStrategy = async () => {
+      if (contextStrategy === 'summary' || contextStrategy === 'auto') {
+        try {
+          const result = await summarizeMessagesIfNeeded(messages, {
+            maxHistory,
+            maxBytes: maxConversationBytes,
+            adapter,
+            summaryModel,
+            abortSignal,
+          });
+          messages = result.messages;
+          if (result.usage) {
+            totalUsage.prompt_tokens += result.usage.prompt_tokens;
+            totalUsage.completion_tokens += result.usage.completion_tokens;
+            totalUsage.total_tokens += result.usage.total_tokens;
+          }
+          return;
+        } catch (error) {
+          logger.warn(
+            `Context summarization failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      messages = truncateMessages(messages, maxHistory, maxConversationBytes);
+    };
 
     while (iterations < maxIterations) {
       iterations++;
       if (abortSignal?.aborted) {
         throw new Error('Step canceled');
       }
+      streamedThoughts = 0;
 
-      // Truncate message history to prevent unbounded growth
-      messages = truncateMessages(messages, maxHistory, maxConversationBytes);
+      // Apply context strategy to prevent unbounded growth
+      await applyContextStrategy();
       const truncatedMessages = messages;
 
       const response = await adapter.chat(truncatedMessages, {
@@ -422,7 +806,7 @@ export async function executeLlmStep(
         tools: llmTools.length > 0 ? llmTools : undefined,
         onStream: (chunk) => {
           if (!step.outputSchema) {
-            process.stdout.write(redactionBuffer.process(chunk));
+            handleStreamChunk(chunk);
           }
         },
         signal: abortSignal,
@@ -430,7 +814,7 @@ export async function executeLlmStep(
       });
 
       if (!step.outputSchema) {
-        process.stdout.write(redactionBuffer.flush());
+        flushStream();
       }
 
       if (response.usage) {
@@ -439,7 +823,22 @@ export async function executeLlmStep(
         totalUsage.total_tokens += response.usage.total_tokens;
       }
 
-      const { message } = response;
+      let { message } = response;
+      if (typeof message.content === 'string' && message.content.length > 0) {
+        const extracted = extractThoughtBlocks(message.content);
+        if (extracted.content !== message.content) {
+          message = { ...message, content: extracted.content };
+        }
+        if (streamedThoughts === 0) {
+          for (const thought of extracted.thoughts) {
+            emitThought(thought, 'thinking');
+          }
+        }
+      }
+      if (message.reasoning?.summary) {
+        emitThought(message.reasoning.summary, 'reasoning');
+      }
+
       messages.push(message);
 
       // 1. Check for native record_output tool call (forced by Anthropic adapter)
@@ -549,7 +948,7 @@ export async function executeLlmStep(
               continue;
             }
             // In non-TTY, we suspend
-            messages = truncateMessages(messages, maxHistory, maxConversationBytes);
+            await applyContextStrategy();
             return {
               status: 'suspended',
               output: {
@@ -645,7 +1044,7 @@ export async function executeLlmStep(
         }
       }
 
-      messages = truncateMessages(messages, maxHistory, maxConversationBytes);
+      await applyContextStrategy();
     }
 
     throw new Error('Max ReAct iterations reached');

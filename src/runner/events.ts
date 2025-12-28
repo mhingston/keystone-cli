@@ -36,6 +36,15 @@ export type WorkflowEvent =
       totalSteps?: number;
     }
   | {
+      type: 'llm.thought';
+      timestamp: string;
+      runId: string;
+      workflow: string;
+      stepId: string;
+      content: string;
+      source: 'thinking' | 'reasoning';
+    }
+  | {
       type: 'workflow.complete';
       timestamp: string;
       runId: string;

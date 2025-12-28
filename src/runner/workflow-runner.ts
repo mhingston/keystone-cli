@@ -6,7 +6,7 @@ import { MemoryDb } from '../db/memory-db.ts';
 import { type RunStatus, WorkflowDb } from '../db/workflow-db.ts';
 import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
-import type { Step, Workflow, WorkflowStep } from '../parser/schema.ts';
+import type { LlmStep, PlanStep, Step, Workflow, WorkflowStep } from '../parser/schema.ts';
 import { WorkflowParser } from '../parser/workflow-parser.ts';
 import { StepStatus, type StepStatusType, WorkflowStatus } from '../types/status.ts';
 import { ConfigLoader } from '../utils/config-loader.ts';
@@ -76,6 +76,22 @@ function getWakeAt(output: unknown): string | undefined {
   const wakeAt = (output as { wakeAt?: unknown }).wakeAt;
   return typeof wakeAt === 'string' ? wakeAt : undefined;
 }
+
+const QUALITY_GATE_SCHEMA = {
+  type: 'object',
+  properties: {
+    approved: { type: 'boolean' },
+    issues: { type: 'array', items: { type: 'string' } },
+    suggestions: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['approved'],
+};
+
+type QualityGateReview = {
+  approved: boolean;
+  issues?: string[];
+  suggestions?: string[];
+};
 
 export interface RunOptions {
   inputs?: Record<string, unknown>;
@@ -386,6 +402,8 @@ export class WorkflowRunner {
             runId: this.runId,
             artifactRoot: this.options.artifactRoot,
             redactForStorage: this.redactForStorage.bind(this),
+            emitEvent: this.emitEvent.bind(this),
+            workflowName: this.workflow.name,
           });
 
           if (result.status === 'success') {
@@ -1300,7 +1318,7 @@ export class WorkflowRunner {
 
     const operation = async (attemptContext: ExpressionContext, abortSignal?: AbortSignal) => {
       const exec = this.options.executeStep || executeStep;
-      const result = await exec(stepToExecute, attemptContext, this.logger, {
+      let result = await exec(stepToExecute, attemptContext, this.logger, {
         executeWorkflowFn: this.executeSubWorkflow.bind(this),
         mcpManager: this.mcpManager,
         db: this.db,
@@ -1314,6 +1332,8 @@ export class WorkflowRunner {
         redactForStorage: this.redactForStorage.bind(this),
         getAdapter: this.options.getAdapter,
         executeStep: this.options.executeStep || executeStep,
+        emitEvent: this.emitEvent.bind(this),
+        workflowName: this.workflow.name,
       });
       if (result.status === 'failed') {
         throw new StepExecutionError(result);
@@ -1337,6 +1357,7 @@ export class WorkflowRunner {
           const message = error instanceof Error ? error.message : String(error);
           const outputRetries = stepToExecute.outputRetries || 0;
           const currentAttempt = (attemptContext.outputRepairAttempts as number) || 0;
+          let handled = false;
 
           // Only attempt repair for LLM steps with outputRetries configured
           if (stepToExecute.type === 'llm' && outputRetries > 0 && currentAttempt < outputRetries) {
@@ -1380,6 +1401,8 @@ export class WorkflowRunner {
               artifactRoot: this.options.artifactRoot,
               redactForStorage: this.redactForStorage.bind(this),
               executeStep: this.options.executeStep || executeStep,
+              emitEvent: this.emitEvent.bind(this),
+              workflowName: this.workflow.name,
             });
 
             if (repairResult.status === 'failed') {
@@ -1397,7 +1420,8 @@ export class WorkflowRunner {
               this.logger.log(
                 `  ✓ Output repair successful after ${currentAttempt + 1} attempt(s)`
               );
-              return repairResult;
+              result = repairResult;
+              handled = true;
             } catch (repairError) {
               // If still failing, either retry again or give up
               if (currentAttempt + 1 < outputRetries) {
@@ -1420,12 +1444,21 @@ export class WorkflowRunner {
             }
           }
 
-          throw new StepExecutionError({
-            ...result,
-            status: 'failed',
-            error: message,
-          });
+          if (!handled) {
+            throw new StepExecutionError({
+              ...result,
+              status: 'failed',
+              error: message,
+            });
+          }
         }
+      }
+      if (
+        result.status === 'success' &&
+        (stepToExecute.type === 'llm' || stepToExecute.type === 'plan') &&
+        stepToExecute.qualityGate
+      ) {
+        result = await this.runQualityGate(stepToExecute, result, attemptContext, abortSignal);
       }
       return result;
     };
@@ -1858,6 +1891,8 @@ Do not change the 'id' or 'type' or 'auto_heal' fields.
       redactForStorage: this.redactForStorage.bind(this),
       allowInsecure: this.options.allowInsecure,
       executeStep: this.options.executeStep || executeStep,
+      emitEvent: this.emitEvent.bind(this),
+      workflowName: this.workflow.name,
     });
 
     if (result.status !== 'success' || !result.output) {
@@ -2020,6 +2055,217 @@ ${strategyInstructions[strategy]}
 Please provide a corrected response that exactly matches the required schema.`;
   }
 
+  private buildPlanPromptFromStep(step: PlanStep, context: ExpressionContext): string {
+    const goal = ExpressionEvaluator.evaluateString(step.goal, context);
+    const contextText = step.context
+      ? ExpressionEvaluator.evaluateString(step.context, context)
+      : '';
+    const constraintsText = step.constraints
+      ? ExpressionEvaluator.evaluateString(step.constraints, context)
+      : '';
+
+    return `You are a planner. Break the goal into a concise, ordered list of steps.
+
+Goal:
+${goal}
+
+Context:
+${contextText || 'None'}
+
+Constraints:
+${constraintsText || 'None'}
+
+Each step should be small, specific, and independently executable.
+Include any dependencies under "needs" and optional "workflow" or "inputs" when appropriate.
+
+Return only the structured JSON required by the schema.`;
+  }
+
+  private buildQualityGateReviewPrompt(
+    step: LlmStep | PlanStep,
+    output: unknown,
+    gatePrompt: string | undefined,
+    context: ExpressionContext
+  ): string {
+    const reviewContext = {
+      ...context,
+      output,
+    };
+
+    if (gatePrompt) {
+      return ExpressionEvaluator.evaluateString(gatePrompt, reviewContext);
+    }
+
+    const taskDescription =
+      step.type === 'plan'
+        ? this.buildPlanPromptFromStep(step, context)
+        : step.prompt;
+
+    return `Review the output for correctness, completeness, and clarity.
+
+Task:
+${taskDescription}
+
+Output:
+${typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
+
+Identify issues, risks, and missing details. Be specific.
+Return only the structured JSON required by the schema.`;
+  }
+
+  private buildQualityGateRefinePrompt(
+    step: LlmStep | PlanStep,
+    output: unknown,
+    review: QualityGateReview,
+    context: ExpressionContext
+  ): string {
+    const basePrompt =
+      step.type === 'plan'
+        ? this.buildPlanPromptFromStep(step, context)
+        : step.prompt;
+    const reviewText = JSON.stringify(review, null, 2);
+    const outputText = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+
+    return `${basePrompt}
+
+---
+
+QUALITY REVIEW FAILED
+
+Reviewer feedback:
+${reviewText}
+
+Previous output:
+${outputText}
+
+Revise the output to address the feedback. Return only the corrected output.`;
+  }
+
+  private async runQualityGate(
+    step: LlmStep | PlanStep,
+    result: StepResult,
+    context: ExpressionContext,
+    abortSignal?: AbortSignal
+  ): Promise<StepResult> {
+    const gate = step.qualityGate;
+    if (!gate) return result;
+
+    let attempts = (context.qualityGateAttempts as number) || 0;
+    const maxAttempts = gate.maxAttempts ?? 1;
+    let currentResult = result;
+
+    while (true) {
+      if (abortSignal?.aborted) {
+        throw new Error('Step canceled');
+      }
+
+      const reviewContext = {
+        ...context,
+        output: currentResult.output,
+        qualityGateAttempts: attempts,
+      };
+      const reviewPrompt = this.buildQualityGateReviewPrompt(
+        step,
+        currentResult.output,
+        gate.prompt,
+        reviewContext
+      );
+      const reviewStep: Step = {
+        id: `${step.id}-quality-review`,
+        type: 'llm',
+        agent: gate.agent,
+        provider: gate.provider,
+        model: gate.model,
+        prompt: reviewPrompt,
+        outputSchema: QUALITY_GATE_SCHEMA,
+      } as LlmStep;
+
+      const exec = this.options.executeStep || executeStep;
+      const reviewResult = await exec(reviewStep, reviewContext, this.logger, {
+        executeWorkflowFn: this.executeSubWorkflow.bind(this),
+        mcpManager: this.mcpManager,
+        db: this.db,
+        memoryDb: this.memoryDb,
+        workflowDir: this.options.workflowDir,
+        dryRun: this.options.dryRun,
+        abortSignal,
+        runId: this.runId,
+        artifactRoot: this.options.artifactRoot,
+        redactForStorage: this.redactForStorage.bind(this),
+        getAdapter: this.options.getAdapter,
+        executeStep: this.options.executeStep || executeStep,
+        emitEvent: this.emitEvent.bind(this),
+        workflowName: this.workflow.name,
+      });
+
+      if (reviewResult.status !== 'success' || !reviewResult.output) {
+        throw new StepExecutionError({
+          ...reviewResult,
+          status: 'failed',
+          error: reviewResult.error || 'Quality gate review failed',
+        });
+      }
+
+      this.validateSchema('output', QUALITY_GATE_SCHEMA, reviewResult.output, reviewStep.id);
+
+      const review = reviewResult.output as QualityGateReview;
+      if (review.approved) {
+        return currentResult;
+      }
+
+      if (attempts >= maxAttempts) {
+        const issues = review.issues?.join('; ') || 'Quality gate rejected output';
+        throw new StepExecutionError({
+          ...currentResult,
+          status: 'failed',
+          error: `Quality gate rejected: ${issues}`,
+        });
+      }
+
+      attempts += 1;
+      this.logger.log(
+        `  🔍 Quality gate rejected output; refining (${attempts}/${maxAttempts})`
+      );
+
+      const refinePrompt = this.buildQualityGateRefinePrompt(step, currentResult.output, review, context);
+      const refinedStep: Step = {
+        ...step,
+        prompt: refinePrompt,
+      };
+      const refinedContext = {
+        ...context,
+        qualityGateAttempts: attempts,
+      };
+
+      const refinedResult = await exec(refinedStep, refinedContext, this.logger, {
+        executeWorkflowFn: this.executeSubWorkflow.bind(this),
+        mcpManager: this.mcpManager,
+        db: this.db,
+        memoryDb: this.memoryDb,
+        workflowDir: this.options.workflowDir,
+        dryRun: this.options.dryRun,
+        abortSignal,
+        runId: this.runId,
+        artifactRoot: this.options.artifactRoot,
+        redactForStorage: this.redactForStorage.bind(this),
+        getAdapter: this.options.getAdapter,
+        executeStep: this.options.executeStep || executeStep,
+        emitEvent: this.emitEvent.bind(this),
+        workflowName: this.workflow.name,
+      });
+
+      if (refinedResult.status === 'failed') {
+        throw new StepExecutionError(refinedResult);
+      }
+
+      if (step.outputSchema) {
+        this.validateSchema('output', step.outputSchema, refinedResult.output, step.id);
+      }
+
+      currentResult = refinedResult;
+    }
+  }
+
   /**
    * Execute a step (handles foreach if present)
    */
@@ -2174,10 +2420,26 @@ Please provide a corrected response that exactly matches the required schema.`;
   }
 
   private emitEvent(event: WorkflowEvent): void {
-    if (!this.options.onEvent) return;
     try {
       const redacted = this.redactor.redactValue(event) as WorkflowEvent;
-      this.options.onEvent(redacted);
+      if (redacted.type === 'llm.thought') {
+        void this.db
+          .storeThoughtEvent(
+            redacted.runId,
+            redacted.workflow,
+            redacted.stepId,
+            redacted.content,
+            redacted.source
+          )
+          .catch((error) => {
+            this.logger.warn(
+              `  ⚠️ Failed to store thought event: ${error instanceof Error ? error.message : String(error)}`
+            );
+          });
+      }
+      if (this.options.onEvent) {
+        this.options.onEvent(redacted);
+      }
     } catch (error) {
       this.logger.warn(
         `  ⚠️ Failed to emit event: ${error instanceof Error ? error.message : String(error)}`

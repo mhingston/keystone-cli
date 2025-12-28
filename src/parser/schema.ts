@@ -186,6 +186,14 @@ const EngineHandoffSchema = z.object({
   }),
 });
 
+const QualityGateSchema = z.object({
+  agent: z.string(),
+  prompt: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  maxAttempts: z.number().int().min(1).default(1),
+});
+
 const LlmStepSchema = BaseStepSchema.extend({
   type: z.literal('llm'),
   agent: z.string(),
@@ -195,6 +203,47 @@ const LlmStepSchema = BaseStepSchema.extend({
   tools: z.array(AgentToolSchema).optional(),
   maxIterations: z.number().int().positive().default(10),
   maxMessageHistory: z.number().int().positive().optional(), // Max messages to keep in conversation history
+  contextStrategy: z.enum(['truncate', 'summary', 'auto']).optional(),
+  qualityGate: QualityGateSchema.optional(),
+  useGlobalMcp: z.boolean().optional(),
+  allowClarification: z.boolean().optional(),
+  mcpServers: z
+    .array(
+      z.union([
+        z.string(),
+        z.object({
+          name: z.string(),
+          type: z.enum(['local', 'remote']).optional(),
+          command: z.string().optional(),
+          args: z.array(z.string()).optional(),
+          env: z.record(z.string()).optional(),
+          url: z.string().optional(),
+          headers: z.record(z.string()).optional(),
+          timeout: z.number().int().positive().optional(),
+        }),
+      ])
+    )
+    .optional(),
+  useStandardTools: z.boolean().optional(),
+  allowOutsideCwd: z.boolean().optional(),
+  allowInsecure: z.boolean().optional(),
+  handoff: EngineHandoffSchema.optional(),
+});
+
+const PlanStepSchema = BaseStepSchema.extend({
+  type: z.literal('plan'),
+  goal: z.string(),
+  context: z.string().optional(),
+  constraints: z.string().optional(),
+  prompt: z.string().optional(),
+  agent: z.string().optional().default('keystone-architect'),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  tools: z.array(AgentToolSchema).optional(),
+  maxIterations: z.number().int().positive().default(10),
+  maxMessageHistory: z.number().int().positive().optional(),
+  contextStrategy: z.enum(['truncate', 'summary', 'auto']).optional(),
+  qualityGate: QualityGateSchema.optional(),
   useGlobalMcp: z.boolean().optional(),
   allowClarification: z.boolean().optional(),
   mcpServers: z
@@ -239,7 +288,7 @@ const FileStepSchema = BaseStepSchema.extend({
   type: z.literal('file'),
   path: z.string(),
   content: z.string().optional(),
-  op: z.enum(['read', 'write', 'append']),
+  op: z.enum(['read', 'write', 'append', 'patch']),
   allowOutsideCwd: z.boolean().optional(),
 });
 
@@ -354,6 +403,7 @@ export const StepSchema: z.ZodType<any> = z.lazy(() =>
   z.discriminatedUnion('type', [
     ShellStepSchema,
     LlmStepSchema,
+    PlanStepSchema,
     WorkflowStepSchema,
     FileStepSchema,
     RequestStepSchema,
@@ -416,6 +466,7 @@ export type RetryConfig = z.infer<typeof RetrySchema>;
 export type Step = z.infer<typeof StepSchema>;
 export type ShellStep = z.infer<typeof ShellStepSchema>;
 export type LlmStep = z.infer<typeof LlmStepSchema>;
+export type PlanStep = z.infer<typeof PlanStepSchema>;
 export type WorkflowStep = z.infer<typeof WorkflowStepSchema>;
 export type FileStep = z.infer<typeof FileStepSchema>;
 export type RequestStep = z.infer<typeof RequestStepSchema>;
@@ -445,6 +496,7 @@ export {
   WaitStepSchema,
   ShellStepSchema,
   LlmStepSchema,
+  PlanStepSchema,
   WorkflowStepSchema,
   FileStepSchema,
   RequestStepSchema,

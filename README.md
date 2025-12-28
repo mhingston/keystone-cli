@@ -144,6 +144,7 @@ Sub-workflows:
 - `decompose-research`: Runs a single research task (`task`) with optional `context`/`constraints`.
 - `decompose-implement`: Runs a single implementation task (`task`) with optional `research` findings.
 - `decompose-review`: Reviews a single implementation task (`task`) with optional `implementation` results.
+- `review-loop`: Reusable generate → critique → refine loop with a quality gate.
 
 Example runs:
 ```bash
@@ -419,14 +420,23 @@ Keystone supports several specialized step types:
 - `llm`: Prompt an agent and get structured or unstructured responses. Supports `outputSchema` (JSON Schema) for structured output.
   - `allowClarification`: Boolean (default `false`). If `true`, allows the LLM to ask clarifying questions back to the user or suspend the workflow if no human is available.
   - `maxIterations`: Number (default `10`). Maximum number of tool-calling loops allowed for the agent.
+  - `maxMessageHistory`: Number (default `50`). Max messages to retain in history before truncation/summary.
+  - `contextStrategy`: `'truncate'|'summary'|'auto'` (default `truncate`). Summarizes older history into a system message when limits are exceeded.
+  - `qualityGate`: Optional reviewer config `{ agent, prompt?, provider?, model?, maxAttempts? }`. If review fails, the step is refined and re-run.
   - `allowInsecure`: Boolean (default `false`). Set `true` to allow risky tool execution.
   - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow tools to access files outside of the current working directory.
   - `handoff`: Optional engine tool definition that lets the LLM delegate work to an allowlisted external CLI with structured inputs.
+- `plan`: Create a dynamic task list for orchestration.
+  - `goal`: Required planning goal (string).
+  - `context` / `constraints`: Optional strings to guide the plan.
+  - `prompt`: Optional override of the planning prompt.
 - `request`: Make HTTP requests (GET, POST, etc.).
   - `allowInsecure`: Boolean (default `false`). If `true`, skips SSRF protections and allows non-HTTPS/local URLs.
   - Cross-origin redirects are blocked for non-GET/HEAD requests unless `allowInsecure: true`; on cross-origin redirects, non-essential headers are stripped.
-- `file`: Read, write, or append to files.
+- `file`: Read, write, append, or patch files.
   - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow reading/writing files outside of the current working directory.
+  - `op: patch`: Apply a unified diff or search/replace blocks via `content`.
+    - Search/replace blocks use `<<<<<<< SEARCH`, `=======`, `>>>>>>> REPLACE` and must match exactly once.
 - `artifact`: Upload or download files as named artifacts.
   - `op: upload`: Requires `name` and `paths` (glob patterns).
   - `op: download`: Requires `name` and `path` (destination directory).
