@@ -167,7 +167,7 @@ Search order (highest precedence first):
 - `.keystone/config.yaml` or `.keystone/config.yml`
 - `$XDG_CONFIG_HOME/keystone/config.yaml` or `~/.config/keystone/config.yaml` (and `.yml`)
 
-Global state (when enabled) is stored at `$XDG_DATA_HOME/keystone/state.db` or `~/.local/share/keystone/state.db`.
+State is stored at `.keystone/state.db` by default (project-local).
 
 ```yaml
 default_provider: openai
@@ -419,7 +419,7 @@ Keystone uses `${{ }}` syntax for dynamic values. Expressions are evaluated usin
 - `${{ steps.id.status }}`: Get the execution status of a step (`'success'`, `'failed'`, etc.).
 - `${{ item }}`: Access the current item in a `foreach` loop.
 - `${{ args.name }}`: Access tool arguments (available ONLY inside agent tool execution steps).
-- `${{ secrets.NAME }}`: Access redacted secrets.
+- `${{ secrets.NAME }}`: Access secret values (redacted in logs and at rest).
 - `${{ env.NAME }}`: Access environment variables (process env merged with workflow-level `env`).
   Workflow-level `env` is evaluated per step; if an expression cannot be resolved yet, the variable is skipped with a warning.
 - `${{ memory.key }}`: Access mutable workflow memory (populated by tools via `__keystone_context`).
@@ -480,12 +480,17 @@ Keystone supports several specialized step types:
       status: state
     ```
 - `join`: Aggregate outputs from dependencies and enforce a completion condition.
-  - `target`: `'steps'` (default) or `'branches'` (for foreach).
   - `condition`: `'all'` (default), `'any'`, or a number.
+  - `target`: Reserved for future use; currently ignored.
 - `blueprint`: Generate a structured system blueprint with an agent (persisted as an artifact).
 - `script`: Run JavaScript in a sandboxed subprocess. Requires `allowInsecure: true`.
-- `sleep`: Pause execution for a specified duration.
+- `sleep`: Pause execution for a specified duration or until a timestamp.
+  - `duration`: Milliseconds (number or expression).
+  - `until`: Date/time string (evaluated), parsed by `Date`.
   - `durable`: Boolean (default `false`). If `true` and duration >= 60s, the wait is persisted and can resume after restarts.
+- `wait`: Pause execution until an event is triggered.
+  - `event`: Event name (string or expression).
+  - `oneShot`: Boolean (default `true`). If `true`, consumes the event after it fires.
 - `memory`: Store or retrieve information from the semantic memory vector database.
 - `engine`: Run an allowlisted external CLI and capture a structured summary.
   - `env` and `cwd` are required and must be explicit.
@@ -525,7 +530,7 @@ All steps support common features:
 - `timeout`: Maximum execution time in milliseconds (best-effort; supported steps receive an abort signal).
 - `foreach`: Iterate over an array in parallel.
 - `concurrency`: Limit parallel items for `foreach` (must be a positive integer).
-- `strategy.matrix`: Generate a Cartesian product for `item` (syntactic sugar for `foreach`).
+- `strategy.matrix`: Experimental parser-time expansion into `foreach` (prefer explicit `foreach` for now).
 - `pool`: Assign step to a resource pool.
 - `breakpoint`: Pause before executing the step when running with `--debug`.
 - `compensate`: Step to run if the workflow rolls back.
@@ -533,6 +538,7 @@ All steps support common features:
 - `learn`: Auto-index for few-shot.
 - `reflexion`: Self-correction loop.
 - `auto_heal`: LLM-powered automatic error recovery.
+- `memoize`: Cache step outputs across runs (`memoizeTtlSeconds` controls expiry).
 - `inputSchema` / `outputSchema`: JSON Schema validation.
 - `outputRetries`: Max retries for output validation failures.
 - `repairStrategy`: Strategy for output repair (`reask`, `repair`, `hybrid`).
@@ -663,14 +669,20 @@ When a step fails, the specified agent is invoked with the error details. The ag
   run: echo "Processing ${{ item }}"
 ```
 
-#### Example: Matrix Strategy
+#### Example: Matrix Strategy (manual foreach)
+Until `strategy.matrix` is wired end-to-end, use explicit `foreach` with an array expression:
+
 ```yaml
 - id: test_matrix
   type: shell
-  strategy:
-    matrix:
-      node: [18, 20, 22]
-      os: [ubuntu, macos]
+  foreach: ${{ [
+    { node: 18, os: "ubuntu" },
+    { node: 18, os: "macos" },
+    { node: 20, os: "ubuntu" },
+    { node: 20, os: "macos" },
+    { node: 22, os: "ubuntu" },
+    { node: 22, os: "macos" }
+  ] }}
   run: echo "node=${{ item.node }} os=${{ item.os }}"
 ```
 
@@ -987,7 +999,7 @@ The MCP server provides two modes for running workflows:
 ```
 1. Agent calls start_workflow → { run_id: "abc", status: "running" }
 2. Agent polls get_run_status → { status: "running" }
-3. Agent polls get_run_status → { status: "completed", outputs: {...} }
+3. Agent polls get_run_status → { status: "success", outputs: {...} }
 ```
 
 The async pattern is ideal for LLM-heavy workflows that may take minutes to complete.
@@ -1048,6 +1060,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | Command | Description |
 | :--- | :--- |
 | `init` | Initialize a new Keystone project |
+| `schema` | Generate JSON Schema for workflow and agent definitions (`-o` for output dir) |
 | `run <workflow>` | Execute a workflow (use `-i key=val`, `--resume` to auto-resume, `--dry-run`, `--debug`, `--no-dedup`, `--explain`, `--events`) |
 | `watch <workflow>` | Watch a workflow and re-run on changes (`--debug`, `--events`, `--debounce`) |
 | `resume <run_id>` | Resume a failed/paused/crashed workflow by ID (use `-i key=val` to answer human steps, `--events` for NDJSON) |
@@ -1071,6 +1084,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | `mcp start` | Start the Keystone MCP server |
 | `mcp login <server>` | Login to a remote MCP server |
 | `scheduler` | Run the durable timer scheduler to resume sleep timers |
+| `event <name> [data]` | Trigger an event to resume `wait` steps (data can be JSON) |
 | `timers list` | List durable timers |
 | `timers clear` | Clear durable timers by run ID or `--all` |
 | `dedup list [run_id]` | List idempotency records (optionally filter by run) |
