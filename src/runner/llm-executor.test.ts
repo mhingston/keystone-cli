@@ -10,7 +10,9 @@ import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './llm-adapter
 import { executeLlmStep } from './llm-executor';
 import type { MCPServerConfig } from './mcp-manager';
 import type { StepResult } from './step-executor';
-import type { Logger } from './workflow-runner';
+import { ConsoleLogger, type Logger } from '../utils/logger';
+import { parseAgent } from '../parser/agent-parser';
+import { ExpressionEvaluator } from '../expression/evaluator';
 
 // Mock adapters
 // Instead of mutating prototypes (which causes cross-test contamination),
@@ -158,14 +160,14 @@ describe('llm-executor', () => {
     // Mock spawn to avoid actual process creation
     const mockProcess = Object.assign(new EventEmitter(), {
       stdout: new Readable({
-        read() {},
+        read() { },
       }),
       stdin: new Writable({
         write(_chunk, _encoding, cb: (error?: Error | null) => void) {
           cb();
         },
       }),
-      kill: mock(() => {}),
+      kill: mock(() => { }),
     });
     spawnSpy = spyOn(child_process, 'spawn').mockReturnValue(
       mockProcess as unknown as child_process.ChildProcess
@@ -289,9 +291,11 @@ You are a context-aware agent.`;
     };
 
     const logger: Logger = {
-      log: mock(() => {}),
-      error: mock(() => {}),
-      warn: mock(() => {}),
+      log: mock(() => { }),
+      error: mock(() => { }),
+      warn: mock(() => { }),
+      info: mock(() => { }),
+      debug: mock(() => { }),
     };
 
     await executeLlmStep(
@@ -537,14 +541,14 @@ You are a context-aware agent.`;
     const mcpManager = createMockMcpManager({
       errors: { 'fail-mcp': new Error('Connect failed') },
     });
-    const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
 
     await executeLlmStep(
       step,
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       console,
-      mcpManager as unknown as { getClient: () => Promise<unknown> },
+      mcpManager as any,
       undefined,
       undefined,
       mockGetAdapter
@@ -603,7 +607,7 @@ You are a context-aware agent.`;
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       undefined,
-      mcpManager as unknown as { getClient: () => Promise<unknown> },
+      mcpManager as any,
       undefined,
       undefined,
       getAdapter
@@ -646,10 +650,7 @@ You are a context-aware agent.`;
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       console,
-      manager as unknown as {
-        getClient: () => Promise<unknown>;
-        getGlobalServers: () => unknown[];
-      },
+      manager as any,
       undefined,
       undefined,
       getAdapter
@@ -783,7 +784,7 @@ You are a context-aware agent.`;
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
     const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
-    const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
 
     await executeLlmStep(
       step,
@@ -797,12 +798,194 @@ You are a context-aware agent.`;
     );
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Cannot reference global MCP server 'some-global-server' without MCPManager"
-      )
+      expect.stringContaining("Cannot reference global MCP server 'some-global-server' without MCPManager")
     );
     consoleSpy.mockRestore();
   });
+
+  it('should summarize messages when history is too long', async () => {
+    let summaryAttempted = false;
+    const chatMock = mock(async (messages: LLMMessage[]) => {
+      if (messages.find((m) => m.name === 'context_summary')) {
+        summaryAttempted = true;
+      }
+      return { message: { role: 'assistant', content: 'Resuming' } };
+    }) as unknown as LLMAdapter['chat'];
+
+    const getAdapter = (modelString: string) => {
+      const mockAdapter: LLMAdapter = {
+        chat: async (messages, options) => {
+          if (messages[0].role === 'system' && messages[0].content?.includes('Summarize')) {
+            return { message: { role: 'assistant', content: 'Summary text' } };
+          }
+          return chatMock(messages, options);
+        },
+      };
+      return { adapter: mockAdapter, resolvedModel: 'gpt-4' };
+    };
+
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'continue',
+      needs: [],
+      maxIterations: 1,
+      maxMessageHistory: 4, // Allow at least one non-system message before summarization
+      contextStrategy: 'summary',
+    };
+
+    const context: ExpressionContext = {
+      inputs: {},
+      steps: {
+        l1: {
+          output: {
+            messages: [
+              { role: 'user', content: 'm1' },
+              { role: 'assistant', content: 'm2' },
+              { role: 'user', content: 'm3' },
+            ],
+          },
+        },
+      },
+    };
+
+    const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
+
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
+
+    expect(summaryAttempted).toBe(true);
+  });
+
+  it('should fall back to truncation if summarization fails', async () => {
+    const logger: Logger = {
+      log: mock(() => { }),
+      error: mock(() => { }),
+      warn: mock(() => { }),
+      info: mock(() => { }),
+      debug: mock(() => { }),
+    };
+
+    const getAdapter = (modelString: string) => {
+      const mockAdapter: LLMAdapter = {
+        chat: async (messages) => {
+          if (messages[0].role === 'system' && messages[0].content?.includes('Summarize')) {
+            throw new Error('Summary failed');
+          }
+          return { message: { role: 'assistant', content: 'Truncated response' } };
+        },
+      };
+      return { adapter: mockAdapter, resolvedModel: 'gpt-4' };
+    };
+
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'continue',
+      needs: [],
+      maxIterations: 1,
+      maxMessageHistory: 4,
+      contextStrategy: 'summary',
+    };
+
+    const context: ExpressionContext = {
+      inputs: {},
+      steps: {
+        l1: {
+          output: {
+            messages: [
+              { role: 'user', content: 'm1' },
+              { role: 'assistant', content: 'm2' },
+              { role: 'user', content: 'm3' },
+            ],
+          },
+        },
+      },
+    };
+
+    const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
+
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      logger,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Context summarization failed'));
+  });
+
+  it('should extract thought blocks and emit thought events', async () => {
+    const logger: Logger = {
+      log: mock(() => { }),
+      error: mock(() => { }),
+      warn: mock(() => { }),
+      info: mock(() => { }),
+    };
+
+    const emitEvent = mock(() => { });
+    const eventContext = { runId: 'run-1', workflow: 'wf-1' };
+
+    const chatMock = mock(async () => {
+      return {
+        message: {
+          role: 'assistant',
+          content: '<thinking>I should do X</thinking>Final answer',
+        },
+      };
+    }) as unknown as LLMAdapter['chat'];
+
+    const getAdapter = () => ({
+      adapter: { chat: chatMock },
+      resolvedModel: 'gpt-4',
+    });
+
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'hello',
+      needs: [],
+      maxIterations: 10,
+    };
+
+    await executeLlmStep(
+      step,
+      { inputs: {}, steps: {} },
+      mock(async () => ({ status: 'success' as const, output: 'ok' })) as any,
+      logger,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter as any,
+      emitEvent,
+      eventContext
+    );
+
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Thought (thinking): I should do X'));
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'llm.thought',
+        content: 'I should do X',
+        source: 'thinking',
+      })
+    );
+  });
+
 
   it('should not add global MCP server if already explicitly listed', async () => {
     const mockClient = createMockMcpClient();
@@ -833,10 +1016,7 @@ You are a context-aware agent.`;
       context,
       executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
       console,
-      manager as unknown as {
-        getClient: () => Promise<unknown>;
-        getGlobalServers: () => unknown[];
-      },
+      manager as any,
       undefined,
       undefined,
       getAdapter
@@ -922,6 +1102,51 @@ You are a context-aware agent.`;
     expect(result.status).toBe('success');
     expect(capturedSystem).toContain('payments');
     expect(capturedSystem).not.toContain('${{');
+  });
+
+  it('should handle streaming chunks with thoughts', async () => {
+    const step = {
+      id: 'l-stream',
+      type: 'llm' as const,
+      agent: 'test-agent',
+      prompt: 'stream this',
+      needs: [],
+      maxIterations: 1,
+    };
+
+    // We can't easily add 'stream' to LlmStep without changing schema,
+    // but we can mock the adapter to stream if onStream is provided.
+
+    const chatMock = mock(async function (messages: LLMMessage[], options: any) {
+      if (options.onStream) {
+        options.onStream('<thinking>thought</thinking>done');
+      }
+      return { message: { role: 'assistant', content: '<thinking>thought</thinking>done' } };
+    }) as unknown as LLMAdapter['chat'];
+
+    const adapter = {
+      chat: chatMock,
+    } as any;
+
+    const context: ExpressionContext = { inputs: {}, steps: {} };
+    spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    const emitThought = mock(() => { });
+
+    await executeLlmStep(
+      step as any,
+      context,
+      mock(async () => ({ status: 'success' as const, output: 'ok' })) as any,
+      new ConsoleLogger(),
+      undefined,
+      undefined,
+      undefined,
+      () => ({ adapter, resolvedModel: 'test-model' }),
+      emitThought,
+      { runId: 'test-run', workflow: 'test-wf' }
+    );
+
+    expect(emitThought).toHaveBeenCalled();
   });
 
   it('should transfer to allowed agent and swap system prompt/tools', async () => {

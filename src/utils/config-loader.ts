@@ -8,6 +8,10 @@ export class ConfigLoader {
   private static instance: Config;
   private static logger: Logger = new ConsoleLogger();
 
+  public static getSecret(key: string): string | undefined {
+    return process.env[key];
+  }
+
   // biome-ignore lint/suspicious/noExplicitAny: Generic deep merge utility
   private static deepMerge(target: any, source: any): any {
     const output = { ...target };

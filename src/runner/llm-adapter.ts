@@ -31,6 +31,11 @@ let cachedPipeline: TransformersPipeline | null = null;
 let runtimeResolverRegistered = false;
 let nativeFallbacksRegistered = false;
 
+export function resetRuntimeHelpers(): void {
+  runtimeResolverRegistered = false;
+  nativeFallbacksRegistered = false;
+}
+
 const ONNX_RUNTIME_LIB_PATTERN =
   process.platform === 'win32' ? /^onnxruntime.*\.dll$/i : /^libonnxruntime/i;
 
@@ -44,7 +49,7 @@ function hasOnnxRuntimeLibrary(dir: string): boolean {
   }
 }
 
-function collectOnnxRuntimeLibraryDirs(): string[] {
+export function collectOnnxRuntimeLibraryDirs(): string[] {
   const candidates = new Set<string>();
 
   if (process.env.KEYSTONE_ONNX_RUNTIME_LIB_DIR) {
@@ -85,7 +90,7 @@ function collectOnnxRuntimeLibraryDirs(): string[] {
   return Array.from(candidates).filter(hasOnnxRuntimeLibrary);
 }
 
-function findOnnxRuntimeLibraryPath(dirs: string[]): string | null {
+export function findOnnxRuntimeLibraryPath(dirs: string[]): string | null {
   for (const dir of dirs) {
     try {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -100,7 +105,7 @@ function findOnnxRuntimeLibraryPath(dirs: string[]): string | null {
   return null;
 }
 
-function ensureOnnxRuntimeLibraryPath(): void {
+export function ensureOnnxRuntimeLibraryPath(): void {
   const libDirs = collectOnnxRuntimeLibraryDirs();
   if (!libDirs.length) return;
 
@@ -146,7 +151,7 @@ function ensureOnnxRuntimeLibraryPath(): void {
   }
 }
 
-function resolveNativeModuleFallback(request: string, parentFilename: string): string | null {
+export function resolveNativeModuleFallback(request: string, parentFilename: string): string | null {
   const normalizedRequest = request.replace(/\\/g, '/');
   const fileName = normalizedRequest.split('/').pop();
   if (!fileName) return null;
@@ -180,7 +185,7 @@ function resolveNativeModuleFallback(request: string, parentFilename: string): s
   return null;
 }
 
-function ensureNativeModuleFallbacks(): void {
+export function ensureNativeModuleFallbacks(): void {
   if (nativeFallbacksRegistered) return;
   nativeFallbacksRegistered = true;
 
@@ -212,7 +217,7 @@ function ensureNativeModuleFallbacks(): void {
   };
 }
 
-function resolveTransformersCacheDir(): string | null {
+export function resolveTransformersCacheDir(): string | null {
   if (process.env.TRANSFORMERS_CACHE) {
     return process.env.TRANSFORMERS_CACHE;
   }
@@ -245,7 +250,7 @@ async function getTransformersPipeline(): Promise<TransformersPipeline> {
   return cachedPipeline;
 }
 
-function resolveTransformersPath(): string | null {
+export function resolveTransformersPath(): string | null {
   try {
     if (
       process.env.KEYSTONE_TRANSFORMERS_PATH &&
@@ -259,7 +264,7 @@ function resolveTransformersPath(): string | null {
   return null;
 }
 
-function getRuntimeDir(): string {
+export function getRuntimeDir(): string {
   return process.env.KEYSTONE_RUNTIME_DIR || join(dirname(process.execPath), 'keystone-runtime');
 }
 
@@ -275,7 +280,7 @@ function resolveRuntimePackageEntry(pkg: string, entry: string): string | null {
   return null;
 }
 
-function ensureRuntimeResolver(): void {
+export function ensureRuntimeResolver(): void {
   if (runtimeResolverRegistered) return;
   if (typeof Bun === 'undefined' || typeof Bun.plugin !== 'function') {
     return;
@@ -393,8 +398,8 @@ export class OpenAIAdapter implements LLMAdapter {
   private baseUrl: string;
 
   constructor(apiKey?: string, baseUrl?: string) {
-    this.apiKey = apiKey || Bun.env.OPENAI_API_KEY || '';
-    this.baseUrl = baseUrl || Bun.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+    this.apiKey = apiKey || ConfigLoader.getSecret('OPENAI_API_KEY') || '';
+    this.baseUrl = baseUrl || ConfigLoader.getSecret('OPENAI_BASE_URL') || 'https://api.openai.com/v1';
 
     if (!this.apiKey && this.baseUrl === 'https://api.openai.com/v1') {
       defaultLogger.warn('Warning: OPENAI_API_KEY is not set.');
@@ -498,8 +503,8 @@ export class AnthropicAdapter implements LLMAdapter {
   private authMode: 'api-key' | 'oauth';
 
   constructor(apiKey?: string, baseUrl?: string, authMode: 'api-key' | 'oauth' = 'api-key') {
-    this.apiKey = apiKey || Bun.env.ANTHROPIC_API_KEY || '';
-    this.baseUrl = baseUrl || Bun.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1';
+    this.apiKey = apiKey || ConfigLoader.getSecret('ANTHROPIC_API_KEY') || '';
+    this.baseUrl = baseUrl || ConfigLoader.getSecret('ANTHROPIC_BASE_URL') || 'https://api.anthropic.com/v1';
     this.authMode = authMode;
 
     if (
@@ -669,6 +674,7 @@ export class AnthropicAdapter implements LLMAdapter {
       let fullContent = '';
       // Track tool calls by content block index for robust correlation
       const toolCallsMap = new Map<number, { id: string; name: string; inputString: string }>();
+      const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -721,6 +727,14 @@ export class AnthropicAdapter implements LLMAdapter {
                 toolCall.id = data.content_block.id;
               }
             }
+
+            if (data.type === 'message_start' && data.message?.usage) {
+              usage.prompt_tokens += data.message.usage.input_tokens || 0;
+            }
+            if (data.type === 'message_delta' && data.usage) {
+              usage.completion_tokens += data.usage.output_tokens || 0;
+            }
+            usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
           } catch (e) {
             // Log non-SyntaxError exceptions at warning level (they indicate real issues)
             if (!(e instanceof SyntaxError)) {
@@ -750,6 +764,7 @@ export class AnthropicAdapter implements LLMAdapter {
           content: fullContent || null,
           tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
         },
+        usage: usage.total_tokens > 0 ? usage : undefined,
       };
     }
 
@@ -764,7 +779,16 @@ export class AnthropicAdapter implements LLMAdapter {
       usage: { input_tokens: number; output_tokens: number };
     };
 
-    const content = data.content.find((c) => c.type === 'text')?.text || null;
+    const textBlocks = data.content.filter((c) => c.type === 'text');
+    const thinkingBlocks = data.content.filter((c) => c.type === 'thinking' as any);
+
+    let content = textBlocks.map(tb => tb.text).filter(Boolean).join('\n') || null;
+    if (thinkingBlocks.length > 0) {
+      const thoughts = thinkingBlocks.map(tb => (tb as any).thinking).filter(Boolean).join('\n');
+      if (thoughts) {
+        content = `<thinking>\n${thoughts}\n</thinking>${content ? `\n\n${content}` : ''}`;
+      }
+    }
 
     // Validate response size to prevent memory exhaustion
     if (content && content.length > MAX_RESPONSE_SIZE) {
@@ -807,11 +831,12 @@ export class OpenAIChatGPTAdapter implements LLMAdapter {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl || Bun.env.OPENAI_CHATGPT_BASE_URL || 'https://api.openai.com/v1';
+    this.baseUrl = baseUrl || ConfigLoader.getSecret('OPENAI_CHATGPT_BASE_URL') || 'https://api.openai.com/v1';
   }
 
-  private filterMessages(messages: LLMMessage[]): ChatGPTMessage[] {
+  private filterMessages(messages: LLMMessage[], model: string): ChatGPTMessage[] {
     // Stateless mode requires stripping all IDs and filtering out item_references
+    const normalizedModel = this.normalizeModel(model);
     return messages.map((m): ChatGPTMessage => {
       // Create a shallow copy and remove id if it exists
       const { id: _id, ...rest } = m as LLMMessageWithId;
@@ -825,6 +850,10 @@ export class OpenAIChatGPTAdapter implements LLMAdapter {
           ...rest,
           tool_calls: toolCalls,
         };
+      }
+
+      if (m.role === 'system' && (normalizedModel === 'gpt-4o' || normalizedModel.startsWith('o1-'))) {
+        return { ...rest, role: 'developer' as any };
       }
 
       return rest;
@@ -856,7 +885,7 @@ export class OpenAIChatGPTAdapter implements LLMAdapter {
       );
     }
 
-    const filteredMessages = this.filterMessages(messages);
+    const filteredMessages = this.filterMessages(messages, options?.model || 'gpt-5-codex');
     const resolvedModel = this.normalizeModel(options?.model || 'gpt-5-codex');
 
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -1437,7 +1466,7 @@ export function getAdapter(model: string): { adapter: LLMAdapter; resolvedModel:
   } else if (providerConfig.type === 'anthropic-claude') {
     adapter = new AnthropicClaudeAdapter(providerConfig.base_url);
   } else {
-    const apiKey = providerConfig.api_key_env ? Bun.env[providerConfig.api_key_env] : undefined;
+    const apiKey = providerConfig.api_key_env ? ConfigLoader.getSecret(providerConfig.api_key_env) : undefined;
 
     if (providerConfig.type === 'anthropic') {
       adapter = new AnthropicAdapter(apiKey, providerConfig.base_url);

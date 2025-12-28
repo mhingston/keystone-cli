@@ -26,6 +26,8 @@ export async function processOpenAIStream(
   const toolCalls: LLMToolCall[] = [];
   let buffer = '';
 
+  let usage: LLMResponse['usage'];
+
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -48,9 +50,10 @@ export async function processOpenAIStream(
         try {
           const data = JSON.parse(trimmedLine.slice(6));
 
-          // Handle Copilot's occasional 'choices' missing or different structure if needed,
-          // but generally they match OpenAI.
-          // Some proxies might return null delta.
+          if (data.usage) {
+            usage = data.usage;
+          }
+
           const delta = data.choices?.[0]?.delta;
           if (!delta) continue;
 
@@ -77,8 +80,8 @@ export async function processOpenAIStream(
               if (toolCall.function?.arguments) {
                 if (
                   fullContent.length +
-                    toolCalls.reduce((acc, t) => acc + (t?.function?.arguments?.length || 0), 0) +
-                    toolCall.function.arguments.length >
+                  toolCalls.reduce((acc, t) => acc + (t?.function?.arguments?.length || 0), 0) +
+                  toolCall.function.arguments.length >
                   MAX_RESPONSE_SIZE
                 ) {
                   throw new Error(
@@ -147,8 +150,8 @@ export async function processOpenAIStream(
               if (toolCall.function?.arguments) {
                 if (
                   fullContent.length +
-                    toolCalls.reduce((acc, t) => acc + (t?.function?.arguments?.length || 0), 0) +
-                    toolCall.function.arguments.length >
+                  toolCalls.reduce((acc, t) => acc + (t?.function?.arguments?.length || 0), 0) +
+                  toolCall.function.arguments.length >
                   MAX_RESPONSE_SIZE
                 ) {
                   throw new Error(
@@ -182,5 +185,6 @@ export async function processOpenAIStream(
       content: fullContent || null,
       tool_calls: toolCalls.length > 0 ? toolCalls.filter(Boolean) : undefined,
     },
+    usage,
   };
 }
