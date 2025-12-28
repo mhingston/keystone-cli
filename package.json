@@ -11,7 +11,8 @@
     "test": "bun test",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "schema:generate": "bun run src/scripts/generate-schemas.ts"
   },
   "keywords": ["workflow", "orchestrator", "agentic", "automation", "bun"],
   "author": "Mark Hingston",
