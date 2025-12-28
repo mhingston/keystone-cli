@@ -101,6 +101,7 @@ export interface RunOptions {
   db?: WorkflowDb;
   memoryDb?: MemoryDb;
   onEvent?: EventHandler;
+  memoize?: boolean;
 }
 
 // Redacted StepContext and ForeachStepContext (moved to workflow-state.ts)
@@ -378,6 +379,7 @@ export class WorkflowRunner {
           const result = await executeStep(stepDef, context, this.logger, {
             executeWorkflowFn: this.executeSubWorkflow.bind(this),
             mcpManager: this.mcpManager,
+            db: this.db,
             memoryDb: this.memoryDb,
             workflowDir: this.options.workflowDir,
             dryRun: this.options.dryRun,
@@ -537,6 +539,32 @@ export class WorkflowRunner {
     return this.redactor.redactValue(value) as T;
   }
 
+  private async calculateStepCacheKey(
+    step: Step,
+    inputs: Record<string, unknown>
+  ): Promise<string | null> {
+    const memoizeEnabled = step.memoize ?? this.options.memoize ?? false;
+    if (!memoizeEnabled) return null;
+
+    // Only memoize deterministic steps by default unless explicitly requested
+    const cacheableTypes = ['shell', 'file', 'script', 'request', 'engine', 'blueprint'];
+    if (!cacheableTypes.includes(step.type) && step.memoize !== true) return null;
+
+    const data = {
+      type: step.type,
+      run: (step as any).run,
+      prompt: (step as any).prompt,
+      agent: (step as any).agent,
+      inputs,
+      env: step.env,
+      version: 1, // Cache versioning
+    };
+
+    // @ts-ignore - Bun.hash exists in Bun environment
+    const hash = Bun.hash(JSON.stringify(data)).toString(16);
+    return hash;
+  }
+
   private validateSchema(
     kind: 'input' | 'output',
     schema: unknown,
@@ -621,9 +649,9 @@ export class WorkflowRunner {
           ),
           path: (step as import('../parser/schema.ts').ArtifactStep).path
             ? ExpressionEvaluator.evaluateString(
-                (step as import('../parser/schema.ts').ArtifactStep).path as string,
-                context
-              )
+              (step as import('../parser/schema.ts').ArtifactStep).path as string,
+              context
+            )
             : undefined,
           allowOutsideCwd: step.allowOutsideCwd,
         });
@@ -725,6 +753,14 @@ export class WorkflowRunner {
             ? ExpressionEvaluator.evaluateObject(step.metadata, context)
             : undefined,
           limit: step.limit,
+        });
+      case 'wait':
+        return stripUndefined({
+          event: ExpressionEvaluator.evaluateString(
+            (step as import('../parser/schema.ts').WaitStep).event,
+            context
+          ),
+          oneShot: (step as import('../parser/schema.ts').WaitStep).oneShot,
         });
       default:
         return {};
@@ -1151,6 +1187,26 @@ export class WorkflowRunner {
       }
     }
 
+    // Global step caching (memoization)
+    const stepInputs = this.buildStepInputs(step, context);
+    const cacheKey = await this.calculateStepCacheKey(step, stepInputs);
+    if (cacheKey) {
+      const cached = await this.db.getStepCache(cacheKey);
+      if (cached) {
+        this.logger.log(`  ⚡ Step ${step.id} skipped (global cache hit)`);
+        const output = JSON.parse(cached.output);
+        await this.db.completeStep(stepExecId, StepStatus.SUCCESS, output);
+        return {
+          output,
+          outputs:
+            typeof output === 'object' && output !== null && !Array.isArray(output)
+              ? (output as Record<string, unknown>)
+              : {},
+          status: StepStatus.SUCCESS,
+        };
+      }
+    }
+
     const idempotencyContextForRetry =
       idempotencyClaimed && scopedIdempotencyKey
         ? {
@@ -1247,6 +1303,7 @@ export class WorkflowRunner {
       const result = await exec(stepToExecute, attemptContext, this.logger, {
         executeWorkflowFn: this.executeSubWorkflow.bind(this),
         mcpManager: this.mcpManager,
+        db: this.db,
         memoryDb: this.memoryDb,
         workflowDir: this.options.workflowDir,
         dryRun: this.options.dryRun,
@@ -1313,6 +1370,7 @@ export class WorkflowRunner {
             const repairResult = await exec(repairStep, repairContext, this.logger, {
               executeWorkflowFn: this.executeSubWorkflow.bind(this),
               mcpManager: this.mcpManager,
+              db: this.db,
               memoryDb: this.memoryDb,
               workflowDir: this.options.workflowDir,
               dryRun: this.options.dryRun,
@@ -1546,13 +1604,21 @@ export class WorkflowRunner {
         );
       }
 
-      return {
+      const finalResult = {
         output: result.output,
         outputs,
         status: result.status,
         error: result.error,
         usage: result.usage,
       };
+
+      // Store in global cache if enabled
+      if (cacheKey && result.status === StepStatus.SUCCESS) {
+        const ttl = step.memoizeTtlSeconds;
+        await this.db.storeStepCache(cacheKey, this.workflow.name, step.id, persistedOutput, ttl);
+      }
+
+      return finalResult;
     } catch (error) {
       // Reflexion (Self-Correction) logic
       if (step.reflexion) {

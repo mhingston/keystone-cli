@@ -382,6 +382,7 @@ export interface LLMAdapter {
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
       signal?: AbortSignal;
+      responseSchema?: any; // Native JSON schema for structured output
     }
   ): Promise<LLMResponse>;
   embed?(text: string, model?: string): Promise<number[]>;
@@ -407,6 +408,7 @@ export class OpenAIAdapter implements LLMAdapter {
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
       signal?: AbortSignal;
+      responseSchema?: any;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -422,6 +424,16 @@ export class OpenAIAdapter implements LLMAdapter {
         messages,
         tools: options?.tools,
         stream: isStreaming,
+        response_format: options?.responseSchema
+          ? {
+            type: 'json_schema',
+            json_schema: {
+              name: 'output',
+              strict: true,
+              schema: options.responseSchema,
+            },
+          }
+          : undefined,
       }),
       signal: options?.signal,
     });
@@ -525,6 +537,7 @@ export class AnthropicAdapter implements LLMAdapter {
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
       signal?: AbortSignal;
+      responseSchema?: any;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -604,11 +617,25 @@ export class AnthropicAdapter implements LLMAdapter {
 
     const anthropicTools = options?.tools
       ? options.tools.map((t) => ({
-          name: t.function.name,
-          description: t.function.description,
-          input_schema: t.function.parameters,
-        }))
+        name: t.function.name,
+        description: t.function.description,
+        input_schema: t.function.parameters,
+      }))
       : undefined;
+
+    // If responseSchema is provided, Anthropic requires using tool call to force output
+    const responseTool = options?.responseSchema
+      ? {
+        name: 'record_output',
+        description: 'Record the structured output matching the requested schema',
+        input_schema: options.responseSchema,
+      }
+      : undefined;
+
+    const combinedTools = [
+      ...(anthropicTools || []),
+      ...(responseTool ? [responseTool] : []),
+    ];
 
     const authHeaders = await this.getAuthHeaders();
     const response = await fetch(`${this.baseUrl}/messages`, {
@@ -622,7 +649,8 @@ export class AnthropicAdapter implements LLMAdapter {
         model: options?.model || 'claude-3-5-sonnet-20240620',
         system,
         messages: anthropicMessages,
-        tools: anthropicTools,
+        tools: combinedTools.length > 0 ? combinedTools : undefined,
+        tool_choice: responseTool ? { type: 'tool', name: 'record_output' } : undefined,
         max_tokens: 4096,
         stream: isStreaming,
       }),
@@ -817,6 +845,7 @@ export class OpenAIChatGPTAdapter implements LLMAdapter {
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
       signal?: AbortSignal;
+      responseSchema?: any;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -845,6 +874,16 @@ export class OpenAIChatGPTAdapter implements LLMAdapter {
         // Critical for ChatGPT Plus/Pro backend compatibility
         store: false,
         include: ['reasoning.encrypted_content'],
+        response_format: options?.responseSchema
+          ? {
+            type: 'json_schema',
+            json_schema: {
+              name: 'output',
+              strict: true,
+              schema: options.responseSchema,
+            },
+          }
+          : undefined,
       }),
       signal: options?.signal,
     });
@@ -1019,8 +1058,8 @@ export class GoogleGeminiAdapter implements LLMAdapter {
     const systemInstruction =
       systemParts.length > 0
         ? {
-            parts: [{ text: systemParts.join('\n\n') }],
-          }
+          parts: [{ text: systemParts.join('\n\n') }],
+        }
         : undefined;
 
     return { contents, systemInstruction };
@@ -1100,6 +1139,7 @@ export class GoogleGeminiAdapter implements LLMAdapter {
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
       signal?: AbortSignal;
+      responseSchema?: any;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -1122,6 +1162,13 @@ export class GoogleGeminiAdapter implements LLMAdapter {
     if (systemInstruction) requestPayload.systemInstruction = systemInstruction;
     if (tools) requestPayload.tools = tools;
     if (toolConfig) requestPayload.toolConfig = toolConfig;
+
+    if (options?.responseSchema) {
+      requestPayload.generationConfig = {
+        responseMimeType: 'application/json',
+        responseSchema: options.responseSchema,
+      };
+    }
 
     const authProjectId = this.projectId ? undefined : AuthManager.load().google_gemini?.project_id;
     const resolvedProjectId = this.projectId || authProjectId || GEMINI_DEFAULT_PROJECT_ID;
@@ -1260,6 +1307,7 @@ export class CopilotAdapter implements LLMAdapter {
       tools?: LLMTool[];
       onStream?: (chunk: string) => void;
       signal?: AbortSignal;
+      responseSchema?: any;
     }
   ): Promise<LLMResponse> {
     const isStreaming = !!options?.onStream;
@@ -1330,8 +1378,8 @@ export class LocalEmbeddingAdapter implements LLMAdapter {
   ): Promise<LLMResponse> {
     throw new Error(
       'Local models in Keystone currently only support memory/embedding operations. ' +
-        'To use a local LLM for chat/generation, please use an OpenAI-compatible local server ' +
-        '(like Ollama, LM Studio, or LocalAI) and configure it as an OpenAI provider in your config.'
+      'To use a local LLM for chat/generation, please use an OpenAI-compatible local server ' +
+      '(like Ollama, LM Studio, or LocalAI) and configure it as an OpenAI provider in your config.'
     );
   }
 

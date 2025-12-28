@@ -439,6 +439,54 @@ program
     }
   });
 
+// ===== keystone schema =====
+program
+  .command('schema')
+  .description('Generate JSON Schema for workflow and agent definitions')
+  .option('-o, --output <dir>', 'Output directory for schema files', '.keystone/schemas')
+  .action(async (options) => {
+    const { zodToJsonSchema } = await import('zod-to-json-schema');
+    const { WorkflowSchema, AgentSchema } = await import('./parser/schema.ts');
+
+    const workflowJsonSchema = zodToJsonSchema(WorkflowSchema as any, 'KeystoneWorkflow');
+    (workflowJsonSchema as any).$schema = 'http://json-schema.org/draft-07/schema#';
+
+    const agentJsonSchema = zodToJsonSchema(AgentSchema as any, 'KeystoneAgent');
+    (agentJsonSchema as any).$schema = 'http://json-schema.org/draft-07/schema#';
+
+    const outputDir = resolve(options.output);
+    if (!existsSync(outputDir)) {
+      mkdirSync(outputDir, { recursive: true });
+    }
+
+    writeFileSync(join(outputDir, 'workflow.schema.json'), JSON.stringify(workflowJsonSchema, null, 2));
+    writeFileSync(join(outputDir, 'agent.schema.json'), JSON.stringify(agentJsonSchema, null, 2));
+
+    console.log(`✓ Generated JSON schemas in ${outputDir}/`);
+    console.log(`  - workflow.schema.json`);
+    console.log(`  - agent.schema.json`);
+  });
+
+// ===== keystone event =====
+program
+  .command('event')
+  .description('Trigger an event to resume waiting workflows')
+  .argument('<name>', 'Event name')
+  .argument('[data]', 'Event data (JSON)')
+  .action(async (name, dataStr) => {
+    const db = container.resolve('db') as WorkflowDb;
+    let data = null;
+    if (dataStr) {
+      try {
+        data = JSON.parse(dataStr);
+      } catch {
+        data = dataStr;
+      }
+    }
+    await db.storeEvent(name, data);
+    console.log(`✓ Event '${name}' triggered.`);
+  });
+
 // ===== keystone run =====
 program
   .command('run')
@@ -466,8 +514,8 @@ program
       const logger = eventsEnabled ? new SilentLogger() : new ConsoleLogger();
       const onEvent = eventsEnabled
         ? (event: unknown) => {
-            process.stdout.write(`${JSON.stringify(event)}\n`);
-          }
+          process.stdout.write(`${JSON.stringify(event)}\n`);
+        }
         : undefined;
 
       let resumeRunId: string | undefined;
@@ -565,8 +613,8 @@ program
     const logger = eventsEnabled ? new SilentLogger() : new ConsoleLogger();
     const onEvent = eventsEnabled
       ? (event: unknown) => {
-          process.stdout.write(`${JSON.stringify(event)}\n`);
-        }
+        process.stdout.write(`${JSON.stringify(event)}\n`);
+      }
       : undefined;
     const debounceMs = Number.parseInt(options.debounce, 10);
 
@@ -707,8 +755,7 @@ program
             if (!warned.has(warningKey)) {
               warned.add(warningKey);
               logWarn(
-                `⚠️  Failed to load sub-workflow for step "${step.id}": ${
-                  error instanceof Error ? error.message : String(error)
+                `⚠️  Failed to load sub-workflow for step "${step.id}": ${error instanceof Error ? error.message : String(error)
                 }`
               );
             }
@@ -967,8 +1014,8 @@ program
       const logger = eventsEnabled ? new SilentLogger() : new ConsoleLogger();
       const onEvent = eventsEnabled
         ? (event: unknown) => {
-            process.stdout.write(`${JSON.stringify(event)}\n`);
-          }
+          process.stdout.write(`${JSON.stringify(event)}\n`);
+        }
         : undefined;
       const inputs = parseInputs(options.input);
       const runner = new WorkflowRunner(workflow, {
@@ -1055,8 +1102,8 @@ program
       const logger = eventsEnabled ? new SilentLogger() : new ConsoleLogger();
       const onEvent = eventsEnabled
         ? (event: unknown) => {
-            process.stdout.write(`${JSON.stringify(event)}\n`);
-          }
+          process.stdout.write(`${JSON.stringify(event)}\n`);
+        }
         : undefined;
       const runner = new WorkflowRunner(workflow, {
         resumeRunId: runId,

@@ -107,6 +107,11 @@ export class WorkflowDb {
   private updateCompensationStatusStmt!: any;
   private getPendingCompensationsStmt!: any;
   private getAllCompensationsStmt!: any;
+  private getStepCacheStmt!: any;
+  private storeStepCacheStmt!: any;
+  private getEventStmt!: any;
+  private storeEventStmt!: any;
+  private deleteEventStmt!: any;
 
   constructor(public readonly dbPath = PathResolver.resolveDbPath()) {
     const dir = dirname(dbPath);
@@ -117,7 +122,7 @@ export class WorkflowDb {
     this.db.exec('PRAGMA journal_mode = WAL;'); // Write-ahead logging
     this.db.exec('PRAGMA foreign_keys = ON;'); // Enable foreign key enforcement
     this.db.exec('PRAGMA busy_timeout = 5000;'); // Retry busy signals for up to 5s
-    this.initSchema();
+    this.runMigrations();
     this.initStatements();
   }
 
@@ -260,6 +265,22 @@ export class WorkflowDb {
       WHERE run_id = ?
       ORDER BY created_at DESC, rowid DESC
     `);
+    this.getStepCacheStmt = this.db.prepare(`
+      SELECT * FROM step_cache
+      WHERE cache_key = ?
+      AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+    `);
+    this.storeStepCacheStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO step_cache
+      (cache_key, workflow_name, step_id, output, created_at, expires_at)
+      VALUES (?, ?, ?, ?, datetime('now'), ?)
+    `);
+    this.getEventStmt = this.db.prepare('SELECT * FROM events WHERE name = ?');
+    this.storeEventStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO events (name, data, created_at)
+      VALUES (?, ?, datetime('now'))
+    `);
+    this.deleteEventStmt = this.db.prepare('DELETE FROM events WHERE name = ?');
   }
 
   /**
@@ -338,6 +359,45 @@ export class WorkflowDb {
       .replace('T', ' ')
       .replace('Z', '')
       .replace(/\.\d{3}$/, '');
+  }
+
+  private runMigrations(): void {
+    const currentVersion = this.db.query('PRAGMA user_version').get() as { user_version: number };
+    const version = currentVersion?.user_version || 0;
+
+    if (version === 0) {
+      this.initSchema();
+      this.db.exec('PRAGMA user_version = 1');
+    }
+
+    // Version 2: Add step_cache table
+    if (version < 2) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS step_cache (
+          cache_key TEXT PRIMARY KEY,
+          workflow_name TEXT NOT NULL,
+          step_id TEXT NOT NULL,
+          output TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_step_cache_workflow ON step_cache(workflow_name);
+        CREATE INDEX IF NOT EXISTS idx_step_cache_expires ON step_cache(expires_at);
+        PRAGMA user_version = 2;
+      `);
+    }
+
+    // Version 3: Add events table
+    if (version < 3) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+          name TEXT PRIMARY KEY,
+          data TEXT,
+          created_at TEXT NOT NULL
+        );
+        PRAGMA user_version = 3;
+      `);
+    }
   }
 
   private initSchema(): void {
@@ -939,5 +999,74 @@ export class WorkflowDb {
 
   close(): void {
     this.db.close();
+  }
+
+  // ===== Step Cache =====
+
+  async getStepCache(key: string): Promise<{ output: string } | null> {
+    return this.withRetry(() => {
+      return this.getStepCacheStmt.get(key) as { output: string } | null;
+    });
+  }
+
+  async storeStepCache(
+    key: string,
+    workflowName: string,
+    stepId: string,
+    output: unknown,
+    ttlSeconds?: number
+  ): Promise<void> {
+    await this.withRetry(() => {
+      const expiresAt = this.formatExpiresAt(ttlSeconds);
+      this.storeStepCacheStmt.run(
+        key,
+        workflowName,
+        stepId,
+        JSON.stringify(output),
+        expiresAt
+      );
+    });
+  }
+
+  async clearStepCache(workflowName?: string): Promise<number> {
+    return await this.withRetry(() => {
+      if (workflowName) {
+        const stmt = this.db.prepare('DELETE FROM step_cache WHERE workflow_name = ?');
+        const result = stmt.run(workflowName);
+        return result.changes;
+      }
+      const stmt = this.db.prepare('DELETE FROM step_cache');
+      const result = stmt.run();
+      return result.changes;
+    });
+  }
+
+  // ===== Events =====
+
+  async getEvent(name: string): Promise<{ data: string | null } | null> {
+    return this.withRetry(() => {
+      return this.getEventStmt.get(name) as { data: string | null } | null;
+    });
+  }
+
+  async storeEvent(name: string, data?: unknown): Promise<void> {
+    await this.withRetry(() => {
+      this.storeEventStmt.run(name, data === undefined ? null : JSON.stringify(data));
+    });
+  }
+
+  async deleteEvent(name: string): Promise<number> {
+    return await this.withRetry(() => {
+      const result = this.deleteEventStmt.run(name);
+      return result.changes;
+    });
+  }
+
+  async clearEvents(): Promise<number> {
+    return await this.withRetry(() => {
+      const stmt = this.db.prepare('DELETE FROM events');
+      const result = stmt.run();
+      return result.changes;
+    });
   }
 }

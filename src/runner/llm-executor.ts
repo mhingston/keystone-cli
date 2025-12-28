@@ -148,7 +148,7 @@ export async function executeLlmStep(
   const fullModelString = provider ? `${provider}:${model}` : model;
   const { adapter, resolvedModel } = (getAdapterFn || getAdapter)(fullModelString);
 
-  // Inject schema instructions if present
+  // Inject schema instructions if present (fallback for models without native support)
   let systemPrompt = agent.systemPrompt;
   if (step.outputSchema) {
     systemPrompt += `\n\nIMPORTANT: You must output valid JSON that matches the following schema:\n${JSON.stringify(step.outputSchema, null, 2)}`;
@@ -426,6 +426,7 @@ export async function executeLlmStep(
           }
         },
         signal: abortSignal,
+        responseSchema: step.outputSchema,
       });
 
       if (!step.outputSchema) {
@@ -441,22 +442,41 @@ export async function executeLlmStep(
       const { message } = response;
       messages.push(message);
 
+      // 1. Check for native record_output tool call (forced by Anthropic adapter)
+      const recordOutputCall = message.tool_calls?.find((tc) => tc.function.name === 'record_output');
+      if (step.outputSchema && recordOutputCall) {
+        let output: any;
+        try {
+          output =
+            typeof recordOutputCall.function.arguments === 'string'
+              ? JSON.parse(recordOutputCall.function.arguments)
+              : recordOutputCall.function.arguments;
+          return { status: 'success', output, usage: totalUsage };
+        } catch (e) {
+          logger.error(`Failed to parse native structured output: ${e}`);
+          // Fall through to regular tool execution or retry if needed
+        }
+      }
+
+      // 2. Handle direct output if no tool calls
       if (!message.tool_calls || message.tool_calls.length === 0) {
-        let output = message.content;
+        let output: any = message.content;
 
         // If schema is defined, attempt to parse JSON
-        if (step.outputSchema && typeof output === 'string') {
-          try {
-            output = extractJson(output) as typeof output;
-          } catch (e) {
-            const errorMessage = `Failed to parse LLM output as JSON matching schema: ${e instanceof Error ? e.message : String(e)}`;
-            logger.error(`  ⚠️  ${errorMessage}. Retrying...`);
+        if (step.outputSchema) {
+          if (typeof output === 'string') {
+            try {
+              output = extractJson(output);
+            } catch (e) {
+              const errorMessage = `Failed to parse LLM output as JSON matching schema: ${e instanceof Error ? e.message : String(e)}`;
+              logger.error(`  ⚠️  ${errorMessage}. Retrying...`);
 
-            messages.push({
-              role: 'user',
-              content: `Error: ${errorMessage}\n\nPlease correct your output to be valid JSON matching the schema.`,
-            });
-            continue;
+              messages.push({
+                role: 'user',
+                content: `Error: ${errorMessage}\n\nPlease correct your output to be valid JSON matching the schema.`,
+              });
+              continue;
+            }
           }
         }
 
@@ -467,7 +487,7 @@ export async function executeLlmStep(
         };
       }
 
-      // Execute tools
+      // 3. Execute tools
       for (const toolCall of message.tool_calls) {
         if (abortSignal?.aborted) {
           throw new Error('Step canceled');

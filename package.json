@@ -30,15 +30,16 @@
     "ajv": "^8.12.0",
     "commander": "^12.1.0",
     "dagre": "^0.8.5",
+    "glob": "^10.4.5",
     "ink": "^6.5.1",
     "ink-select-input": "3.1.2",
     "ink-spinner": "^5.0.0",
     "js-yaml": "^4.1.0",
     "jsep": "^1.4.0",
-    "glob": "^10.4.5",
     "react": "^19.0.0",
     "sqlite-vec": "0.1.6",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.1"
   },
   "optionalDependencies": {
     "re2": "^1.21.4"

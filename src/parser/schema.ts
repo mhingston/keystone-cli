@@ -112,7 +112,7 @@ const StrategySchema = z.object({
 
 // ===== Base Step Schema =====
 
-const BaseStepSchema = z.object({
+export const BaseStepSchema = z.object({
   id: z.string(),
   type: z.string(),
   needs: z.array(z.string()).optional().default([]),
@@ -133,6 +133,8 @@ const BaseStepSchema = z.object({
   strategy: StrategySchema.optional(),
   transform: z.string().optional(),
   learn: z.boolean().optional(),
+  memoize: z.boolean().optional(),
+  memoizeTtlSeconds: z.number().int().positive().optional(),
   inputSchema: z.any().optional(),
   outputSchema: z.any().optional(),
   outputRetries: z.number().int().min(0).optional(), // Max retries for output validation failures
@@ -338,6 +340,13 @@ const ArtifactStepSchema = BaseStepSchema.extend({
   allowOutsideCwd: z.boolean().optional(),
 });
 
+const WaitStepSchema = BaseStepSchema.extend({
+  type: z.literal('wait'),
+  event: z.string(),
+  oneShot: z.boolean().optional().default(true),
+  // timeout is already in BaseStepSchema, but let's make it explicit here if needed
+});
+
 // ===== Discriminated Union for Steps =====
 
 // biome-ignore lint/suspicious/noExplicitAny: Recursive Zod type
@@ -356,6 +365,7 @@ export const StepSchema: z.ZodType<any> = z.lazy(() =>
     JoinStepSchema,
     BlueprintStepSchema,
     ArtifactStepSchema,
+    WaitStepSchema,
   ])
 );
 
@@ -420,4 +430,30 @@ export type ArtifactStep = z.infer<typeof ArtifactStepSchema>;
 export type Blueprint = z.infer<typeof BlueprintSchema>;
 export type Workflow = z.infer<typeof WorkflowSchema>;
 export type AgentTool = z.infer<typeof AgentToolSchema>;
+export type WaitStep = z.infer<typeof WaitStepSchema>;
+
+// ===== Helper Schemas =====
+export {
+  InputSchema,
+  RetrySchema,
+  AutoHealSchema,
+  ReflexionSchema,
+  StrategySchema,
+  EngineConfigSchema,
+  EngineHandoffSchema,
+  BlueprintSchema,
+  WaitStepSchema,
+  ShellStepSchema,
+  LlmStepSchema,
+  WorkflowStepSchema,
+  FileStepSchema,
+  RequestStepSchema,
+  HumanStepSchema,
+  SleepStepSchema,
+  ScriptStepSchema,
+  EngineStepSchema,
+  BlueprintStepSchema,
+  MemoryStepSchema,
+  ArtifactStepSchema,
+};
 export type Agent = z.infer<typeof AgentSchema>;

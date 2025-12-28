@@ -325,6 +325,63 @@ You are a test agent.`;
     expect(result.output).toEqual({ foo: 'bar' });
   });
 
+  it('should accept native structured output tool calls when responseSchema is provided', async () => {
+    const outputSchema = {
+      type: 'object',
+      properties: {
+        foo: { type: 'string' },
+      },
+      required: ['foo'],
+    };
+    let receivedSchema: unknown;
+
+    const chatMock = mock(async (_messages, options) => {
+      receivedSchema = options?.responseSchema;
+      return {
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call-1',
+              type: 'function',
+              function: { name: 'record_output', arguments: '{"foo":"bar"}' },
+            },
+          ],
+        },
+      };
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
+
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'give me json',
+      needs: [],
+      maxIterations: 5,
+      outputSchema,
+    };
+    const context: ExpressionContext = { inputs: {}, steps: {} };
+    const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
+
+    const result = await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
+
+    expect(receivedSchema).toEqual(outputSchema);
+    expect(result.status).toBe('success');
+    expect(result.output).toEqual({ foo: 'bar' });
+    expect(executeStepFn).not.toHaveBeenCalled();
+  });
+
   it('should retry if LLM output fails schema validation', async () => {
     const step: LlmStep = {
       id: 'l1',

@@ -1,6 +1,8 @@
 import type { MemoryDb } from '../db/memory-db.ts';
 import type { ExpressionContext } from '../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../expression/evaluator.ts';
+import { WorkflowDb } from '../db/workflow-db.ts';
+import { container } from '../utils/container.ts';
 // Removed synchronous file I/O imports - using Bun's async file API instead
 import type {
   ArtifactStep,
@@ -15,6 +17,7 @@ import type {
   SleepStep,
   Step,
   WorkflowStep,
+  WaitStep,
 } from '../parser/schema.ts';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
 import { executeBlueprintStep } from './blueprint-executor.ts';
@@ -73,6 +76,7 @@ export interface StepResult {
 export interface StepExecutorOptions {
   executeWorkflowFn?: (step: WorkflowStep, context: ExpressionContext) => Promise<StepResult>;
   mcpManager?: MCPManager;
+  db?: WorkflowDb;
   memoryDb?: MemoryDb;
   workflowDir?: string;
   dryRun?: boolean;
@@ -173,6 +177,55 @@ async function executeJoinStep(
 /**
  * Execute a single step based on its type
  */
+/**
+ * Execute a wait step (waiting for an external event)
+ */
+async function executeWaitStep(
+  step: WaitStep,
+  context: ExpressionContext,
+  logger: Logger,
+  options: StepExecutorOptions
+): Promise<StepResult> {
+  const eventName = ExpressionEvaluator.evaluateString(step.event, context);
+  const db = options.db ?? container.resolveOptional<WorkflowDb>('db');
+  if (!db) {
+    throw new Error('Workflow database not initialized');
+  }
+
+  const event = await db.getEvent(eventName);
+
+  if (event) {
+    logger.log(`  ✓ Event '${eventName}' occurred`);
+
+    // If oneShot is true (default), consume the event
+    if (step.oneShot !== false) {
+      await db.deleteEvent(eventName);
+      logger.log(`  🗑️ One-shot event '${eventName}' consumed`);
+    }
+
+    let output = null;
+    if (event.data) {
+      try {
+        output = JSON.parse(event.data);
+      } catch {
+        output = event.data;
+      }
+    }
+    return {
+      status: 'success',
+      output,
+    };
+  }
+
+  // Not occurred, suspend
+  logger.log(`  ⏳ Waiting for event: ${eventName}`);
+  return {
+    status: 'suspended',
+    output: { event: eventName },
+    error: `Waiting for event: ${eventName}`,
+  };
+}
+
 export async function executeStep(
   step: Step,
   context: ExpressionContext,
@@ -249,6 +302,9 @@ export async function executeStep(
           abortSignal,
           injectedGetAdapter
         );
+        break;
+      case 'wait':
+        result = await executeWaitStep(step, context, logger, options);
         break;
       case 'memory':
         result = await executeMemoryStep(step, context, logger, memoryDb, injectedGetAdapter);

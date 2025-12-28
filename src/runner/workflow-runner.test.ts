@@ -497,6 +497,88 @@ describe('WorkflowRunner', () => {
     if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
   });
 
+  it('should memoize deterministic steps across runs', async () => {
+    const memoizeDbPath = 'test-memoize.db';
+    if (existsSync(memoizeDbPath)) rmSync(memoizeDbPath);
+
+    const memoizeWorkflow: Workflow = {
+      name: 'memoize-wf',
+      steps: [
+        {
+          id: 's1',
+          type: 'shell',
+          run: 'bun -e "console.log(Date.now())"',
+          memoize: true,
+          needs: [],
+        },
+      ],
+      outputs: {
+        out: '${{ steps.s1.output.stdout.trim() }}',
+      },
+    } as unknown as Workflow;
+
+    const runner1 = new WorkflowRunner(memoizeWorkflow, { dbPath: memoizeDbPath });
+    const outputs1 = await runner1.run();
+    await Bun.sleep(5);
+
+    const runner2 = new WorkflowRunner(memoizeWorkflow, { dbPath: memoizeDbPath });
+    const outputs2 = await runner2.run();
+
+    expect(outputs2.out).toBe(outputs1.out);
+
+    if (existsSync(memoizeDbPath)) rmSync(memoizeDbPath);
+  });
+
+  it('should redact memoized outputs at rest', async () => {
+    const memoizeDbPath = 'test-memoize-redact.db';
+    if (existsSync(memoizeDbPath)) rmSync(memoizeDbPath);
+
+    const secret = 'supersecret';
+    const memoizeWorkflow: Workflow = {
+      name: 'memoize-redact-wf',
+      steps: [
+        {
+          id: 's1',
+          type: 'shell',
+          run: `echo "${secret}"`,
+          memoize: true,
+          needs: [],
+        },
+      ],
+      outputs: {
+        out: '${{ steps.s1.output.stdout.trim() }}',
+      },
+    } as unknown as Workflow;
+
+    const runner = new WorkflowRunner(memoizeWorkflow, {
+      dbPath: memoizeDbPath,
+      secrets: { TOKEN: secret },
+    });
+    await runner.run();
+
+    const db = new WorkflowDb(memoizeDbPath);
+    const step = memoizeWorkflow.steps[0] as Workflow['steps'][number];
+    const stepInputs = { run: (step as { run: string }).run };
+    const cacheKey = Bun.hash(
+      JSON.stringify({
+        type: step.type,
+        run: (step as { run?: string }).run,
+        prompt: (step as { prompt?: string }).prompt,
+        agent: (step as { agent?: string }).agent,
+        inputs: stepInputs,
+        env: (step as { env?: Record<string, string> }).env,
+        version: 1,
+      })
+    ).toString(16);
+    const cached = await db.getStepCache(cacheKey);
+    expect(cached).not.toBeNull();
+    expect(cached!.output).not.toContain(secret);
+    expect(JSON.parse(cached!.output).stdout).toContain('***REDACTED***');
+    db.close();
+
+    if (existsSync(memoizeDbPath)) rmSync(memoizeDbPath);
+  });
+
   it('should execute steps in parallel', async () => {
     const parallelWorkflow: Workflow = {
       name: 'parallel-wf',
