@@ -24,6 +24,32 @@ interface SearchReplaceBlock {
     replace: string;
 }
 
+function normalizePath(rawPath: string): string {
+    const trimmed = rawPath.trim();
+    return trimmed.length > 0 ? trimmed : '.';
+}
+
+function assertWithinCwd(targetPath: string, allowOutsideCwd?: boolean, label = 'Path'): void {
+    if (allowOutsideCwd) return;
+    const cwd = process.cwd();
+    const realCwd = fs.realpathSync(cwd);
+    const normalizedPath = normalizePath(targetPath);
+    const resolvedPath = path.resolve(cwd, normalizedPath);
+
+    // Find the first existing ancestor to resolve real path correctly
+    let current = resolvedPath;
+    while (current !== path.dirname(current) && !fs.existsSync(current)) {
+        current = path.dirname(current);
+    }
+    const realTarget = fs.existsSync(current) ? fs.realpathSync(current) : current;
+    const relativePath = path.relative(realCwd, realTarget);
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        throw new Error(
+            `Access denied: ${label} '${normalizedPath}' resolves outside the working directory. Use 'allowOutsideCwd: true' to override.`
+        );
+    }
+}
+
 function normalizeDiffPath(diffPath: string): string {
     return diffPath.trim().replace(/^([ab]\/)/, '');
 }
@@ -190,6 +216,7 @@ export async function executeFileStep(
     _logger: Logger
 ): Promise<StepResult> {
     const targetPath = ExpressionEvaluator.evaluateString(step.path, context);
+    assertWithinCwd(targetPath, step.allowOutsideCwd);
 
     switch (step.op) {
         case 'read': {

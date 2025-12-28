@@ -2295,6 +2295,14 @@ Revise the output to address the feedback. Return only the corrected output.`;
     const validated = this.validator.applyDefaultsAndValidate();
     if (validated.secretValues.length > 0) {
       this.secretManager.setSecretValues(validated.secretValues);
+      this.logger = new RedactingLogger(this.rawLogger, this.secretManager.getRedactor());
+      this.contextBuilder = new ContextBuilder(
+        this.workflow,
+        this.inputs,
+        this.secretManager.getSecretValues(),
+        this.state,
+        this.logger
+      );
     }
 
     // Create run record (only for new runs, not for resume)

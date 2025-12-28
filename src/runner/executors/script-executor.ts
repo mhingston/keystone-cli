@@ -1,7 +1,8 @@
 import type { ExpressionContext } from '../../expression/evaluator.ts';
-import { ExpressionEvaluator } from '../../expression/evaluator.ts';
 import type { ScriptStep } from '../../parser/schema.ts';
 import type { Logger } from '../../utils/logger.ts';
+import type { SafeSandbox } from '../../utils/sandbox.ts';
+import { SafeSandbox as DefaultSandbox } from '../../utils/sandbox.ts';
 import type { StepResult } from './types.ts';
 
 /**
@@ -10,27 +11,20 @@ import type { StepResult } from './types.ts';
 export async function executeScriptStep(
     step: ScriptStep,
     context: ExpressionContext,
-    _logger: Logger
+    logger: Logger,
+    options: { sandbox?: typeof SafeSandbox } = {}
 ): Promise<StepResult> {
-    const code = step.run;
-    const scriptContext = {
-        ...context,
-        // Add some useful utilities for scripts
-        fetch,
-        URL,
-        URLSearchParams,
-        JSON,
-        Math,
-        Date,
-    };
+    if (!step.allowInsecure) {
+        return {
+            status: 'failed',
+            output: null,
+            error: 'Script execution is disabled by default. Set allowInsecure: true to run scripts.',
+        };
+    }
 
     try {
-        // We use a AsyncFunction constructor to allow await in scripts
-        // and provide safe access to the context
-        const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
-        const fn = new AsyncFunction(...Object.keys(scriptContext), `return (async () => { ${code} })();`);
-
-        const result = await fn(...Object.values(scriptContext));
+        const sandbox = options.sandbox || DefaultSandbox;
+        const result = await sandbox.execute(step.run, context, { logger });
 
         return {
             status: 'success',
@@ -40,7 +34,7 @@ export async function executeScriptStep(
         return {
             status: 'failed',
             output: null,
-            error: `Script execution failed: ${error instanceof Error ? error.message : String(error)}`,
+            error: error instanceof Error ? error.message : String(error),
         };
     }
 }

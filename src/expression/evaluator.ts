@@ -588,6 +588,17 @@ export class ExpressionEvaluator {
             prop.key.type === 'Identifier' && !prop.computed
               ? (prop.key as jsep.Identifier).name
               : ExpressionEvaluator.evaluateNode(prop.key, context);
+          if (typeof key === 'string') {
+            const normalizedKey = key.normalize('NFKC').toLowerCase();
+            if (
+              ExpressionEvaluator.FORBIDDEN_PROPERTIES.has(key) ||
+              ExpressionEvaluator.FORBIDDEN_PROPERTIES.has(normalizedKey) ||
+              normalizedKey.includes('proto') ||
+              normalizedKey.includes('constructor')
+            ) {
+              throw new Error(`Access to property "${key}" is forbidden for security reasons`);
+            }
+          }
           result[key as string] = ExpressionEvaluator.evaluateNode(prop.value, context);
         }
         return result;

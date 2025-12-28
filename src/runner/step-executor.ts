@@ -134,7 +134,7 @@ export async function executeStep(
         result = await executeWorkflowFn(step, context);
         break;
       case 'script':
-        result = await executeScriptStep(step, context, logger);
+        result = await executeScriptStep(step, context, logger, { sandbox: options.sandbox });
         break;
       case 'engine':
         result = await executeEngineStepWrapper(step, context, logger, {

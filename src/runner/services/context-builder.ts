@@ -123,7 +123,7 @@ export class ContextBuilder {
                     content: (step as any).content
                         ? ExpressionEvaluator.evaluateString((step as any).content, context)
                         : undefined,
-                    action: (step as any).action,
+                    op: (step as any).op,
                 });
             }
             default:
