@@ -3,7 +3,7 @@ import { resolveAgentPath } from '../parser/agent-parser';
 import type { LlmStep, Step, Workflow } from '../parser/schema';
 import { TIMEOUTS } from '../utils/constants';
 import { ConsoleLogger, type Logger } from '../utils/logger';
-import { executeLlmStep } from './llm-executor';
+import { executeLlmStep } from './executors/llm-executor.ts';
 import { WorkflowRunner } from './workflow-runner';
 
 export interface OptimizationOptions {

@@ -2,6 +2,7 @@ import type { ExpressionContext } from '../../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../../expression/evaluator.ts';
 import type { HumanStep, SleepStep } from '../../parser/schema.ts';
 import type { Logger } from '../../utils/logger.ts';
+import * as readlinePromises from 'node:readline/promises';
 import { WorkflowSuspendedError, WorkflowWaitingError, type StepResult } from './types.ts';
 
 /**
@@ -28,9 +29,39 @@ export async function executeHumanStep(
         };
     }
 
-    // Not answered yet, suspend
-    logger.log(`  ⏳ Suspending for human input: ${message}`);
-    throw new WorkflowSuspendedError(message, step.id, step.inputType || 'text');
+    const inputType = step.inputType || 'text';
+    if (!process.stdin.isTTY) {
+        logger.log(`  ⏳ Suspending for human input: ${message}`);
+        throw new WorkflowSuspendedError(message, step.id, inputType);
+    }
+
+    const rl = readlinePromises.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+
+    try {
+        const prompt = inputType === 'confirm' ? `${message} [Y/n] ` : `${message} `;
+        const answer = await rl.question(prompt);
+
+        if (inputType === 'confirm') {
+            const normalized = answer.trim().toLowerCase();
+            if (normalized === '') {
+                return { status: 'success', output: true };
+            }
+            if (['y', 'yes', 'true', '1'].includes(normalized)) {
+                return { status: 'success', output: true };
+            }
+            if (['n', 'no', 'false', '0'].includes(normalized)) {
+                return { status: 'success', output: false };
+            }
+            return { status: 'success', output: answer.trim() };
+        }
+
+        return { status: 'success', output: answer };
+    } finally {
+        rl.close();
+    }
 }
 
 /**
@@ -49,16 +80,34 @@ export async function executeSleepStep(
     let durationMs = 0;
     let wakeAt: string | undefined;
 
-    if (step.until) {
+    // Check if this is a resume of a durable sleep
+    const previousOutput = (context.steps as Record<string, any>)?.[step.id]?.output;
+    if (step.durable && previousOutput && typeof previousOutput === 'object' && 'wakeAt' in previousOutput) {
+        wakeAt = previousOutput.wakeAt as string;
+        const untilDate = new Date(wakeAt);
+        if (!isNaN(untilDate.getTime())) {
+            durationMs = untilDate.getTime() - Date.now();
+        }
+    }
+
+    if (wakeAt) {
+        // Already handled by resume logic above
+    } else if (step.until) {
         const untilStr = ExpressionEvaluator.evaluateString(step.until, context);
         const untilDate = new Date(untilStr);
         if (isNaN(untilDate.getTime())) {
-            throw new Error(`Invalid date format for 'until': ${untilStr}`);
+            throw new Error(`Invalid 'until' date format: ${untilStr}`);
         }
         wakeAt = untilDate.toISOString();
         durationMs = untilDate.getTime() - Date.now();
     } else if (step.duration) {
-        const duration = ExpressionEvaluator.evaluateString(step.duration, context);
+        let duration: string;
+        if (typeof step.duration === 'number') {
+            duration = `${step.duration}ms`;
+        } else {
+            duration = ExpressionEvaluator.evaluateString(step.duration, context);
+        }
+
         // Parse duration (e.g., "10s", "1m", "1h", "50ms")
         const match = duration.match(/^(\d+)([smh]|ms)$/);
         if (!match) {

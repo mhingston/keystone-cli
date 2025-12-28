@@ -4,8 +4,8 @@ import * as path from 'node:path';
 import type { ExpressionContext } from '../expression/evaluator';
 import type { Blueprint, BlueprintStep, Step } from '../parser/schema';
 import type { Logger } from '../utils/logger';
-import { executeBlueprintStep } from './blueprint-executor';
-import type { executeLlmStep } from './llm-executor';
+import { executeBlueprintStep } from './executors/blueprint-executor.ts';
+import type { executeLlmStep } from './executors/llm-executor.ts';
 import type { StepResult } from './step-executor';
 
 describe('BlueprintExecutor', () => {

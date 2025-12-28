@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { ExpressionContext } from '../expression/evaluator';
 import type { ShellStep } from '../parser/schema';
-import { escapeShellArg, executeShell } from './shell-executor';
+import { escapeShellArg, executeShell } from './executors/shell-executor.ts';
 
 describe('shell-executor', () => {
   describe('escapeShellArg', () => {

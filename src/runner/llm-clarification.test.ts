@@ -5,7 +5,7 @@ import type { Config } from '../parser/config-schema';
 import type { Agent, LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
 import type { LLMAdapter, LLMMessage } from './llm-adapter';
-import { executeLlmStep } from './llm-executor';
+import { executeLlmStep } from './executors/llm-executor.ts';
 
 describe('LLM Clarification', () => {
   const createMockGetAdapter = (chatFn: LLMAdapter['chat']) => {

@@ -63,7 +63,7 @@ export async function executeShellStep(
     );
   }
 
-  const result = await executeShell(step, context, logger, abortSignal);
+  const result = await executeShell(step, context, logger, abortSignal, command);
 
   if (result.stdout) {
     logger.log(result.stdout.trim());
@@ -225,13 +225,14 @@ export async function executeShell(
   step: ShellStep,
   context: ExpressionContext,
   logger: Logger = new ConsoleLogger(),
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  commandOverride?: string
 ): Promise<ShellResult> {
   if (abortSignal?.aborted) {
     throw new Error('Step canceled');
   }
   // Evaluate the command string
-  const command = ExpressionEvaluator.evaluateString(step.run, context);
+  const command = commandOverride ?? ExpressionEvaluator.evaluateString(step.run, context);
 
   // Check for potential shell injection risks
   if (!step.allowInsecure && detectShellInjectionRisk(command)) {
@@ -293,17 +294,20 @@ export async function executeShell(
       let inQuote = false;
       let quoteChar = '';
       let escapeNext = false;
+      let tokenStarted = false;
 
       for (let i = 0; i < command.length; i++) {
         const char = command[i];
         if (escapeNext) {
           current += char;
+          tokenStarted = true;
           escapeNext = false;
           continue;
         }
 
         if (char === '\\' && quoteChar !== "'") {
           escapeNext = true;
+          tokenStarted = true;
           continue;
         }
 
@@ -316,24 +320,29 @@ export async function executeShell(
             quoteChar = char;
           } else {
             current += char;
+            tokenStarted = true;
           }
+          tokenStarted = true;
           continue;
         }
 
         if (/\s/.test(char) && !inQuote) {
-          if (current) {
+          if (tokenStarted) {
             args.push(current);
             current = '';
+            tokenStarted = false;
           }
           continue;
         }
 
         current += char;
+        tokenStarted = true;
       }
       if (escapeNext) {
         current += '\\';
+        tokenStarted = true;
       }
-      if (current) args.push(current);
+      if (tokenStarted) args.push(current);
 
       if (args.length === 0) throw new Error('Empty command');
 

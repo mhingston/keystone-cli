@@ -1,5 +1,6 @@
 import { afterAll, afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { existsSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { WorkflowDb } from '../db/workflow-db';
 import type { Workflow } from '../parser/schema';
 import { WorkflowParser } from '../parser/workflow-parser';
@@ -231,7 +232,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should validate step input schema', async () => {
-    const schemaDbPath = 'test-step-input-schema.db';
+    const schemaDbPath = `test-step-input-schema-${randomUUID()}.db`;
     const workflowWithInputSchema: Workflow = {
       name: 'step-input-schema-wf',
       steps: [
@@ -262,7 +263,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should validate step output schema', async () => {
-    const schemaDbPath = 'test-step-output-schema.db';
+    const schemaDbPath = `test-step-output-schema-${randomUUID()}.db`;
     const workflowWithOutputSchema: Workflow = {
       name: 'step-output-schema-wf',
       steps: [
@@ -376,7 +377,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should deduplicate steps using idempotencyKey within a run', async () => {
-    const idempotencyDbPath = 'test-idempotency.db';
+    const idempotencyDbPath = `test-idempotency-${randomUUID()}.db`;
     if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
 
     let idempotencyHitCount = 0;
@@ -429,7 +430,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should allow disabling idempotency deduplication', async () => {
-    const idempotencyDbPath = 'test-idempotency-disabled.db';
+    const idempotencyDbPath = `test-idempotency-disabled-${randomUUID()}.db`;
     if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
 
     const idempotencyWorkflow: Workflow = {
@@ -468,7 +469,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should detect in-flight idempotency keys', async () => {
-    const idempotencyDbPath = 'test-idempotency-inflight.db';
+    const idempotencyDbPath = `test-idempotency-inflight-${randomUUID()}.db`;
     if (existsSync(idempotencyDbPath)) rmSync(idempotencyDbPath);
 
     const idempotencyWorkflow: Workflow = {
@@ -498,7 +499,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should memoize deterministic steps across runs', async () => {
-    const memoizeDbPath = 'test-memoize.db';
+    const memoizeDbPath = `test-memoize-${randomUUID()}.db`;
     if (existsSync(memoizeDbPath)) rmSync(memoizeDbPath);
 
     const memoizeWorkflow: Workflow = {
@@ -530,7 +531,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should redact memoized outputs at rest', async () => {
-    const memoizeDbPath = 'test-memoize-redact.db';
+    const memoizeDbPath = `test-memoize-redact-${randomUUID()}.db`;
     if (existsSync(memoizeDbPath)) rmSync(memoizeDbPath);
 
     const secret = 'supersecret';
@@ -636,7 +637,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should resume a failed workflow', async () => {
-    const resumeDbPath = 'test-resume.db';
+    const resumeDbPath = `test-resume-${randomUUID()}.db`;
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
 
     const workflow: Workflow = {
@@ -694,7 +695,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should merge resumeInputs with stored inputs on resume', async () => {
-    const resumeDbPath = 'test-merge-inputs.db';
+    const resumeDbPath = `test-merge-inputs-${randomUUID()}.db`;
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
 
     const workflow: Workflow = {
@@ -758,7 +759,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should redact secret inputs at rest', async () => {
-    const dbFile = 'test-secret-at-rest.db';
+    const dbFile = `test-secret-at-rest-${randomUUID()}.db`;
     const workflow: Workflow = {
       name: 'secret-input-wf',
       inputs: {

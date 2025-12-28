@@ -707,6 +707,19 @@ export class WorkflowDb {
     });
   }
 
+  async getStepsByRuns(runIds: string[]): Promise<StepExecution[]> {
+    if (runIds.length === 0) return [];
+    return this.withRetry(() => {
+      const placeholders = runIds.map(() => '?').join(', ');
+      const stmt = this.db.prepare(`
+        SELECT * FROM step_executions
+        WHERE run_id IN (${placeholders})
+        ORDER BY started_at ASC, iteration_index ASC, rowid ASC
+      `);
+      return stmt.all(...runIds) as StepExecution[];
+    });
+  }
+
   async clearStepExecutions(runId: string, stepIds: string[]): Promise<number> {
     if (stepIds.length === 0) return 0;
     return this.withRetry(() => {

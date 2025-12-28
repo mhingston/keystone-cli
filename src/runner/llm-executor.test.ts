@@ -7,7 +7,7 @@ import { Readable, Writable } from 'node:stream';
 import type { ExpressionContext } from '../expression/evaluator';
 import type { LlmStep, Step } from '../parser/schema';
 import type { LLMAdapter, LLMMessage, LLMResponse, LLMTool } from './llm-adapter';
-import { executeLlmStep } from './llm-executor';
+import { executeLlmStep } from './executors/llm-executor.ts';
 import type { MCPServerConfig } from './mcp-manager';
 import type { StepResult } from './step-executor';
 import { ConsoleLogger, type Logger } from '../utils/logger';

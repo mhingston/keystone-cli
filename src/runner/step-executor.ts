@@ -30,6 +30,8 @@ export {
 import {
   type StepResult,
   type StepExecutorOptions,
+  WorkflowSuspendedError,
+  WorkflowWaitingError,
 } from './executors/types.ts';
 
 /**
@@ -192,8 +194,19 @@ export async function executeStep(
 
     return result;
   } catch (error) {
-    if (error instanceof Error && (error.name === 'WorkflowSuspendedError' || error.name === 'WorkflowWaitingError')) {
-      throw error;
+    if (error instanceof WorkflowSuspendedError) {
+      return {
+        output: null,
+        status: 'suspended',
+        error: error.message,
+      };
+    }
+    if (error instanceof WorkflowWaitingError) {
+      return {
+        output: { wakeAt: error.wakeAt }, // Store wakeAt in output for getWakeAt helper
+        status: 'waiting',
+        error: error.message,
+      };
     }
     return {
       output: null,

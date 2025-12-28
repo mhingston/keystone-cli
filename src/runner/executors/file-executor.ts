@@ -231,7 +231,7 @@ export async function executeFileStep(
             }
             const content = await Bun.file(targetPath).text();
             return {
-                output: { content, path: targetPath, bytes: stat.size },
+                output: content,
                 status: 'success',
             };
         }

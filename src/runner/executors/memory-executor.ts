@@ -19,10 +19,19 @@ export async function executeMemoryStep(
         throw new Error('Memory database not initialized');
     }
 
-    const adapterResult = options.getAdapter ? options.getAdapter(step.model || 'local') : null;
+    const requestedModel = step.model || 'local';
+    if (!requestedModel.toLowerCase().startsWith('local')) {
+        throw new Error(`Memory steps only support local embeddings (requested: ${requestedModel})`);
+    }
+
+    const adapterResult = options.getAdapter ? options.getAdapter(requestedModel) : null;
     const adapter = adapterResult?.adapter;
+    const resolvedModel = adapterResult?.resolvedModel ?? requestedModel;
+    if (!resolvedModel.toLowerCase().startsWith('local')) {
+        throw new Error(`Memory steps only support local embeddings (requested: ${resolvedModel})`);
+    }
     if (!adapter || !adapter.embed) {
-        throw new Error(`Model ${step.model} does not support embeddings`);
+        throw new Error(`Model ${resolvedModel} does not support embeddings`);
     }
 
     switch (step.op) {
@@ -35,7 +44,7 @@ export async function executeMemoryStep(
             const id = await memoryDb.store(text, embedding, metadata as Record<string, unknown>);
 
             return {
-                output: { id, text, op: 'store' },
+                output: { id, status: 'stored' },
                 status: 'success',
             };
         }

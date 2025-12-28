@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EngineStep } from '../parser/schema';
-import { executeEngineStep } from './engine-executor';
+import { executeEngineStep } from './executors/engine-executor.ts';
 
 // Helper to create a minimal valid EngineStep for testing
 const createStep = (overrides: Partial<EngineStep>): EngineStep =>

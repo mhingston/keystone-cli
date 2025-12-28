@@ -31,7 +31,7 @@ import type {
 import { ConfigLoader } from '../utils/config-loader';
 import type { SafeSandbox } from '../utils/sandbox';
 import type { getAdapter } from './llm-adapter';
-import type { executeLlmStep } from './llm-executor';
+import type { executeLlmStep } from './executors/llm-executor.ts';
 import { executeStep } from './step-executor';
 
 interface StepOutput {

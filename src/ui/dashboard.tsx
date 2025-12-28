@@ -1,6 +1,6 @@
 import { Box, Newline, Text, render, useInput } from 'ink';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { WorkflowDb } from '../db/workflow-db.ts';
+import { WorkflowDb, type StepExecution } from '../db/workflow-db.ts';
 import { ConsoleLogger } from '../utils/logger.ts';
 
 interface Run {
@@ -45,52 +45,57 @@ const Dashboard = () => {
   const fetchData = useCallback(async () => {
     try {
       const recentRuns = (await db.listRuns(10)) as (Run & { outputs: string | null })[];
-      const runsWithUsage = await Promise.all(
-        recentRuns.map(async (run) => {
-          let total_tokens = 0;
-          let exec_total = 0;
-          let exec_failed = 0;
-          let exec_retries = 0;
-          let exec_soft_failures = 0;
-          try {
-            // Get steps to aggregate tokens if not in outputs (future-proofing)
-            const steps = await db.getStepsByRun(run.id);
-            total_tokens = steps.reduce((sum, s) => {
-              if (s.usage) {
-                try {
-                  const u = JSON.parse(s.usage);
-                  return sum + (u.total_tokens || 0);
-                } catch (e) {
-                  return sum;
-                }
-              }
+      const runIds = recentRuns.map((run) => run.id);
+      const steps = await db.getStepsByRuns(runIds);
+      const stepsByRun = new Map<string, StepExecution[]>();
+      for (const step of steps) {
+        const list = stepsByRun.get(step.run_id);
+        if (list) {
+          list.push(step);
+        } else {
+          stepsByRun.set(step.run_id, [step]);
+        }
+      }
+
+      const runsWithUsage = recentRuns.map((run) => {
+        let total_tokens = 0;
+        let exec_total = 0;
+        let exec_failed = 0;
+        let exec_retries = 0;
+        let exec_soft_failures = 0;
+        const runSteps = stepsByRun.get(run.id) || [];
+        total_tokens = runSteps.reduce((sum, s) => {
+          if (s.usage) {
+            try {
+              const u = JSON.parse(s.usage);
+              return sum + (u.total_tokens || 0);
+            } catch (e) {
               return sum;
-            }, 0);
-            exec_total = steps.length;
-            exec_failed = steps.filter((step) => step.status === 'failed').length;
-            exec_retries = steps.reduce((sum, step) => sum + (step.retry_count || 0), 0);
-            exec_soft_failures = steps.filter(
-              (step) => step.status === 'success' && step.error
-            ).length;
-          } catch (e) {
-            // Ignore read error
+            }
           }
-          const startedMs = new Date(run.started_at).getTime();
-          const completedMs = run.completed_at ? new Date(run.completed_at).getTime() : Date.now();
-          const duration_ms = Number.isFinite(startedMs)
-            ? Math.max(0, completedMs - startedMs)
-            : undefined;
-          return {
-            ...run,
-            total_tokens,
-            duration_ms,
-            exec_total,
-            exec_failed,
-            exec_retries,
-            exec_soft_failures,
-          };
-        })
-      );
+          return sum;
+        }, 0);
+        exec_total = runSteps.length;
+        exec_failed = runSteps.filter((step) => step.status === 'failed').length;
+        exec_retries = runSteps.reduce((sum, step) => sum + (step.retry_count || 0), 0);
+        exec_soft_failures = runSteps.filter(
+          (step) => step.status === 'success' && step.error
+        ).length;
+        const startedMs = new Date(run.started_at).getTime();
+        const completedMs = run.completed_at ? new Date(run.completed_at).getTime() : Date.now();
+        const duration_ms = Number.isFinite(startedMs)
+          ? Math.max(0, completedMs - startedMs)
+          : undefined;
+        return {
+          ...run,
+          total_tokens,
+          duration_ms,
+          exec_total,
+          exec_failed,
+          exec_retries,
+          exec_soft_failures,
+        };
+      });
       setRuns(runsWithUsage);
       const recentThoughts = (await db.listThoughtEvents(12)) as Thought[];
       setThoughts(recentThoughts);

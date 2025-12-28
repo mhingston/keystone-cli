@@ -112,7 +112,7 @@ export interface RunOptions {
   dedup?: boolean;
   getAdapter?: typeof getAdapter;
   executeStep?: typeof executeStep;
-  executeLlmStep?: typeof import('./llm-executor').executeLlmStep;
+  executeLlmStep?: typeof import('./executors/llm-executor.ts').executeLlmStep;
   depth?: number;
   allowSuccessResume?: boolean;
   resourcePoolManager?: ResourcePoolManager;
