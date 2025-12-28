@@ -17,4 +17,14 @@ describe('timeout', () => {
     const promise = new Promise((resolve) => setTimeout(() => resolve('ok'), 100));
     await expect(withTimeout(promise, 10, 'MyStep')).rejects.toThrow(/MyStep timed out/);
   });
+
+  it('should abort the controller when the timeout triggers', async () => {
+    const controller = new AbortController();
+    const promise = new Promise(() => {});
+
+    await expect(
+      withTimeout(promise, 10, 'SlowOp', { abortController: controller })
+    ).rejects.toThrow(TimeoutError);
+    expect(controller.signal.aborted).toBe(true);
+  });
 });

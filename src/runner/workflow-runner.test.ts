@@ -854,6 +854,64 @@ describe('WorkflowRunner', () => {
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
   });
 
+  it('should reuse persisted foreach items on resume even if inputs change', async () => {
+    const resumeDbPath = 'test-foreach-resume-items.db';
+    if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
+
+    const workflow: Workflow = {
+      name: 'foreach-resume-items',
+      steps: [
+        {
+          id: 'process',
+          type: 'human',
+          message: 'Item ${{ item }}',
+          foreach: '${{ inputs.items }}',
+          needs: [],
+        },
+      ],
+      outputs: {
+        results: '${{ steps.process.output }}',
+      },
+    } as unknown as Workflow;
+
+    const originalIsTTY = process.stdin.isTTY;
+    process.stdin.isTTY = false;
+
+    const runner1 = new WorkflowRunner(workflow, {
+      dbPath: resumeDbPath,
+      inputs: { items: [1, 2] },
+    });
+    let suspendedError: unknown;
+    try {
+      await runner1.run();
+    } catch (e) {
+      suspendedError = e;
+    } finally {
+      process.stdin.isTTY = originalIsTTY;
+    }
+
+    expect(suspendedError).toBeDefined();
+    expect(
+      typeof suspendedError === 'object' && suspendedError !== null && 'name' in suspendedError
+        ? (suspendedError as { name: string }).name
+        : undefined
+    ).toBe('WorkflowSuspendedError');
+
+    const runner2 = new WorkflowRunner(workflow, {
+      dbPath: resumeDbPath,
+      resumeRunId: runner1.runId,
+      resumeInputs: {
+        process: { __answer: 'ok' },
+        items: [1, 2, 3],
+      },
+    });
+
+    const outputs = await runner2.run();
+    expect(outputs.results).toEqual(['ok', 'ok']);
+
+    if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
+  });
+
   it('should resume a workflow marked as running (crashed process)', async () => {
     const resumeDbPath = 'test-running-resume.db';
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);

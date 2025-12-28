@@ -9,16 +9,25 @@ export class TimeoutError extends Error {
   }
 }
 
+export interface TimeoutOptions {
+  abortController?: AbortController;
+}
+
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  operation = 'Operation'
+  operation = 'Operation',
+  options: TimeoutOptions = {}
 ): Promise<T> {
   let timeoutId: Timer | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(new TimeoutError(`${operation} timed out after ${timeoutMs}ms`));
+      const timeoutError = new TimeoutError(`${operation} timed out after ${timeoutMs}ms`);
+      if (options.abortController && !options.abortController.signal.aborted) {
+        options.abortController.abort(timeoutError);
+      }
+      reject(timeoutError);
     }, timeoutMs);
   });
 

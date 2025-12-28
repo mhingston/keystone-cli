@@ -77,9 +77,21 @@ export class ForeachExecutor {
       throw new Error('Step is not a foreach step');
     }
 
-    const items = ExpressionEvaluator.evaluate(step.foreach, baseContext);
-    if (!Array.isArray(items)) {
-      throw new Error(`foreach expression must evaluate to an array: ${step.foreach}`);
+    let items: unknown[];
+    const persistedItems = existingContext?.foreachItems;
+    if (Array.isArray(persistedItems)) {
+      items = persistedItems;
+    } else {
+      if (persistedItems !== undefined) {
+        this.logger.warn(
+          `  ⚠️  Warning: Persisted foreach items for step ${step.id} are invalid. Re-evaluating expression.`
+        );
+      }
+      const evaluatedItems = ExpressionEvaluator.evaluate(step.foreach, baseContext);
+      if (!Array.isArray(evaluatedItems)) {
+        throw new Error(`foreach expression must evaluate to an array: ${step.foreach}`);
+      }
+      items = evaluatedItems;
     }
 
     this.logger.log(`  ⤷ Executing step ${step.id} for ${items.length} items`);

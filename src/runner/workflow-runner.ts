@@ -115,6 +115,7 @@ export interface ForeachStepContext extends StepContext {
   // output and outputs inherited from StepContext
   // output: array of output values
   // outputs: mapped outputs object
+  foreachItems?: unknown[]; // Persisted foreach inputs for deterministic resume
 }
 
 /**
@@ -160,6 +161,27 @@ export class WorkflowRunner {
    */
   private get isCanceled(): boolean {
     return this.abortController.signal.aborted;
+  }
+
+  private createStepAbortController(): { controller: AbortController; cleanup: () => void } {
+    const controller = new AbortController();
+    const parentSignal = this.abortSignal;
+    const onAbort = () => {
+      if (!controller.signal.aborted) {
+        controller.abort();
+      }
+    };
+
+    if (parentSignal.aborted) {
+      controller.abort();
+      return { controller, cleanup: () => {} };
+    }
+
+    parentSignal.addEventListener('abort', onAbort, { once: true });
+    return {
+      controller,
+      cleanup: () => parentSignal.removeEventListener('abort', onAbort),
+    };
   }
 
   constructor(workflow: Workflow, options: RunOptions = {}) {
@@ -368,11 +390,13 @@ export class WorkflowRunner {
         // Use persisted foreach items from parent step for deterministic resume
         // This ensures the resume uses the same array as the initial run
         let expectedCount = -1;
+        let persistedItems: unknown[] | undefined;
         const parentExec = stepExecutions.find((e) => e.iteration_index === null);
         if (parentExec?.output) {
           try {
             const parsed = JSON.parse(parentExec.output);
             if (parsed.__foreachItems && Array.isArray(parsed.__foreachItems)) {
+              persistedItems = parsed.__foreachItems;
               expectedCount = parsed.__foreachItems.length;
             }
           } catch (_e) {
@@ -420,6 +444,7 @@ export class WorkflowRunner {
           outputs: mappedOutputs,
           status,
           items,
+          foreachItems: persistedItems,
         } as ForeachStepContext);
 
         // Only mark as fully completed if all iterations completed successfully AND we have all items
@@ -1325,7 +1350,7 @@ export class WorkflowRunner {
       await this.db.startStep(stepExecId);
     }
 
-    const operation = async (attemptContext: ExpressionContext) => {
+    const operation = async (attemptContext: ExpressionContext, abortSignal?: AbortSignal) => {
       const exec = this.options.executeStep || executeStep;
       const result = await exec(stepToExecute, attemptContext, this.logger, {
         executeWorkflowFn: this.executeSubWorkflow.bind(this),
@@ -1333,7 +1358,7 @@ export class WorkflowRunner {
         memoryDb: this.memoryDb,
         workflowDir: this.options.workflowDir,
         dryRun: this.options.dryRun,
-        abortSignal: this.abortSignal,
+        abortSignal,
         runId: this.runId,
         stepExecutionId: stepExecId,
         artifactRoot: this.options.artifactRoot,
@@ -1399,7 +1424,7 @@ export class WorkflowRunner {
               memoryDb: this.memoryDb,
               workflowDir: this.options.workflowDir,
               dryRun: this.options.dryRun,
-              abortSignal: this.abortSignal,
+              abortSignal,
               runId: this.runId,
               stepExecutionId: stepExecId,
               artifactRoot: this.options.artifactRoot,
@@ -1427,10 +1452,13 @@ export class WorkflowRunner {
               // If still failing, either retry again or give up
               if (currentAttempt + 1 < outputRetries) {
                 // Try again with updated context
-                return operation({
-                  ...attemptContext,
-                  outputRepairAttempts: currentAttempt + 1,
-                });
+                return operation(
+                  {
+                    ...attemptContext,
+                    outputRepairAttempts: currentAttempt + 1,
+                  },
+                  abortSignal
+                );
               }
               const repairMessage =
                 repairError instanceof Error ? repairError.message : String(repairError);
@@ -1464,10 +1492,18 @@ export class WorkflowRunner {
       }
 
       const operationWithTimeout = async () => {
-        if (step.timeout) {
-          return await withTimeout(operation(context), step.timeout, `Step ${step.id}`);
+        const { controller, cleanup } = this.createStepAbortController();
+        try {
+          const attempt = operation(context, controller.signal);
+          if (step.timeout) {
+            return await withTimeout(attempt, step.timeout, `Step ${step.id}`, {
+              abortController: controller,
+            });
+          }
+          return await attempt;
+        } finally {
+          cleanup();
         }
-        return await operation(context);
       };
 
       const result = await withRetry(operationWithTimeout, step.retry, async (attempt, error) => {
