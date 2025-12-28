@@ -65,6 +65,15 @@ export class ResourcePoolManager {
     poolName: string,
     options: { priority?: number; signal?: AbortSignal; timeout?: number } = {}
   ): Promise<ReleaseFunction> {
+    // Validate timeout parameter
+    if (options.timeout !== undefined) {
+      if (typeof options.timeout !== 'number' || !Number.isFinite(options.timeout) || options.timeout <= 0) {
+        throw new Error(
+          `Invalid timeout value: ${options.timeout}. Timeout must be a positive finite number.`
+        );
+      }
+    }
+
     let pool = this.pools.get(poolName);
     if (!pool) {
       // Create a pool for this name if it doesn't exist, using global limit

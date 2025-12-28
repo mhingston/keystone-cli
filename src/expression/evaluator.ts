@@ -362,10 +362,15 @@ export class ExpressionEvaluator {
       let ast = ExpressionEvaluator.jsepCache.get(expr);
       if (!ast) {
         ast = jsep(expr);
-        // Manage cache size
-        if (ExpressionEvaluator.jsepCache.size >= ExpressionEvaluator.maxCacheSize) {
+        // Manage cache size - evict BEFORE adding to maintain size limit
+        // This ensures cache never exceeds maxCacheSize
+        while (ExpressionEvaluator.jsepCache.size >= ExpressionEvaluator.maxCacheSize) {
           const firstKey = ExpressionEvaluator.jsepCache.keys().next().value;
-          if (firstKey !== undefined) ExpressionEvaluator.jsepCache.delete(firstKey);
+          if (firstKey !== undefined) {
+            ExpressionEvaluator.jsepCache.delete(firstKey);
+          } else {
+            break; // Safety: avoid infinite loop if cache is corrupted
+          }
         }
         ExpressionEvaluator.jsepCache.set(expr, ast);
       }

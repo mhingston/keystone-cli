@@ -142,11 +142,18 @@ export class Redactor {
   }
 
   /**
-   * Redact all secrets from a string
+   * Redact all secrets from a string.
+   * Returns empty string for null/undefined, converts non-strings to strings.
    */
   redact(text: string): string {
-    if (!text || typeof text !== 'string') {
-      return text;
+    // Handle null/undefined explicitly
+    if (text === null || text === undefined) {
+      return '';
+    }
+
+    // Handle non-strings by converting them
+    if (typeof text !== 'string') {
+      text = String(text);
     }
 
     if (!this.combinedPattern) {

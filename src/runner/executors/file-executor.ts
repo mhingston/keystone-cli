@@ -51,7 +51,17 @@ function assertWithinCwd(targetPath: string, allowOutsideCwd?: boolean, label = 
 }
 
 function normalizeDiffPath(diffPath: string): string {
-    return diffPath.trim().replace(/^([ab]\/)/, '');
+    const trimmed = diffPath.trim().replace(/^([ab]\/)/, '');
+
+    // Security: Check for path traversal attempts
+    if (trimmed.includes('..') || trimmed.startsWith('/') || /^[a-zA-Z]:/.test(trimmed)) {
+        throw new Error(
+            `Security Error: Diff path "${trimmed}" contains path traversal or absolute path. ` +
+            `Only relative paths without ".." are allowed.`
+        );
+    }
+
+    return trimmed;
 }
 
 function assertDiffMatchesTarget(diffPath: string | null, targetPath: string): void {

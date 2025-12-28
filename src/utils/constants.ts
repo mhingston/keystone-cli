@@ -13,6 +13,8 @@ export const TIMEOUTS = {
   DEFAULT_HTTP_TIMEOUT_MS: 30000,
   /** Default regex execution timeout for search operations */
   REGEX_TIMEOUT_MS: 1000,
+  /** Timeout for OAuth login flows (5 minutes) */
+  OAUTH_LOGIN_TIMEOUT_MS: 5 * 60 * 1000,
 } as const;
 
 /** Database related constants */

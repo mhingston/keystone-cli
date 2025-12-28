@@ -799,7 +799,11 @@ export class WorkflowDb {
   }
 
   /**
-   * Mark an idempotency record as running if it's not already running or successful
+   * Mark an idempotency record as running if it's not already running or successful.
+   * 
+   * This operation is atomic within SQLite - the UPDATE only succeeds if the
+   * status condition is met, preventing race conditions where multiple processes
+   * try to claim the same key simultaneously.
    */
   async markIdempotencyRecordRunning(
     key: string,
@@ -819,6 +823,74 @@ export class WorkflowDb {
         StepStatusConst.SUCCESS
       );
       return result.changes > 0;
+    });
+  }
+
+  /**
+   * Atomically claim an idempotency key.
+   * 
+   * This combines the check-and-claim into a single atomic operation:
+   * 1. If no record exists, creates one with 'running' status
+   * 2. If a record exists but is not running/successful, updates it to 'running'
+   * 3. Returns the current record state for decision making
+   * 
+   * This prevents race conditions where two processes might both think
+   * they successfully claimed the same key.
+   */
+  async atomicClaimIdempotencyKey(
+    key: string,
+    runId: string,
+    stepId: string,
+    ttlSeconds?: number
+  ): Promise<
+    | { status: 'claimed' }
+    | { status: 'already-running'; record: IdempotencyRecord }
+    | { status: 'completed'; record: IdempotencyRecord }
+  > {
+    return await this.withRetry(() => {
+      return this.db.transaction(() => {
+        // Check current state
+        const existing = this.getIdempotencyRecordStmt.get(key) as IdempotencyRecord | null;
+
+        if (!existing) {
+          // No record exists - claim it
+          const expiresAt = this.formatExpiresAt(ttlSeconds);
+          this.insertIdempotencyRecordIfAbsentStmt.run(key, runId, stepId, StepStatusConst.RUNNING, expiresAt);
+          return { status: 'claimed' as const };
+        }
+
+        if (existing.status === StepStatusConst.RUNNING) {
+          return { status: 'already-running' as const, record: existing };
+        }
+
+        if (existing.status === StepStatusConst.SUCCESS) {
+          return { status: 'completed' as const, record: existing };
+        }
+
+        // Record exists but is in a claimable state (failed, pending, etc.)
+        // Try to claim it
+        const expiresAt = this.formatExpiresAt(ttlSeconds);
+        const result = this.markIdempotencyRecordRunningStmt.run(
+          StepStatusConst.RUNNING,
+          runId,
+          stepId,
+          expiresAt,
+          key,
+          StepStatusConst.RUNNING,
+          StepStatusConst.SUCCESS
+        );
+
+        if (result.changes > 0) {
+          return { status: 'claimed' as const };
+        }
+
+        // Someone else claimed it between our check and update
+        const updated = this.getIdempotencyRecordStmt.get(key) as IdempotencyRecord;
+        if (updated.status === StepStatusConst.SUCCESS) {
+          return { status: 'completed' as const, record: updated };
+        }
+        return { status: 'already-running' as const, record: updated };
+      })();
     });
   }
 

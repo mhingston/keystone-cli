@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ConsoleLogger, type Logger } from './logger';
+import { TIMEOUTS } from './constants';
 
 export interface AuthData {
   github_token?: string;
@@ -367,6 +368,7 @@ export class AuthManager {
         }
         if (
           data.cloudaicompanionProject &&
+          typeof data.cloudaicompanionProject === 'object' &&
           typeof data.cloudaicompanionProject.id === 'string' &&
           data.cloudaicompanionProject.id
         ) {
@@ -393,7 +395,7 @@ export class AuthManager {
           stopServer();
           reject(new Error('Login timed out after 5 minutes'));
         },
-        5 * 60 * 1000
+        TIMEOUTS.OAUTH_LOGIN_TIMEOUT_MS
       );
 
       serverRef.current = Bun.serve({
@@ -546,7 +548,7 @@ export class AuthManager {
           stopServer();
           reject(new Error('Login timed out after 5 minutes'));
         },
-        5 * 60 * 1000
+        TIMEOUTS.OAUTH_LOGIN_TIMEOUT_MS
       );
 
       serverRef.current = Bun.serve({

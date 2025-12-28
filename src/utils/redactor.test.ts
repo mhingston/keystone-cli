@@ -53,9 +53,14 @@ describe('Redactor', () => {
     expect(redactor.redactValue(null)).toBe(null);
   });
 
-  it('should return input as is if not a string for redact', () => {
+  it('should convert non-string values to strings for redact', () => {
+    // Non-strings are converted to strings for type consistency
+    // @ts-ignore - testing runtime behavior with wrong types
+    expect(redactor.redact(123)).toBe('123');
     // @ts-ignore
-    expect(redactor.redact(123)).toBe(123);
+    expect(redactor.redact(null)).toBe('');
+    // @ts-ignore
+    expect(redactor.redact(undefined)).toBe('');
   });
 
   it('should ignore secrets shorter than 6 characters for sensitive keys', () => {

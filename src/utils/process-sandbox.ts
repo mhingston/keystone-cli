@@ -105,6 +105,22 @@ export class ProcessSandbox {
     context: Record<string, unknown>,
     isWorker: boolean
   ): string {
+    // Check for prototype pollution attempts before serialization
+    const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
+    const checkForDangerousKeys = (obj: unknown, path: string = ''): void => {
+      if (obj === null || typeof obj !== 'object') return;
+      for (const key of Object.keys(obj as Record<string, unknown>)) {
+        if (dangerousKeys.includes(key)) {
+          throw new Error(
+            `Security Error: Context contains forbidden key "${key}"${path ? ` at path "${path}"` : ''}. ` +
+            `This may indicate a prototype pollution attack.`
+          );
+        }
+        checkForDangerousKeys((obj as Record<string, unknown>)[key], path ? `${path}.${key}` : key);
+      }
+    };
+    checkForDangerousKeys(context);
+
     // Sanitize context by re-parsing to strip any inherited properties or prototype pollution
     const sanitizedContext = JSON.parse(JSON.stringify(context));
     const contextJson = JSON.stringify(sanitizedContext);
