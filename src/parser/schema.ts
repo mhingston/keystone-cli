@@ -201,6 +201,7 @@ const LlmStepSchema = BaseStepSchema.extend({
   model: z.string().optional(),
   prompt: z.string(),
   tools: z.array(AgentToolSchema).optional(),
+  allowedHandoffs: z.array(z.string()).optional(),
   maxIterations: z.number().int().positive().default(10),
   maxMessageHistory: z.number().int().positive().optional(), // Max messages to keep in conversation history
   contextStrategy: z.enum(['truncate', 'summary', 'auto']).optional(),
@@ -240,6 +241,7 @@ const PlanStepSchema = BaseStepSchema.extend({
   provider: z.string().optional(),
   model: z.string().optional(),
   tools: z.array(AgentToolSchema).optional(),
+  allowedHandoffs: z.array(z.string()).optional(),
   maxIterations: z.number().int().positive().default(10),
   maxMessageHistory: z.number().int().positive().optional(),
   contextStrategy: z.enum(['truncate', 'summary', 'auto']).optional(),

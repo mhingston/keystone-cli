@@ -1,0 +1,50 @@
+name: agent-handoff
+description: "Demo of agent handoffs and tool-driven context updates."
+
+inputs:
+  topic:
+    type: string
+    default: "billing"
+  user:
+    type: string
+    default: "Ada"
+
+steps:
+  - id: route
+    type: llm
+    agent: handoff-router
+    prompt: |
+      We need help on "${{ inputs.topic }}" for "${{ inputs.user }}".
+      First, call remember_context with the topic and user.
+      If a specialist is needed, transfer to handoff-specialist.
+      Provide a short response after any handoff.
+    allowedHandoffs:
+      - handoff-specialist
+    tools:
+      - name: remember_context
+        description: Store user and topic in workflow context.
+        parameters:
+          type: object
+          properties:
+            topic: { type: string }
+            user: { type: string }
+          required: [topic, user]
+        execution:
+          id: remember_context
+          type: script
+          allowInsecure: true
+          run: |
+            (function() {
+              return {
+                __keystone_context: {
+                  memory: { topic: args.topic, user: args.user },
+                  env: { CURRENT_TOPIC: args.topic }
+                },
+                stored: true
+              };
+            })();
+
+  - id: show_context
+    type: shell
+    needs: [route]
+    run: echo "Memory: ${{ memory.user }} on ${{ memory.topic }} (env=${{ env.CURRENT_TOPIC }})"

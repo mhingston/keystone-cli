@@ -187,6 +187,25 @@ tools:
 ---
 You are a test agent.`;
     writeFileSync(join(agentsDir, 'test-agent.md'), agentContent);
+
+    const handoffTargetContent = `---
+name: handoff-target
+model: gpt-4
+tools:
+  - name: specialist-tool
+    execution:
+      type: shell
+      run: echo "specialist"
+---
+You are the specialist for \${{ inputs.topic }}.`;
+    writeFileSync(join(agentsDir, 'handoff-target.md'), handoffTargetContent);
+
+    const contextAgentContent = `---
+name: context-agent
+model: gpt-4
+---
+You are a context-aware agent.`;
+    writeFileSync(join(agentsDir, 'context-agent.md'), contextAgentContent);
   });
 
   afterAll(() => {
@@ -866,5 +885,215 @@ You are a test agent.`;
 
     expect(capturedPrompt).toContain('"key": "value"');
     expect(capturedPrompt).not.toContain('[object Object]');
+  });
+
+  it('should evaluate expressions in agent system prompts', async () => {
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'handoff-target',
+      prompt: 'hello',
+      needs: [],
+      maxIterations: 3,
+    };
+    const context: ExpressionContext = { inputs: { topic: 'payments' }, steps: {} };
+    let capturedSystem = '';
+
+    const chatMock = mock(async (messages: LLMMessage[]) => {
+      const systemMessages = messages.filter((m) => m.role === 'system');
+      capturedSystem =
+        (systemMessages.find((m) => typeof m.content === 'string')?.content as string) || '';
+      return { message: { role: 'assistant', content: 'ok' } };
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
+    const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
+
+    const result = await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
+
+    expect(result.status).toBe('success');
+    expect(capturedSystem).toContain('payments');
+    expect(capturedSystem).not.toContain('${{');
+  });
+
+  it('should transfer to allowed agent and swap system prompt/tools', async () => {
+    let callCount = 0;
+    let sawTransferTool = false;
+    let sawOriginalTool = false;
+    let sawTargetToolAfter = false;
+    let sawOriginalToolAfter = false;
+    let sawTargetPrompt = false;
+
+    const chatMock = mock(
+      async (messages: LLMMessage[], options: { tools?: LLMTool[] }) => {
+        callCount++;
+        const toolNames = options.tools?.map((t) => t.function.name) || [];
+
+        if (callCount === 1) {
+          sawTransferTool = toolNames.includes('transfer_to_agent');
+          sawOriginalTool = toolNames.includes('test-tool');
+          return {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-transfer',
+                  type: 'function',
+                  function: {
+                    name: 'transfer_to_agent',
+                    arguments: '{"agent_name":"handoff-target"}',
+                  },
+                },
+              ],
+            },
+          };
+        }
+
+        const systemMessages = messages.filter((m) => m.role === 'system');
+        sawTargetPrompt = systemMessages.some(
+          (m) => typeof m.content === 'string' && m.content.includes('specialist for billing')
+        );
+        sawTargetToolAfter = toolNames.includes('specialist-tool');
+        sawOriginalToolAfter = toolNames.includes('test-tool');
+
+        return {
+          message: { role: 'assistant', content: 'done' },
+        };
+      }
+    ) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
+
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'test-agent',
+      prompt: 'handoff',
+      needs: [],
+      maxIterations: 4,
+      allowedHandoffs: ['handoff-target'],
+    };
+    const context: ExpressionContext = { inputs: { topic: 'billing' }, steps: {} };
+    const executeStepFn = mock(async () => ({ status: 'success' as const, output: 'ok' }));
+
+    const result = await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
+
+    expect(result.status).toBe('success');
+    expect(sawTransferTool).toBe(true);
+    expect(sawOriginalTool).toBe(true);
+    expect(sawTargetToolAfter).toBe(true);
+    expect(sawOriginalToolAfter).toBe(false);
+    expect(sawTargetPrompt).toBe(true);
+  });
+
+  it('should apply context updates from tool output', async () => {
+    const step: LlmStep = {
+      id: 'l1',
+      type: 'llm',
+      agent: 'context-agent',
+      prompt: 'update context',
+      needs: [],
+      maxIterations: 4,
+      tools: [
+        {
+          name: 'update-context',
+          execution: {
+            id: 'update-step',
+            type: 'shell',
+            run: 'echo update',
+          },
+        },
+        {
+          name: 'read-context',
+          execution: {
+            id: 'read-step',
+            type: 'shell',
+            run: 'echo read',
+          },
+        },
+      ],
+    };
+    const context: ExpressionContext = { inputs: {}, steps: {} };
+    let sawEnvUpdate = false;
+    let sawMemoryUpdate = false;
+
+    const executeStepFn = async (_step: Step, toolContext: ExpressionContext) => {
+      if (_step.id === 'update-step') {
+        return {
+          status: 'success' as const,
+          output: {
+            __keystone_context: {
+              env: { USER_ID: '123' },
+              memory: { user: 'Ada' },
+            },
+            ok: true,
+          },
+        };
+      }
+      if (_step.id === 'read-step') {
+        sawEnvUpdate = toolContext.env?.USER_ID === '123';
+        sawMemoryUpdate = toolContext.memory?.user === 'Ada';
+        return { status: 'success' as const, output: { seen: true } };
+      }
+      return { status: 'success' as const, output: 'ok' };
+    };
+
+    let callCount = 0;
+    const chatMock = mock(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call-update',
+                type: 'function',
+                function: { name: 'update-context', arguments: '{}' },
+              },
+              {
+                id: 'call-read',
+                type: 'function',
+                function: { name: 'read-context', arguments: '{}' },
+              },
+            ],
+          },
+        };
+      }
+      return { message: { role: 'assistant', content: 'done' } };
+    }) as unknown as LLMAdapter['chat'];
+    const getAdapter = createMockGetAdapter(chatMock);
+
+    await executeLlmStep(
+      step,
+      context,
+      executeStepFn as unknown as (step: Step, context: ExpressionContext) => Promise<StepResult>,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      getAdapter
+    );
+
+    expect(sawEnvUpdate).toBe(true);
+    expect(sawMemoryUpdate).toBe(true);
   });
 });

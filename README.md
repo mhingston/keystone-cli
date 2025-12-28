@@ -137,6 +137,7 @@ Top-level workflows:
 - `scaffold-feature`: Interactive workflow scaffolder. Prompts for requirements, plans files, generates content, and writes them.
 - `decompose-problem`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
 - `dev`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
+- `agent-handoff`: Demonstrates agent handoffs and tool-driven context updates.
 
 Sub-workflows:
 - `scaffold-plan`: Generates a file plan from `requirements` input.
@@ -150,6 +151,7 @@ Example runs:
 ```bash
 keystone run scaffold-feature
 keystone run decompose-problem -i problem="Add caching to the API" -i context="Node/Bun service"
+keystone run agent-handoff -i topic="billing" -i user="Ada"
 ```
 
 Sub-workflows are used by the top-level workflows, but can be run directly if you want just one phase.
@@ -397,6 +399,7 @@ Keystone uses `${{ }}` syntax for dynamic values. Expressions are evaluated usin
 - `${{ secrets.NAME }}`: Access redacted secrets.
 - `${{ env.NAME }}`: Access environment variables (process env merged with workflow-level `env`).
   Workflow-level `env` is evaluated per step; if an expression cannot be resolved yet, the variable is skipped with a warning.
+- `${{ memory.key }}`: Access mutable workflow memory (populated by tools via `__keystone_context`).
 
 Inputs support `values` for enums and `secret: true` for sensitive values (redacted in logs and at rest by default; resumptions may require re-entry).
 
@@ -419,6 +422,7 @@ Keystone supports several specialized step types:
 - `shell`: Run arbitrary shell commands.
 - `llm`: Prompt an agent and get structured or unstructured responses. Supports `outputSchema` (JSON Schema) for structured output.
   - `allowClarification`: Boolean (default `false`). If `true`, allows the LLM to ask clarifying questions back to the user or suspend the workflow if no human is available.
+  - `allowedHandoffs`: Optional list of agent names that can be transferred to via `transfer_to_agent`.
   - `maxIterations`: Number (default `10`). Maximum number of tool-calling loops allowed for the agent.
   - `maxMessageHistory`: Number (default `50`). Max messages to retain in history before truncation/summary.
   - `contextStrategy`: `'truncate'|'summary'|'auto'` (default `truncate`). Summarizes older history into a system message when limits are exceeded.
@@ -430,6 +434,7 @@ Keystone supports several specialized step types:
   - `goal`: Required planning goal (string).
   - `context` / `constraints`: Optional strings to guide the plan.
   - `prompt`: Optional override of the planning prompt.
+  - Plan steps accept the same LLM options as `llm`, including tools, handoffs, and `allowedHandoffs`.
 - `request`: Make HTTP requests (GET, POST, etc.).
   - `allowInsecure`: Boolean (default `false`). If `true`, skips SSRF protections and allows non-HTTPS/local URLs.
   - Cross-origin redirects are blocked for non-GET/HEAD requests unless `allowInsecure: true`; on cross-origin redirects, non-essential headers are stripped.
@@ -570,6 +575,39 @@ Use `handoff` to expose an engine tool to the LLM with structured inputs:
         properties:
           summary: { type: string }
         required: [summary]
+```
+
+### Agent Handoffs (Swarm-Style)
+Allow the LLM to switch to a specialist agent mid-step by defining `allowedHandoffs`. This injects a standard tool `transfer_to_agent({ agent_name })` and swaps the system prompt + tool set while preserving conversation history.
+
+```yaml
+- id: route
+  type: llm
+  agent: handoff-router
+  prompt: "Route the task, then answer."
+  allowedHandoffs: [handoff-specialist]
+```
+
+Agent prompts can use `${{ }}` expressions (evaluated against the workflow context) for dynamic system prompts.
+
+```markdown
+---
+name: handoff-specialist
+---
+You are the specialist for ${{ inputs.topic }}.
+```
+
+### Tool-Driven Context Updates
+Tools can return `__keystone_context` to update workflow memory/env immediately. These values become available to subsequent tool calls and steps via `${{ memory.* }}` and `${{ env.* }}`.
+
+```json
+{
+  "__keystone_context": {
+    "memory": { "user": "Ada" },
+    "env": { "CURRENT_TOPIC": "billing" }
+  },
+  "stored": true
+}
 ```
 
 ### Self-Healing Steps

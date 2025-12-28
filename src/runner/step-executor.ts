@@ -248,6 +248,7 @@ async function executePlanStep(
     model: step.model,
     prompt,
     tools: step.tools,
+    allowedHandoffs: step.allowedHandoffs,
     maxIterations: step.maxIterations,
     maxMessageHistory: step.maxMessageHistory,
     contextStrategy: step.contextStrategy,

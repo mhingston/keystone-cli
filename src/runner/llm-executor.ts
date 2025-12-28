@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import type { ExpressionContext } from '../expression/evaluator';
 import { ExpressionEvaluator } from '../expression/evaluator';
 import { parseAgent, resolveAgentPath } from '../parser/agent-parser';
-import type { AgentTool, LlmStep, Step } from '../parser/schema';
+import type { Agent, LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
 import { LIMITS } from '../utils/constants';
 import { extractJson } from '../utils/json-parser';
@@ -29,6 +29,8 @@ const SUMMARY_MODEL_BY_PROVIDER_TYPE: Record<string, string> = {
 };
 const THINKING_OPEN_TAG = '<thinking>';
 const THINKING_CLOSE_TAG = '</thinking>';
+const TRANSFER_TOOL_NAME = 'transfer_to_agent';
+const CONTEXT_UPDATE_KEY = '__keystone_context';
 
 type LlmEventContext = {
   runId?: string;
@@ -434,23 +436,36 @@ export async function executeLlmStep(
   eventContext?: LlmEventContext
 ): Promise<StepResult> {
   const agentPath = resolveAgentPath(step.agent, workflowDir);
-  const agent = parseAgent(agentPath);
+  let activeAgent = parseAgent(agentPath);
 
-  const provider = step.provider || agent.provider;
-  const model = step.model || agent.model || 'gpt-4o';
+  const provider = step.provider || activeAgent.provider;
+  const model = step.model || activeAgent.model || 'gpt-4o';
   const prompt = ExpressionEvaluator.evaluateString(step.prompt, context);
 
   const fullModelString = provider ? `${provider}:${model}` : model;
   const { adapter, resolvedModel } = (getAdapterFn || getAdapter)(fullModelString);
 
-  // Inject schema instructions if present (fallback for models without native support)
-  let systemPrompt = agent.systemPrompt;
-  if (step.outputSchema) {
-    systemPrompt += `\n\nIMPORTANT: You must output valid JSON that matches the following schema:\n${JSON.stringify(step.outputSchema, null, 2)}`;
-  }
+  const buildSystemPrompt = (agent: Agent): string => {
+    let systemPrompt = ExpressionEvaluator.evaluateString(agent.systemPrompt, context);
+    if (step.outputSchema) {
+      systemPrompt += `\n\nIMPORTANT: You must output valid JSON that matches the following schema:\n${JSON.stringify(step.outputSchema, null, 2)}`;
+    }
+    return systemPrompt;
+  };
+  let systemPrompt = buildSystemPrompt(activeAgent);
 
   let messages: LLMMessage[] = [];
   const maxToolOutputBytes = LIMITS.MAX_TOOL_OUTPUT_BYTES;
+  const updateSystemPromptMessage = (newPrompt: string) => {
+    const systemMessage = messages.find(
+      (message) => message.role === 'system' && message.name !== SUMMARY_MESSAGE_NAME
+    );
+    if (systemMessage) {
+      systemMessage.content = newPrompt;
+      return;
+    }
+    messages.unshift({ role: 'system', content: newPrompt });
+  };
 
   // Resume from state if provided
   const stepState =
@@ -481,44 +496,23 @@ export async function executeLlmStep(
         });
       }
     }
+    updateSystemPromptMessage(systemPrompt);
   } else {
     messages.push({ role: 'system', content: systemPrompt }, { role: 'user', content: prompt });
   }
 
   const localMcpClients: MCPClient[] = [];
-  const allTools: ToolDefinition[] = [];
-  const toolRegistry = new Map<string, string>();
-  const registerTool = (tool: ToolDefinition) => {
-    const existing = toolRegistry.get(tool.name);
-    if (existing) {
-      throw new Error(
-        `Duplicate tool name "${tool.name}" from ${tool.source}; already defined by ${existing}. Rename one of them.`
-      );
-    }
-    toolRegistry.set(tool.name, tool.source);
-    allTools.push(tool);
-  };
+  const baseTools: ToolDefinition[] = [];
 
   try {
-    // 1. Add agent tools
-    for (const tool of agent.tools) {
-      registerTool({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters || {
-          type: 'object',
-          properties: {},
-          additionalProperties: true,
-        },
-        source: 'agent',
-        execution: tool.execution,
-      });
-    }
+    const registerBaseTool = (tool: ToolDefinition) => {
+      baseTools.push(tool);
+    };
 
-    // 2. Add step tools
+    // 1. Add step tools
     if (step.tools) {
       for (const tool of step.tools) {
-        registerTool({
+        registerBaseTool({
           name: tool.name,
           description: tool.description,
           parameters: tool.parameters || {
@@ -532,10 +526,10 @@ export async function executeLlmStep(
       }
     }
 
-    // 3. Add Standard tools
+    // 2. Add Standard tools
     if (step.useStandardTools) {
       for (const tool of STANDARD_TOOLS) {
-        registerTool({
+        registerBaseTool({
           name: tool.name,
           description: tool.description,
           parameters: tool.parameters || {
@@ -549,7 +543,7 @@ export async function executeLlmStep(
       }
     }
 
-    // 4. Add Engine handoff tool
+    // 3. Add Engine handoff tool
     if (step.handoff) {
       const toolName = step.handoff.name || 'handoff';
       const description =
@@ -572,7 +566,7 @@ export async function executeLlmStep(
         input: step.handoff.engine.input ?? '${{ args }}',
       };
 
-      registerTool({
+      registerBaseTool({
         name: toolName,
         description,
         parameters,
@@ -581,7 +575,7 @@ export async function executeLlmStep(
       });
     }
 
-    // 5. Add MCP tools
+    // 4. Add MCP tools
     const mcpServersToConnect: (string | MCPServerConfig)[] = [...(step.mcpServers || [])];
     if (step.useGlobalMcp && mcpManager) {
       const globalServers = mcpManager.getGlobalServers();
@@ -627,7 +621,7 @@ export async function executeLlmStep(
             if (client) {
               const mcpTools = await client.listTools();
               for (const tool of mcpTools) {
-                registerTool({
+                registerBaseTool({
                   name: tool.name,
                   description: tool.description,
                   parameters: tool.inputSchema,
@@ -648,40 +642,165 @@ export async function executeLlmStep(
       );
     }
 
-    const llmTools = allTools.map((t) => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters as Record<string, unknown>,
-      },
-    }));
+    const buildToolsForAgent = (agent: Agent) => {
+      const allTools: ToolDefinition[] = [];
+      const toolRegistry = new Map<string, string>();
+      const registerTool = (tool: ToolDefinition) => {
+        const existing = toolRegistry.get(tool.name);
+        if (existing) {
+          throw new Error(
+            `Duplicate tool name "${tool.name}" from ${tool.source}; already defined by ${existing}. Rename one of them.`
+          );
+        }
+        toolRegistry.set(tool.name, tool.source);
+        allTools.push(tool);
+      };
 
-    if (step.allowClarification) {
-      if (toolRegistry.has('ask')) {
-        throw new Error(
-          'Tool name "ask" is reserved for clarification. Rename your tool or disable allowClarification.'
-        );
+      for (const tool of agent.tools) {
+        registerTool({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters || {
+            type: 'object',
+            properties: {},
+            additionalProperties: true,
+          },
+          source: 'agent',
+          execution: tool.execution,
+        });
       }
-      llmTools.push({
+
+      for (const tool of baseTools) {
+        registerTool(tool);
+      }
+
+      const llmTools = allTools.map((t) => ({
         type: 'function' as const,
         function: {
-          name: 'ask',
-          description:
-            'Ask the user a clarifying question if the initial request is ambiguous or missing information.',
-          parameters: {
-            type: 'object',
-            properties: {
-              question: {
-                type: 'string',
-                description: 'The question to ask the user',
-              },
-            },
-            required: ['question'],
-          } as Record<string, unknown>,
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters as Record<string, unknown>,
         },
-      });
-    }
+      }));
+
+      if (step.allowClarification) {
+        if (toolRegistry.has('ask')) {
+          throw new Error(
+            'Tool name "ask" is reserved for clarification. Rename your tool or disable allowClarification.'
+          );
+        }
+        llmTools.push({
+          type: 'function' as const,
+          function: {
+            name: 'ask',
+            description:
+              'Ask the user a clarifying question if the initial request is ambiguous or missing information.',
+            parameters: {
+              type: 'object',
+              properties: {
+                question: {
+                  type: 'string',
+                  description: 'The question to ask the user',
+                },
+              },
+              required: ['question'],
+            } as Record<string, unknown>,
+          },
+        });
+      }
+
+      if (step.allowedHandoffs && step.allowedHandoffs.length > 0) {
+        if (toolRegistry.has(TRANSFER_TOOL_NAME)) {
+          throw new Error(
+            `Tool name "${TRANSFER_TOOL_NAME}" is reserved for agent handoffs. Rename your tool or disable allowedHandoffs.`
+          );
+        }
+        llmTools.push({
+          type: 'function' as const,
+          function: {
+            name: TRANSFER_TOOL_NAME,
+            description: `Transfer control to another agent. Allowed agents: ${step.allowedHandoffs.join(', ')}`,
+            parameters: {
+              type: 'object',
+              properties: {
+                agent_name: {
+                  type: 'string',
+                  description: 'The name of the agent to transfer to',
+                },
+              },
+              required: ['agent_name'],
+            } as Record<string, unknown>,
+          },
+        });
+      }
+
+      return { allTools, llmTools };
+    };
+
+    let allTools: ToolDefinition[] = [];
+    let llmTools: {
+      type: 'function';
+      function: { name: string; description?: string; parameters: Record<string, unknown> };
+    }[] = [];
+
+    const refreshToolsForAgent = (agent: Agent) => {
+      const toolSet = buildToolsForAgent(agent);
+      allTools = toolSet.allTools;
+      llmTools = toolSet.llmTools;
+    };
+
+    refreshToolsForAgent(activeAgent);
+    const applyContextUpdate = (value: unknown): unknown => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return value;
+      }
+
+      const record = value as Record<string, unknown>;
+      if (!(CONTEXT_UPDATE_KEY in record)) {
+        return value;
+      }
+
+      const update = record[CONTEXT_UPDATE_KEY];
+      if (update && typeof update === 'object' && !Array.isArray(update)) {
+        const updateRecord = update as Record<string, unknown>;
+
+        if (updateRecord.env && typeof updateRecord.env === 'object' && !Array.isArray(updateRecord.env)) {
+          const envUpdates = updateRecord.env as Record<string, unknown>;
+          context.env = context.env ?? {};
+          context.envOverrides = context.envOverrides ?? {};
+          for (const [key, val] of Object.entries(envUpdates)) {
+            if (val === undefined) continue;
+            const stringValue =
+              typeof val === 'string'
+                ? val
+                : (() => {
+                    const json = safeJsonStringify(val);
+                    return typeof json === 'string' ? json : String(val);
+                  })();
+            context.env[key] = stringValue;
+            context.envOverrides[key] = stringValue;
+          }
+        }
+
+        if (
+          updateRecord.memory &&
+          typeof updateRecord.memory === 'object' &&
+          !Array.isArray(updateRecord.memory)
+        ) {
+          context.memory = context.memory ?? {};
+          Object.assign(context.memory, updateRecord.memory as Record<string, unknown>);
+        }
+      }
+
+      const { [CONTEXT_UPDATE_KEY]: _ignored, ...cleaned } = record;
+      return cleaned;
+    };
+    const applyAgentTransfer = (nextAgent: Agent) => {
+      activeAgent = nextAgent;
+      systemPrompt = buildSystemPrompt(activeAgent);
+      updateSystemPromptMessage(systemPrompt);
+      refreshToolsForAgent(activeAgent);
+    };
 
     // ReAct Loop
     let iterations = 0;
@@ -887,6 +1006,7 @@ export async function executeLlmStep(
       }
 
       // 3. Execute tools
+      let pendingTransfer: Agent | null = null;
       for (const toolCall of message.tool_calls) {
         if (abortSignal?.aborted) {
           throw new Error('Step canceled');
@@ -910,6 +1030,78 @@ export async function executeLlmStep(
         const toolInfo = allTools.find((t) => t.name === toolCall.function.name);
 
         if (!toolInfo) {
+          if (toolCall.function.name === TRANSFER_TOOL_NAME) {
+            if (!step.allowedHandoffs || step.allowedHandoffs.length === 0) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: TRANSFER_TOOL_NAME,
+                content: formatToolContent('Error: Agent handoffs are not enabled for this step.'),
+              });
+              continue;
+            }
+
+            let args: { agent_name?: string };
+            try {
+              args = JSON.parse(toolCall.function.arguments);
+            } catch (e) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: TRANSFER_TOOL_NAME,
+                content: formatToolContent(
+                  `Error: Invalid JSON in arguments: ${e instanceof Error ? e.message : String(e)}`
+                ),
+              });
+              continue;
+            }
+
+            if (!args.agent_name || typeof args.agent_name !== 'string') {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: TRANSFER_TOOL_NAME,
+                content: formatToolContent('Error: "agent_name" must be a string.'),
+              });
+              continue;
+            }
+
+            if (!step.allowedHandoffs.includes(args.agent_name)) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: TRANSFER_TOOL_NAME,
+                content: formatToolContent(
+                  `Error: Agent "${args.agent_name}" is not allowed for this step.`
+                ),
+              });
+              continue;
+            }
+
+            try {
+              const nextAgentPath = resolveAgentPath(args.agent_name, workflowDir);
+              const nextAgent = parseAgent(nextAgentPath);
+              pendingTransfer = nextAgent;
+              logger.log(`  🔁 Handoff: ${activeAgent.name} → ${args.agent_name}`);
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: TRANSFER_TOOL_NAME,
+                content: formatToolContent(`Transferred to agent ${args.agent_name}.`),
+              });
+            } catch (error) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: TRANSFER_TOOL_NAME,
+                content: formatToolContent(
+                  `Error: ${error instanceof Error ? error.message : String(error)}`
+                ),
+              });
+            }
+            continue;
+          }
+
           if (toolCall.function.name === 'ask' && step.allowClarification) {
             let args: { question: string };
             try {
@@ -928,7 +1120,7 @@ export async function executeLlmStep(
 
             if (process.stdin.isTTY) {
               // In TTY, we can use a human step to get the answer immediately
-              logger.log(`\n🤔 Question from ${agent.name}: ${args.question}`);
+              logger.log(`\n🤔 Question from ${activeAgent.name}: ${args.question}`);
               const result = await executeStepFn(
                 {
                   id: `${step.id}-clarify`,
@@ -990,7 +1182,7 @@ export async function executeLlmStep(
               role: 'tool',
               tool_call_id: toolCall.id,
               name: toolCall.function.name,
-              content: formatToolContent(safeJsonStringify(result)),
+              content: formatToolContent(safeJsonStringify(applyContextUpdate(result))),
             });
           } catch (error) {
             messages.push({
@@ -1030,18 +1222,22 @@ export async function executeLlmStep(
           };
 
           const result = await executeStepFn(toolInfo.execution, toolContext);
+          const toolOutput =
+            result.status === 'success'
+              ? safeJsonStringify(applyContextUpdate(result.output))
+              : `Error: ${result.error}`;
 
           messages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
-            content: formatToolContent(
-              result.status === 'success'
-                ? safeJsonStringify(result.output)
-                : `Error: ${result.error}`
-            ),
+            content: formatToolContent(toolOutput),
           });
         }
+      }
+
+      if (pendingTransfer) {
+        applyAgentTransfer(pendingTransfer);
       }
 
       await applyContextStrategy();

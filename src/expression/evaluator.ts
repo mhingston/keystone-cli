@@ -14,6 +14,7 @@ jsep.plugins.register(jsepObject);
  * - secrets.KEY
  * - steps.step_id.output
  * - steps.step_id.outputs.field
+ * - memory.key
  * - item (for foreach)
  * - Basic JS expressions (arithmetic, comparisons, logical operators)
  * - Array access, method calls (map, filter, every, etc.)
@@ -36,6 +37,8 @@ export interface ExpressionContext {
   args?: unknown;
   index?: number;
   env?: Record<string, string>;
+  envOverrides?: Record<string, string>;
+  memory?: Record<string, unknown>;
   output?: unknown;
   autoHealAttempts?: number;
   reflexionAttempts?: number;
@@ -419,6 +422,7 @@ export class ExpressionEvaluator {
           args: context.args,
           index: context.index,
           env: context.env || {},
+          memory: context.memory || {},
           stdout: contextAsRecord.stdout, // For transform expressions
           last_failed_step: context.last_failed_step,
         };

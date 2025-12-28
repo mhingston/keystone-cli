@@ -10,12 +10,15 @@ import architectAgent from './templates/agents/keystone-architect.md' with { typ
 import softwareEngineerAgent from './templates/agents/software-engineer.md' with { type: 'text' };
 import summarizerAgent from './templates/agents/summarizer.md' with { type: 'text' };
 import testerAgent from './templates/agents/tester.md' with { type: 'text' };
+import handoffRouterAgent from './templates/agents/handoff-router.md' with { type: 'text' };
+import handoffSpecialistAgent from './templates/agents/handoff-specialist.md' with { type: 'text' };
 import decomposeImplementWorkflow from './templates/decompose-implement.yaml' with { type: 'text' };
 import decomposeWorkflow from './templates/decompose-problem.yaml' with { type: 'text' };
 import decomposeResearchWorkflow from './templates/decompose-research.yaml' with { type: 'text' };
 import decomposeReviewWorkflow from './templates/decompose-review.yaml' with { type: 'text' };
 import devWorkflow from './templates/dev.yaml' with { type: 'text' };
 import reviewLoopWorkflow from './templates/review-loop.yaml' with { type: 'text' };
+import agentHandoffWorkflow from './templates/agent-handoff.yaml' with { type: 'text' };
 // Default templates
 import scaffoldWorkflow from './templates/scaffold-feature.yaml' with { type: 'text' };
 import scaffoldGenerateWorkflow from './templates/scaffold-generate.yaml' with { type: 'text' };
@@ -353,6 +356,10 @@ expression:
         content: reviewLoopWorkflow,
       },
       {
+        path: '.keystone/workflows/agent-handoff.yaml',
+        content: agentHandoffWorkflow,
+      },
+      {
         path: '.keystone/workflows/agents/keystone-architect.md',
         content: architectAgent,
       },
@@ -371,6 +378,14 @@ expression:
       {
         path: '.keystone/workflows/agents/summarizer.md',
         content: summarizerAgent,
+      },
+      {
+        path: '.keystone/workflows/agents/handoff-router.md',
+        content: handoffRouterAgent,
+      },
+      {
+        path: '.keystone/workflows/agents/handoff-specialist.md',
+        content: handoffSpecialistAgent,
       },
       {
         path: '.keystone/workflows/dev.yaml',

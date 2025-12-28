@@ -129,6 +129,8 @@ export class WorkflowRunner {
   private workflow: Workflow;
   private db: WorkflowDb;
   private memoryDb: MemoryDb;
+  private contextMemory: Record<string, unknown> = {};
+  private envOverrides: Record<string, string> = {};
   private _runId!: string;
   private state!: WorkflowState;
   private scheduler!: WorkflowScheduler;
@@ -946,6 +948,8 @@ export class WorkflowRunner {
       item,
       index,
       env: {},
+      envOverrides: this.envOverrides,
+      memory: this.contextMemory,
       output: item
         ? undefined
         : this.state.get(this.workflow.steps.find((s) => !s.foreach)?.id || '')?.output,
@@ -974,7 +978,7 @@ export class WorkflowRunner {
       }
     }
 
-    baseContext.env = resolvedEnv;
+    baseContext.env = { ...resolvedEnv, ...this.envOverrides };
     return baseContext;
   }
 
