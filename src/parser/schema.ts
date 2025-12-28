@@ -311,7 +311,8 @@ const HumanStepSchema = BaseStepSchema.extend({
 
 const SleepStepSchema = BaseStepSchema.extend({
   type: z.literal('sleep'),
-  duration: z.union([z.number().int().positive(), z.string()]),
+  duration: z.union([z.number().int().positive(), z.string()]).optional(),
+  until: z.string().optional(),
   durable: z.boolean().optional(), // Persist across restarts for long sleeps
 });
 

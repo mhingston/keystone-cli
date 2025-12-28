@@ -186,10 +186,9 @@ async function executeJoinStep(
     passed = successCount >= condition;
   }
 
-  // NOTE: True "any" or "quorum" (partial completion) requires Runner support to schedule the join
-  // before all dependencies are done. Currently, the runner waits for ALL dependencies.
-  // So this logic works for 'all' or 'any' (if others failed but allowFailure was true).
-  // Use allowFailure on branches to support "best effort" joins with the current runner.
+  // NOTE: The WorkflowScheduler supports early execution for 'any' or 'quorum' conditions,
+  // scheduling the join step as soon as the condition is met (even if some dependencies are still running).
+  // This step executor handles the partial inputs available at that time.
 
   if (!passed) {
     return {
@@ -1484,11 +1483,29 @@ async function executeSleepStep(
   if (abortSignal?.aborted) {
     throw new Error('Step canceled');
   }
-  const evaluated = ExpressionEvaluator.evaluate(step.duration.toString(), context);
-  const duration = Number(evaluated);
 
-  if (Number.isNaN(duration)) {
-    throw new Error(`Invalid sleep duration: ${evaluated}`);
+  let duration: number;
+
+  if (step.until) {
+    const untilStr = ExpressionEvaluator.evaluateString(step.until, context);
+    const targetDate = new Date(untilStr);
+    if (Number.isNaN(targetDate.getTime())) {
+      throw new Error(`Invalid 'until' date format: ${untilStr}`);
+    }
+    duration = targetDate.getTime() - Date.now();
+    // If target is in the past, don't sleep
+    if (duration < 0) {
+      duration = 0;
+    }
+  } else if (step.duration !== undefined) {
+    const evaluated = ExpressionEvaluator.evaluate(step.duration.toString(), context);
+    duration = Number(evaluated);
+
+    if (Number.isNaN(duration)) {
+      throw new Error(`Invalid sleep duration: ${evaluated}`);
+    }
+  } else {
+    throw new Error("Sleep step requires either 'duration' or 'until'");
   }
 
   // Check if we are resuming a durable sleep

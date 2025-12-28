@@ -159,10 +159,11 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
 
     if (existsSync(compDbPath)) rmSync(compDbPath);
   });
-  it('should execute join step early if condition is "any" and one branch finishes', async () => {
-    // This is hard to test deterministically without timing, but we can verify it executes
+  it('should NOT execute join step early if condition is "any" (must wait for all dependencies to finish)', async () => {
+    // New behavior: Join waits for all dependencies to finish (success or failure)
+    // before evaluating the condition. This prevents missing inputs.
     const workflow: Workflow = {
-      name: 'early-join',
+      name: 'delayed-join',
       steps: [
         { id: 'slow', type: 'shell', run: 'sleep 0.1 && echo "slow"', needs: [] },
         { id: 'fast', type: 'shell', run: 'echo "fast"', needs: [] },
@@ -188,21 +189,21 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
     const logger: Logger = {
       log: (msg: string) => logs.push(msg),
       error: (msg: string) => logs.push(msg),
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
+      warn: () => { },
+      info: () => { },
+      debug: () => { },
     };
 
     const runner = new WorkflowRunner(workflow, { dbPath, logger });
     await runner.run();
 
-    // Verify after_join started BEFORE slow finished
+    // Verify after_join started AFTER slow finished
     const afterJoinStart = logs.findIndex((l) => l.includes('Executing step: after_join'));
     const slowFinished = logs.findIndex((l) => l.includes('Step slow completed'));
 
     expect(afterJoinStart).toBeGreaterThan(-1);
     expect(slowFinished).toBeGreaterThan(-1);
-    expect(afterJoinStart).toBeLessThan(slowFinished);
+    expect(afterJoinStart).toBeGreaterThan(slowFinished);
   });
 
   it('should execute top-level workflow compensation on failure', async () => {
@@ -230,9 +231,9 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
     const logger: Logger = {
       log: (msg: string) => logs.push(msg),
       error: (msg: string) => logs.push(msg),
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
+      warn: () => { },
+      info: () => { },
+      debug: () => { },
     };
 
     const runner = new WorkflowRunner(workflow, { dbPath: wfCompDbPath, logger });

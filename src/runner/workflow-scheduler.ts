@@ -61,6 +61,13 @@ export class WorkflowScheduler {
 
     private isStepReady(step: Step): boolean {
         if (step.type === 'join') {
+            // Fix: Join depends on ALL dependencies being finished (success or handled failure)
+            // before checking the specific join condition (any/all/number).
+            // This prevents premature execution and missing inputs.
+            const needs = step.needs ?? [];
+            const allFinished = needs.every((dep: string) => this.completedSteps.has(dep));
+            if (!allFinished) return false;
+
             return this.isJoinConditionMet(step as JoinStep);
         }
         const needs = step.needs ?? [];

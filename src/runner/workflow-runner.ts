@@ -109,6 +109,7 @@ export interface RunOptions {
   dedup?: boolean;
   getAdapter?: typeof getAdapter;
   executeStep?: typeof executeStep;
+  executeLlmStep?: typeof import('./llm-executor').executeLlmStep;
   depth?: number;
   allowSuccessResume?: boolean;
   resourcePoolManager?: ResourcePoolManager;
@@ -572,12 +573,9 @@ export class WorkflowRunner {
 
     const data = {
       type: step.type,
-      run: (step as any).run,
-      prompt: (step as any).prompt,
-      agent: (step as any).agent,
       inputs,
       env: step.env,
-      version: 1, // Cache versioning
+      version: 2, // Cache versioning
     };
 
     // @ts-ignore - Bun.hash exists in Bun environment
@@ -711,9 +709,13 @@ export class WorkflowRunner {
       }
       case 'llm':
         return stripUndefined({
-          agent: step.agent,
-          provider: step.provider,
-          model: step.model,
+          agent: ExpressionEvaluator.evaluateString(step.agent, context),
+          provider: step.provider
+            ? ExpressionEvaluator.evaluateString(step.provider, context)
+            : undefined,
+          model: step.model
+            ? ExpressionEvaluator.evaluateString(step.model, context)
+            : undefined,
           prompt: ExpressionEvaluator.evaluateString(step.prompt, context),
           tools: step.tools,
           maxIterations: step.maxIterations,
@@ -1336,6 +1338,7 @@ export class WorkflowRunner {
         redactForStorage: this.redactForStorage.bind(this),
         getAdapter: this.options.getAdapter,
         executeStep: this.options.executeStep || executeStep,
+        executeLlmStep: this.options.executeLlmStep,
         emitEvent: this.emitEvent.bind(this),
         workflowName: this.workflow.name,
       });
@@ -1405,6 +1408,7 @@ export class WorkflowRunner {
               artifactRoot: this.options.artifactRoot,
               redactForStorage: this.redactForStorage.bind(this),
               executeStep: this.options.executeStep || executeStep,
+              executeLlmStep: this.options.executeLlmStep,
               emitEvent: this.emitEvent.bind(this),
               workflowName: this.workflow.name,
             });
@@ -3024,38 +3028,7 @@ Revise the output to address the feedback. Return only the corrected output.`;
     return outputs;
   }
 
-  /**
-   * Check if a join condition is met based on completed dependencies
-   */
-  private isJoinConditionMet(
-    step: import('../parser/schema.ts').JoinStep,
-    completedSteps: Set<string>
-  ): boolean {
-    const total = step.needs.length;
-    if (total === 0) return true;
 
-    // Count successful/skipped dependencies
-    const successCount = step.needs.filter((dep) => completedSteps.has(dep)).length;
-
-    // Find failed/suspended dependencies (that we've already tried)
-    // If some dependencies failed (and didn't allowFailure), the whole workflow would usually fail.
-    // If allowFailure was true, they are in completedSteps.
-    // So completedSteps effectively represents "done successfully".
-
-    if (step.condition === 'all') {
-      return successCount === total;
-    }
-    if (step.condition === 'any') {
-      // Met if at least one succeeded, OR if all finished and none succeeded?
-      // Actually strictly "any" means at least one success.
-      return successCount > 0;
-    }
-    if (typeof step.condition === 'number') {
-      return successCount >= step.condition;
-    }
-
-    return successCount === total;
-  }
 
   /**
    * Register top-level compensation for the workflow

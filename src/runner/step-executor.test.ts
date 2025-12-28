@@ -47,7 +47,7 @@ interface RequestOutput {
 
 const mockRl = {
   question: mock(() => Promise.resolve('')),
-  close: mock(() => {}),
+  close: mock(() => { }),
 };
 
 describe('step-executor', () => {
@@ -471,7 +471,7 @@ describe('step-executor', () => {
     });
 
     it('should pass logger to sandbox execution', async () => {
-      const logger = { log: mock(() => {}) };
+      const logger = { log: mock(() => { }) };
       // @ts-ignore
       const step = {
         id: 's1',
@@ -702,6 +702,61 @@ describe('step-executor', () => {
       expect(result.status).toBe('success');
       expect(end - start).toBeGreaterThanOrEqual(10);
     });
+
+    it('should sleep until a specific timestamp', async () => {
+      const target = new Date(Date.now() + 50);
+      const step: SleepStep = {
+        id: 'sl2',
+        type: 'sleep',
+        needs: [],
+        until: target.toISOString(),
+      };
+      const start = Date.now();
+      const result = await executeStep(step, context);
+      const end = Date.now();
+      expect(result.status).toBe('success');
+      // allow some small margin of error (e.g. 5ms less due to execution time overhead)
+      expect(end - start).toBeGreaterThanOrEqual(45);
+    });
+
+    it('should not sleep if until date is in the past', async () => {
+      const target = new Date(Date.now() - 1000);
+      const step: SleepStep = {
+        id: 'sl3',
+        type: 'sleep',
+        needs: [],
+        until: target.toISOString(),
+      };
+      const start = Date.now();
+      const result = await executeStep(step, context);
+      const end = Date.now();
+      expect(result.status).toBe('success');
+      expect(end - start).toBeLessThan(20); // Should return nearly immediately
+    });
+
+    it('should fail if invalid until date string', async () => {
+      const step: SleepStep = {
+        id: 'sl4',
+        type: 'sleep',
+        needs: [],
+        until: 'invalid-date',
+      };
+      const result = await executeStep(step, context);
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain("Invalid 'until' date format");
+    });
+
+    it('should fail if neither duration nor until is provided', async () => {
+      // @ts-ignore
+      const step: SleepStep = {
+        id: 'sl5',
+        type: 'sleep',
+        needs: [],
+      };
+      const result = await executeStep(step, context);
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe("Sleep step requires either 'duration' or 'until'");
+    });
   });
 
   describe('request', () => {
@@ -926,7 +981,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('success');
       expect(result.output).toBe(true);
       expect(mockRl.question).toHaveBeenCalled();
@@ -944,7 +999,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('success');
       expect(result.output).toBe('user response');
     });
@@ -961,19 +1016,19 @@ describe('step-executor', () => {
       // Test 'yes'
       mockRl.question.mockResolvedValue('yes');
       // @ts-ignore
-      let result = await executeStep(step, context, { log: () => {} });
+      let result = await executeStep(step, context, { log: () => { } });
       expect(result.output).toBe(true);
 
       // Test 'no'
       mockRl.question.mockResolvedValue('no');
       // @ts-ignore
-      result = await executeStep(step, context, { log: () => {} });
+      result = await executeStep(step, context, { log: () => { } });
       expect(result.output).toBe(false);
 
       // Test empty string (default to true)
       mockRl.question.mockResolvedValue('');
       // @ts-ignore
-      result = await executeStep(step, context, { log: () => {} });
+      result = await executeStep(step, context, { log: () => { } });
       expect(result.output).toBe(true);
     });
 
@@ -989,7 +1044,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('success');
       expect(result.output).toBe('some custom response');
     });
@@ -1006,7 +1061,7 @@ describe('step-executor', () => {
       };
 
       // @ts-ignore
-      const result = await executeStep(step, context, { log: () => {} });
+      const result = await executeStep(step, context, { log: () => { } });
       expect(result.status).toBe('suspended');
       expect(result.error).toBe('Proceed?');
     });

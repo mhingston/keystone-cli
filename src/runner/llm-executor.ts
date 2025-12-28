@@ -436,11 +436,17 @@ export async function executeLlmStep(
   emitEvent?: (event: WorkflowEvent) => void,
   eventContext?: LlmEventContext
 ): Promise<StepResult> {
-  const agentPath = resolveAgentPath(step.agent, workflowDir);
+  const agentName = ExpressionEvaluator.evaluateString(step.agent, context);
+  const agentPath = resolveAgentPath(agentName, workflowDir);
   let activeAgent = parseAgent(agentPath);
 
-  const provider = step.provider || activeAgent.provider;
-  const model = step.model || activeAgent.model || 'gpt-4o';
+  const providerRaw = step.provider || activeAgent.provider;
+  const modelRaw = step.model || activeAgent.model || 'gpt-4o';
+
+  const provider = providerRaw
+    ? ExpressionEvaluator.evaluateString(providerRaw, context)
+    : undefined;
+  const model = ExpressionEvaluator.evaluateString(modelRaw, context);
   const prompt = ExpressionEvaluator.evaluateString(step.prompt, context);
 
   const fullModelString = provider ? `${provider}:${model}` : model;

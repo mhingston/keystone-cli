@@ -114,7 +114,7 @@ async function readStreamWithLimit(
   if (maxBytes <= 0) {
     try {
       await stream.cancel?.();
-    } catch {}
+    } catch { }
     return { text: TRUNCATED_SUFFIX, truncated: true };
   }
 
@@ -136,7 +136,7 @@ async function readStreamWithLimit(
       text += decoder.decode();
       try {
         await reader.cancel();
-      } catch {}
+      } catch { }
       return { text: `${text}${TRUNCATED_SUFFIX}`, truncated: true };
     }
 
@@ -187,8 +187,12 @@ export async function executeShell(
   const cwd = step.dir ? ExpressionEvaluator.evaluateString(step.dir, context) : undefined;
   const mergedEnv = Object.keys(env).length > 0 ? { ...Bun.env, ...env } : Bun.env;
 
-  // Shell metacharacters that require a real shell (including newlines)
-  const hasShellMetas = /[|&;<>`$!\n]/.test(command);
+  // Shell metacharacters that require a real shell (including newlines, globs, env vars)
+  // Added: * ? [ ] = (for env vars)
+  // Note: '=' is common in args (--foo=bar), so strict check might be needed,
+  // but to support `VAR=val cmd`, we should detect it.
+  // Actually, standard `sh -c` is safer if we see *any* of these.
+  const hasShellMetas = /[|&;<>`$!\n*?=\[\]]/.test(command);
 
   // Common shell builtins that must run in a shell
   const firstWord = command.trim().split(/\s+/)[0];
@@ -277,7 +281,7 @@ export async function executeShell(
       const abortHandler = () => {
         try {
           proc.kill();
-        } catch {}
+        } catch { }
       };
       if (abortSignal) {
         abortSignal.addEventListener('abort', abortHandler, { once: true });
@@ -307,7 +311,7 @@ export async function executeShell(
       const abortHandler = () => {
         try {
           proc.kill();
-        } catch {}
+        } catch { }
       };
       if (abortSignal) {
         abortSignal.addEventListener('abort', abortHandler, { once: true });

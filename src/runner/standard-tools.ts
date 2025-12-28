@@ -143,22 +143,6 @@ export const STANDARD_TOOLS: AgentTool[] = [
       required: ['pattern'],
     },
     execution: {
-      id: 'std_search_files',
-      type: 'script',
-      run: `
-        (function() {
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const { globSync } = require('glob');
-          const dir = args.dir || '.';
-          const pattern = args.pattern;
-          try {
-            return globSync(pattern, { cwd: dir, nodir: true });
-          } catch (e) {
-            throw new Error('Search failed: ' + e.message);
-          }
-        })();
-      `,
       allowInsecure: true,
     },
   },
@@ -182,106 +166,147 @@ export const STANDARD_TOOLS: AgentTool[] = [
       id: 'std_search_content',
       type: 'script',
       run: `
-        (function() {
+        (async function() {
           const fs = require('node:fs');
           const path = require('node:path');
           const { globSync } = require('glob');
+          // Try to request worker_threads. If not available, we might fall back or fail safely.
+          // Standard Node environment carries it.
+          const { Worker } = require('node:worker_threads');
+          
           const dir = args.dir || '.';
           const pattern = args.pattern || '**/*';
           const query = args.query;
-          const Re2 = (() => {
-            try {
-              return require('re2');
-            } catch {
-              return null;
-            }
-          })();
-          const maxQueryLength = ${LIMITS.MAX_SEARCH_QUERY_LENGTH};
-          const maxPatternLength = ${LIMITS.MAX_REGEX_PATTERN_LENGTH};
-          const maxResults = ${LIMITS.MAX_SEARCH_RESULTS};
-          const maxFileBytes = ${LIMITS.MAX_SEARCH_FILE_BYTES};
-          const maxLineLength = ${LIMITS.MAX_SEARCH_LINE_LENGTH};
-          const regexTimeoutMs = ${TIMEOUTS.REGEX_TIMEOUT_MS};
+          
+          const LIMITS = ${JSON.stringify(LIMITS)};
+          const TIMEOUTS = ${JSON.stringify(TIMEOUTS)};
 
-          if (query.length > maxQueryLength) {
-            throw new Error('Search query exceeds maximum length of ' + maxQueryLength + ' characters');
+          if (query.length > LIMITS.MAX_SEARCH_QUERY_LENGTH) {
+            throw new Error('Search query exceeds maximum length of ' + LIMITS.MAX_SEARCH_QUERY_LENGTH + ' characters');
           }
 
           const isRegex = query.startsWith('/') && query.endsWith('/') && query.length > 1;
-          let regex;
-          let normalizedQuery = '';
-          let regexDeadline;
-          
-          // ReDoS protection: detect dangerous regex patterns
-          if (isRegex) {
-            const pattern = query.slice(1, -1);
-            if (pattern.length > maxPatternLength) {
-              throw new Error('Regex pattern exceeds maximum length of ' + maxPatternLength + ' characters');
-            }
-            // Detect common ReDoS patterns: nested quantifiers, overlapping alternations
-            const dangerousPatterns = [
-              /\\([^)]*(?:[+*]|\\{\\d+(?:,\\d*)?\\})[^)]*\\)(?:[+*]|\\{\\d+(?:,\\d*)?\\})/, // (x+)+, (x{1,3})*
-              /\\([^)]*\\|[^)]*\\)(?:[+*]|\\{\\d+(?:,\\d*)?\\})/, // (a|aa)+
-              /(?:[+*]|\\{\\d+(?:,\\d*)?\\}){2,}/, // consecutive quantifiers
-            ];
-            if (dangerousPatterns.some(p => p.test(pattern))) {
-              throw new Error('Regex pattern contains potentially dangerous constructs (possible ReDoS). Simplify the pattern.');
-            }
 
-            try {
-              regex = Re2 ? new Re2(pattern) : new RegExp(pattern);
-            } catch (e) {
-              throw new Error('Invalid regular expression: ' + e.message);
-            }
-
-          } else {
-            normalizedQuery = query.toLowerCase();
+          // If NOT regex, use simple main-thread search (safe)
+          if (!isRegex) {
+             const normalizedQuery = query.toLowerCase();
+             const files = globSync(pattern, { cwd: dir, nodir: true });
+             const results = [];
+             for (const file of files) {
+                const fullPath = path.join(dir, file);
+                try {
+                  const stat = fs.statSync(fullPath);
+                  if (stat.size > LIMITS.MAX_SEARCH_FILE_BYTES) continue;
+                  const content = fs.readFileSync(fullPath, 'utf8');
+                  const lines = content.split('\\n');
+                  for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    if (line.length > LIMITS.MAX_SEARCH_LINE_LENGTH) continue;
+                    if (line.toLowerCase().includes(normalizedQuery)) {
+                      results.push({
+                        file,
+                        line: i + 1,
+                        content: line.trim()
+                      });
+                    }
+                    if (results.length >= LIMITS.MAX_SEARCH_RESULTS) break;
+                  }
+                } catch {}
+                if (results.length >= LIMITS.MAX_SEARCH_RESULTS) break;
+             }
+             return results;
           }
-  
+
+          // For REGEX, use a Worker to handle ReDoS/Timeouts
+          // We pass the files list to the worker so it does the heavy lifting
           const files = globSync(pattern, { cwd: dir, nodir: true });
-          const results = [];
-          for (const file of files) {
-            if (isRegex) {
-              regexDeadline = Date.now() + regexTimeoutMs;
-            }
-            const fullPath = path.join(dir, file);
-            let stat;
+          
+          const workerScript = \`
+            const { parentPort, workerData } = require('node:worker_threads');
+            const fs = require('node:fs');
+            const path = require('node:path');
+            
             try {
-              stat = fs.statSync(fullPath);
-            } catch {
-              continue;
-            }
-            if (stat.size > maxFileBytes) {
-              continue;
-            }
-            let content;
-            try {
-              content = fs.readFileSync(fullPath, 'utf8');
-            } catch {
-              continue;
-            }
-            const lines = content.split('\\n');
-            for (let i = 0; i < lines.length; i++) {
-              if (regexDeadline && Date.now() > regexDeadline) {
-                throw new Error('Regex search exceeded time limit');
+              const { files, dir, query, LIMITS } = workerData;
+              let Re2;
+              try { Re2 = require('re2'); } catch {}
+              
+              const patternStr = query.slice(1, -1);
+              let regex;
+              try {
+                regex = Re2 ? new Re2(patternStr) : new RegExp(patternStr);
+              } catch (e) {
+                parentPort.postMessage({ error: 'Invalid regex: ' + e.message });
+                process.exit(0);
               }
-              const line = lines[i];
-              if (line.length > maxLineLength) {
-                continue;
+
+              const results = [];
+              
+              for (const file of files) {
+                const fullPath = path.join(dir, file);
+                try {
+                  const stat = fs.statSync(fullPath);
+                  if (stat.size > LIMITS.MAX_SEARCH_FILE_BYTES) continue;
+                  const content = fs.readFileSync(fullPath, 'utf8');
+                  const lines = content.split('\\n');
+                  for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    if (line.length > LIMITS.MAX_SEARCH_LINE_LENGTH) continue;
+                    
+                    // This matching is interruptible by thread termination
+                    if (regex.test(line)) {
+                      results.push({
+                         file,
+                         line: i + 1,
+                         content: line.trim()
+                      });
+                    }
+                    if (results.length >= LIMITS.MAX_SEARCH_RESULTS) break;
+                  }
+                } catch {}
+                if (results.length >= LIMITS.MAX_SEARCH_RESULTS) break;
               }
-              const matched = isRegex ? regex.test(line) : line.toLowerCase().includes(normalizedQuery);
-              if (matched) {
-                results.push({
-                  file,
-                  line: i + 1,
-                  content: line.trim()
-                });
-              }
-              if (results.length >= maxResults) break;
+              
+              parentPort.postMessage({ results });
+            } catch (err) {
+              parentPort.postMessage({ error: err.message });
             }
-            if (results.length >= maxResults) break;
-          }
-          return results;
+          \`;
+
+          return new Promise((resolve, reject) => {
+            const worker = new Worker(workerScript, {
+              eval: true,
+              workerData: { files, dir, query, LIMITS }
+            });
+
+            // Hard timeout
+            const timeout = setTimeout(() => {
+              worker.terminate();
+              reject(new Error('Regex search timed out (possible ReDoS or large working set).'));
+            }, TIMEOUTS.REGEX_TIMEOUT_MS);
+
+            worker.on('message', (msg) => {
+              clearTimeout(timeout);
+              if (msg.error) {
+                reject(new Error(msg.error));
+              } else {
+                resolve(msg.results);
+              }
+              worker.terminate();
+            });
+
+            worker.on('error', (err) => {
+               clearTimeout(timeout);
+               reject(err);
+            });
+
+            worker.on('exit', (code) => {
+              if (code !== 0) {
+                 clearTimeout(timeout);
+                 reject(new Error(\`Worker stopped with exit code \${code}\`));
+              }
+            });
+          });
         })();
       `,
       allowInsecure: true,

@@ -78,9 +78,21 @@ export class AuthManager {
     }
     const dir = join(homedir(), '.keystone');
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
-    return join(dir, 'auth.json');
+    // Ensure dir perms are correct even if it exists
+    try {
+      const fs = require('node:fs');
+      fs.chmodSync(dir, 0o700);
+    } catch { }
+
+    const authPath = join(dir, 'auth.json');
+    if (existsSync(authPath)) {
+      try {
+        require('node:fs').chmodSync(authPath, 0o600);
+      } catch { }
+    }
+    return authPath;
   }
 
   static load(): AuthData {
@@ -360,7 +372,7 @@ export class AuthManager {
         ) {
           return data.cloudaicompanionProject.id;
         }
-      } catch {}
+      } catch { }
     }
 
     return undefined;

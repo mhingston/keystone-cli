@@ -135,11 +135,32 @@ export class WorkflowState {
                 const outputs: unknown[] = [];
                 let allSuccess = true;
 
-                const sortedExecs = [...stepExecutions].sort(
-                    (a, b) => (a.iteration_index ?? 0) - (b.iteration_index ?? 0)
-                );
+                const sortedExecs = [...stepExecutions].sort((a, b) => {
+                    // Sort by iteration_index asc, then by created_at desc (newest first)
+                    if ((a.iteration_index ?? 0) !== (b.iteration_index ?? 0)) {
+                        return (a.iteration_index ?? 0) - (b.iteration_index ?? 0);
+                    }
+                    // If started_at is available, use it (newest first).
+                    // Fallback to stable sort if nothing else.
+                    if (a.started_at && b.started_at) {
+                        return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+                    }
+                    if (a.step_id && b.step_id) return 0; // Stability
+                    return 0;
+                });
 
-                for (const exec of sortedExecs) {
+                // Dedup by iteration_index, keeping the first (newest)
+                const uniqueExecs: typeof steps = [];
+                const seenIndices = new Set<number>();
+                for (const ex of sortedExecs) {
+                    const idx = ex.iteration_index ?? 0;
+                    if (!seenIndices.has(idx)) {
+                        seenIndices.add(idx);
+                        uniqueExecs.push(ex);
+                    }
+                }
+
+                for (const exec of uniqueExecs) {
                     if (exec.iteration_index === null) continue;
 
                     let output: unknown = null;
@@ -201,7 +222,14 @@ export class WorkflowState {
                     foreachItems: persistedItems,
                 } as ForeachStepContext);
             } else {
-                const exec = stepExecutions[0];
+                // Fix: Sort by started_at desc (newest first) to avoid restoring stale retries
+                const sorted = [...stepExecutions].sort((a, b) => {
+                    if (a.started_at && b.started_at) {
+                        return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+                    }
+                    return 0;
+                });
+                const exec = sorted[0];
                 let output: unknown = null;
                 if (exec.output) {
                     try { output = JSON.parse(exec.output); } catch (e) { /* ignore */ }

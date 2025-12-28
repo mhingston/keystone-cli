@@ -567,7 +567,7 @@ describe('WorkflowRunner', () => {
         agent: (step as { agent?: string }).agent,
         inputs: stepInputs,
         env: (step as { env?: Record<string, string> }).env,
-        version: 1,
+        version: 2,
       })
     ).toString(16);
     const cached = await db.getStepCache(cacheKey);

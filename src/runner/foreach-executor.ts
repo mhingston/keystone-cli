@@ -139,6 +139,21 @@ export class ForeachExecutor {
         itemResults.length = items.length;
       }
 
+      // Optimization: Fetch all existing iterations in one query
+      // This avoids N queries in the loop
+      const existingIterations = new Map<number, any>();
+      if (shouldCheckDb) {
+        try {
+          // Use getStepsByRun(runId) to fetch all steps, then filter in memory
+          const allSteps = await this.db.getStepsByRun(runId);
+          for (const s of allSteps) {
+            if (s.step_id === step.id && typeof s.iteration_index === 'number') {
+              existingIterations.set(s.iteration_index, s);
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+
       // Pre-generate IDs and batch-create step records for all pending iterations
       const iterationIds = new Map<number, string>();
       const toCreate: Array<{
@@ -160,7 +175,7 @@ export class ForeachExecutor {
 
         // Check DB for resume if needed
         if (shouldCheckDb) {
-          const existingExec = await this.db.getStepByIteration(runId, step.id, i);
+          const existingExec = existingIterations.get(i);
           if (
             existingExec &&
             (existingExec.status === StepStatus.SUCCESS ||
