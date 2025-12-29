@@ -16,6 +16,7 @@ import { executePlanStep } from './executors/plan-executor.ts';
 import { executeRequestStep } from './executors/request-executor.ts';
 import { executeScriptStep } from './executors/script-executor.ts';
 import { executeShellStep } from './executors/shell-executor.ts';
+import { executeGitStep } from './executors/git-executor.ts';
 import {
   type StepExecutorOptions,
   type StepResult,
@@ -166,6 +167,9 @@ export async function executeStep(
         break;
       case 'join':
         result = await executeJoinStep(step, context, logger, abortSignal);
+        break;
+      case 'git':
+        result = await executeGitStep(step, context, logger, abortSignal);
         break;
       default:
         throw new Error(`Unknown step type: ${(step as Step).type}`);

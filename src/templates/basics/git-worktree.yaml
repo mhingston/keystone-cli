@@ -1,0 +1,25 @@
+name: git-worktree-demo
+description: "Demonstrates using the dedicated git step for worktrees"
+
+steps:
+  - id: create_worktree
+    type: git
+    op: worktree_add
+    path: ./tmp/git-feat
+    branch: main # Or any branch you have
+
+  - id: identify_worktree
+    type: shell
+    cwd: ./tmp/git-feat
+    run: git rev-parse --show-toplevel
+
+  - id: list_files
+    type: shell
+    cwd: ./tmp/git-feat
+    run: ls -R
+
+finally:
+  - id: cleanup_worktree
+    type: git
+    op: worktree_remove
+    path: ./tmp/git-feat

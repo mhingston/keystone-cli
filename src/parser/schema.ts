@@ -395,6 +395,19 @@ const ArtifactStepSchema = BaseStepSchema.extend({
   allowOutsideCwd: z.boolean().optional(),
 });
 
+const GitStepSchema = BaseStepSchema.extend({
+  type: z.literal('git'),
+  op: z.enum(['clone', 'worktree_add', 'worktree_remove', 'checkout', 'pull', 'push', 'commit']),
+  path: z.string().optional(), // Local path for clone or worktree
+  url: z.string().optional(), // Repo URL for clone
+  branch: z.string().optional(),
+  message: z.string().optional(), // For commit
+  cwd: z.string().optional(), // Working directory for the git command
+  env: z.record(z.string()).optional(),
+  allowOutsideCwd: z.boolean().optional(),
+  allowInsecure: z.boolean().optional(),
+});
+
 const WaitStepSchema = BaseStepSchema.extend({
   type: z.literal('wait'),
   event: z.string(),
@@ -404,23 +417,24 @@ const WaitStepSchema = BaseStepSchema.extend({
 
 // ===== Discriminated Union for Steps =====
 
-export const StepSchema: z.ZodType<unknown> = z.lazy(() =>
+export const StepSchema: z.ZodType<any> = z.lazy(() =>
   z.discriminatedUnion('type', [
-    ShellStepSchema,
-    LlmStepSchema,
-    PlanStepSchema,
-    WorkflowStepSchema,
-    FileStepSchema,
-    RequestStepSchema,
-    HumanStepSchema,
-    SleepStepSchema,
-    ScriptStepSchema,
-    EngineStepSchema,
-    MemoryStepSchema,
-    JoinStepSchema,
-    BlueprintStepSchema,
-    ArtifactStepSchema,
-    WaitStepSchema,
+    ShellStepSchema as any,
+    LlmStepSchema as any,
+    PlanStepSchema as any,
+    WorkflowStepSchema as any,
+    FileStepSchema as any,
+    RequestStepSchema as any,
+    HumanStepSchema as any,
+    SleepStepSchema as any,
+    ScriptStepSchema as any,
+    EngineStepSchema as any,
+    MemoryStepSchema as any,
+    JoinStepSchema as any,
+    BlueprintStepSchema as any,
+    ArtifactStepSchema as any,
+    WaitStepSchema as any,
+    GitStepSchema as any,
   ])
 );
 
@@ -487,7 +501,25 @@ export const AgentSchema = z.object({
 
 export type WorkflowInput = z.infer<typeof InputSchema>;
 export type RetryConfig = z.infer<typeof RetrySchema>;
-export type Step = z.infer<typeof StepSchema>;
+
+export type Step =
+  | z.infer<typeof ShellStepSchema>
+  | z.infer<typeof LlmStepSchema>
+  | z.infer<typeof PlanStepSchema>
+  | z.infer<typeof WorkflowStepSchema>
+  | z.infer<typeof FileStepSchema>
+  | z.infer<typeof RequestStepSchema>
+  | z.infer<typeof HumanStepSchema>
+  | z.infer<typeof SleepStepSchema>
+  | z.infer<typeof ScriptStepSchema>
+  | z.infer<typeof EngineStepSchema>
+  | z.infer<typeof MemoryStepSchema>
+  | z.infer<typeof JoinStepSchema>
+  | z.infer<typeof BlueprintStepSchema>
+  | z.infer<typeof ArtifactStepSchema>
+  | z.infer<typeof WaitStepSchema>
+  | z.infer<typeof GitStepSchema>;
+
 export type ShellStep = z.infer<typeof ShellStepSchema>;
 export type LlmStep = z.infer<typeof LlmStepSchema>;
 export type PlanStep = z.infer<typeof PlanStepSchema>;
@@ -502,6 +534,7 @@ export type EngineStep = z.infer<typeof EngineStepSchema>;
 export type JoinStep = z.infer<typeof JoinStepSchema>;
 export type BlueprintStep = z.infer<typeof BlueprintStepSchema>;
 export type ArtifactStep = z.infer<typeof ArtifactStepSchema>;
+export type GitStep = z.infer<typeof GitStepSchema>;
 export type Blueprint = z.infer<typeof BlueprintSchema>;
 export type Workflow = z.infer<typeof WorkflowSchema>;
 export type AgentTool = z.infer<typeof AgentToolSchema>;
@@ -531,5 +564,6 @@ export {
   BlueprintStepSchema,
   MemoryStepSchema,
   ArtifactStepSchema,
+  GitStepSchema,
 };
 export type Agent = z.infer<typeof AgentSchema>;

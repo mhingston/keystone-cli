@@ -809,6 +809,24 @@ Upload and download files between steps without hardcoded artifact paths.
 
 Upload outputs include `artifactPath` and `files` for downstream references.
 
+- `git`: Perform git operations (clone, worktree, checkout, pull, push, commit).
+  - `op`: Required operation (`clone`, `worktree_add`, `worktree_remove`, `checkout`, `pull`, `push`, `commit`).
+  - `path`: Local path for clone or worktree.
+  - `url`: Repository URL for clone.
+  - `branch`: Branch name for clone, checkout, push, pull, or worktree.
+  - `message`: Commit message.
+  - `cwd`: Directory to run the git command in.
+  - `allowOutsideCwd`: Boolean (default `false`). Set `true` to allow operations outside the project root.
+  - `allowInsecure`: Boolean (default `false`). Set `true` to allow git commands that fail the security whitelist.
+
+```yaml
+- id: setup_feat
+  type: git
+  op: worktree_add
+  path: ../feat-branch
+  branch: feature/x
+```
+
 ### Structured Events
 
 Emit NDJSON events for step and workflow lifecycle updates:
@@ -1227,6 +1245,11 @@ graph TD
     EX --> Script[Script Step]
     EX --> Sleep[Sleep Step]
     EX --> Memory[Memory operations]
+    EX --> Artifact[Artifact operations]
+    EX --> Git[Git operations]
+    EX --> Wait[Wait Step]
+    EX --> Join[Join Step]
+    EX --> Blueprint[Blueprint Step]
 
     LLM --> Adapters[LLM Adapters]
     Adapters --> Providers[OpenAI, Anthropic, Gemini, Copilot, etc.]
