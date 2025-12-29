@@ -493,6 +493,24 @@ Keystone supports several specialized step types:
   - `event`: Event name (string or expression).
   - `oneShot`: Boolean (default `true`). If `true`, consumes the event after it fires.
 - `memory`: Store or retrieve information from the semantic memory vector database.
+  - `op: store`: Store text with metadata.
+  - `op: search`: Search for similar text using vector embeddings.
+  - `text` / `query`: The content to store or search for.
+  - `metadata`: Optional object for filtering or additional context.
+  - `limit`: Number of results to return (default `5`).
+  ```yaml
+  - id: remember_preference
+    type: memory
+    op: store
+    text: "User prefers dark mode"
+    metadata: { user: "alice" }
+
+  - id: recall_preference
+    type: memory
+    op: search
+    query: "What is the user's preference?"
+    limit: 1
+  ```
 - `engine`: Run an allowlisted external CLI and capture a structured summary.
   - `env` and `cwd` are required and must be explicit.
   - `input` is sent to stdin (objects/arrays are JSON-encoded).
