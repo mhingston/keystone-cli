@@ -34,6 +34,7 @@ import {
 import { withTimeout } from './timeout.ts';
 import { WorkflowScheduler } from './workflow-scheduler.ts';
 import { type ForeachStepContext, type StepContext, WorkflowState } from './workflow-state.ts';
+import { executeSubWorkflow, type RunnerFactory } from './executors/subworkflow-executor.ts';
 
 /**
  * A logger wrapper that redacts secrets from all log messages
@@ -42,7 +43,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) {}
+  ) { }
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -185,7 +186,7 @@ export class WorkflowRunner {
 
     if (parentSignal.aborted) {
       controller.abort();
-      return { controller, cleanup: () => {} };
+      return { controller, cleanup: () => { } };
     }
 
     parentSignal.addEventListener('abort', onAbort, { once: true });
@@ -602,9 +603,9 @@ export class WorkflowRunner {
           content:
             (step as import('../parser/schema.ts').FileStep).content !== undefined
               ? ExpressionEvaluator.evaluateString(
-                  (step as import('../parser/schema.ts').FileStep).content as string,
-                  context
-                )
+                (step as import('../parser/schema.ts').FileStep).content as string,
+                context
+              )
               : undefined,
           op: step.op,
           allowOutsideCwd: step.allowOutsideCwd,
@@ -621,9 +622,9 @@ export class WorkflowRunner {
           ),
           path: (step as import('../parser/schema.ts').ArtifactStep).path
             ? ExpressionEvaluator.evaluateString(
-                (step as import('../parser/schema.ts').ArtifactStep).path as string,
-                context
-              )
+              (step as import('../parser/schema.ts').ArtifactStep).path as string,
+              context
+            )
             : undefined,
           allowOutsideCwd: step.allowOutsideCwd,
         });
@@ -706,9 +707,9 @@ export class WorkflowRunner {
           input:
             (step as import('../parser/schema.ts').EngineStep).input !== undefined
               ? ExpressionEvaluator.evaluateObject(
-                  (step as import('../parser/schema.ts').EngineStep).input,
-                  context
-                )
+                (step as import('../parser/schema.ts').EngineStep).input,
+                context
+              )
               : undefined,
           env,
           cwd: ExpressionEvaluator.evaluateString(
@@ -813,58 +814,30 @@ export class WorkflowRunner {
     try {
       await this.db.clearExpiredIdempotencyRecord(scopedKey);
 
-      const existing = await this.db.getIdempotencyRecord(scopedKey);
-      if (existing) {
-        if (existing.status === StepStatus.SUCCESS) {
+      const result = await this.db.atomicClaimIdempotencyKey(
+        scopedKey,
+        this.runId,
+        stepId,
+        ttlSeconds
+      );
+
+      switch (result.status) {
+        case 'claimed':
+          return { status: 'claimed' };
+        case 'already-running':
+          return { status: 'in-flight' };
+        case 'completed': {
           let output: unknown = null;
           try {
-            output = existing.output ? JSON.parse(existing.output) : null;
+            output = result.record.output ? JSON.parse(result.record.output) : null;
           } catch (parseError) {
             this.logger.warn(
               `  ⚠️ Failed to parse idempotency output for ${stepId}: ${parseError instanceof Error ? parseError.message : String(parseError)}`
             );
           }
-          return { status: 'hit', output, error: existing.error || undefined };
-        }
-        if (existing.status === StepStatus.RUNNING) {
-          return { status: 'in-flight' };
-        }
-
-        const claimed = await this.db.markIdempotencyRecordRunning(
-          scopedKey,
-          this.runId,
-          stepId,
-          ttlSeconds
-        );
-        if (claimed) {
-          return { status: 'claimed' };
+          return { status: 'hit', output, error: result.record.error || undefined };
         }
       }
-
-      const inserted = await this.db.insertIdempotencyRecordIfAbsent(
-        scopedKey,
-        this.runId,
-        stepId,
-        StepStatus.RUNNING,
-        ttlSeconds
-      );
-      if (inserted) {
-        return { status: 'claimed' };
-      }
-
-      const current = await this.db.getIdempotencyRecord(scopedKey);
-      if (current?.status === StepStatus.SUCCESS) {
-        let output: unknown = null;
-        try {
-          output = current.output ? JSON.parse(current.output) : null;
-        } catch (parseError) {
-          this.logger.warn(
-            `  ⚠️ Failed to parse idempotency output for ${stepId}: ${parseError instanceof Error ? parseError.message : String(parseError)}`
-          );
-        }
-        return { status: 'hit', output, error: current.error || undefined };
-      }
-      return { status: 'in-flight' };
     } catch (error) {
       this.logger.warn(
         `  ⚠️ Failed to claim idempotency key for ${stepId}: ${error instanceof Error ? error.message : String(error)}`
@@ -994,11 +967,11 @@ export class WorkflowRunner {
     const idempotencyContextForRetry =
       idempotencyClaimed && scopedIdempotencyKey
         ? {
-            rawKey: idempotencyKey || scopedIdempotencyKey,
-            scopedKey: scopedIdempotencyKey,
-            ttlSeconds: idempotencyTtlSeconds,
-            claimed: true,
-          }
+          rawKey: idempotencyKey || scopedIdempotencyKey,
+          scopedKey: scopedIdempotencyKey,
+          ttlSeconds: idempotencyTtlSeconds,
+          claimed: true,
+        }
         : undefined;
 
     let stepToExecute = step;
@@ -1111,9 +1084,9 @@ export class WorkflowRunner {
         try {
           const outputForValidation =
             stepToExecute.type === 'engine' &&
-            result.output &&
-            typeof result.output === 'object' &&
-            'summary' in result.output
+              result.output &&
+              typeof result.output === 'object' &&
+              'summary' in result.output
               ? (result.output as { summary?: unknown }).summary
               : result.output;
           this.validator.validateSchema(
@@ -2114,78 +2087,19 @@ Revise the output to address the feedback. Return only the corrected output.`;
     step: WorkflowStep,
     context: ExpressionContext
   ): Promise<StepResult> {
-    const workflowPath = WorkflowRegistry.resolvePath(step.path, this.options.workflowDir);
-    const workflow = WorkflowParser.loadWorkflow(workflowPath);
-    const subWorkflowDir = dirname(workflowPath);
+    const factory: RunnerFactory = {
+      create: (workflow, options) => new WorkflowRunner(workflow, options),
+    };
 
-    // Evaluate inputs for the sub-workflow
-    const inputs: Record<string, unknown> = {};
-    if (step.inputs) {
-      for (const [key, value] of Object.entries(step.inputs)) {
-        inputs[key] = ExpressionEvaluator.evaluate(value, context);
-      }
-    }
-
-    // Create a new runner for the sub-workflow
-    // We pass the same dbPath to share the state database
-    const subRunner = new WorkflowRunner(workflow, {
-      inputs,
-      dbPath: this.db.dbPath,
-      logger: this.logger,
-      mcpManager: this.mcpManager,
-      workflowDir: subWorkflowDir,
-      depth: this.depth + 1,
-      dedup: this.options.dedup,
-      artifactRoot: this.options.artifactRoot,
+    return executeSubWorkflow(step, context, {
+      runnerFactory: factory,
+      parentWorkflowDir: this.options.workflowDir,
+      parentDbPath: this.db.dbPath,
+      parentLogger: this.logger,
+      parentMcpManager: this.mcpManager,
+      parentDepth: this.depth,
+      parentOptions: this.options,
     });
-
-    try {
-      const output = await subRunner.run();
-
-      const rawOutputs =
-        typeof output === 'object' && output !== null && !Array.isArray(output) ? output : {};
-      const mappedOutputs: Record<string, unknown> = {};
-
-      // Handle explicit output mapping
-      if (step.outputMapping) {
-        for (const [alias, mapping] of Object.entries(step.outputMapping)) {
-          let originalKey: string;
-          let defaultValue: unknown;
-
-          if (typeof mapping === 'string') {
-            originalKey = mapping;
-          } else {
-            originalKey = mapping.from;
-            defaultValue = mapping.default;
-          }
-
-          if (originalKey in rawOutputs) {
-            mappedOutputs[alias] = rawOutputs[originalKey];
-          } else if (defaultValue !== undefined) {
-            mappedOutputs[alias] = defaultValue;
-          } else {
-            throw new Error(
-              `Sub-workflow output "${originalKey}" not found (required by mapping "${alias}" in step "${step.id}")`
-            );
-          }
-        }
-      }
-
-      return {
-        output: {
-          ...mappedOutputs,
-          outputs: rawOutputs, // Namespaced raw outputs
-          __subRunId: subRunner.runId, // Track sub-workflow run ID for rollback
-        },
-        status: 'success',
-      };
-    } catch (error) {
-      return {
-        output: null,
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
   }
 
   /**
@@ -2295,7 +2209,7 @@ Revise the output to address the feedback. Return only the corrected output.`;
     this.logger.log(`Run ID: ${this.runId}`);
     this.logger.log(
       '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-        '   Workflows can execute arbitrary shell commands and access your environment.\n'
+      '   Workflows can execute arbitrary shell commands and access your environment.\n'
     );
 
     this.secretManager.redactAtRest = ConfigLoader.load().storage?.redact_secrets_at_rest ?? true;

@@ -54,6 +54,7 @@ describe('WorkflowRunner', () => {
         id: 'step2',
         type: 'shell',
         run: 'echo "${{ steps.step1.output.stdout.trim() }} world"',
+        allowInsecure: true,
         needs: ['step1'],
       },
     ],
@@ -140,6 +141,7 @@ describe('WorkflowRunner', () => {
           id: 'process',
           type: 'shell',
           run: 'echo "item-${{ item }}"',
+          allowInsecure: true,
           foreach: '${{ steps.gen.output }}',
           needs: ['gen'],
         },
@@ -191,8 +193,8 @@ describe('WorkflowRunner', () => {
       },
       error: (msg: string) => console.error(msg),
       warn: (msg: string) => console.warn(msg),
-      info: (msg: string) => {},
-      debug: (msg: string) => {},
+      info: (msg: string) => { },
+      debug: (msg: string) => { },
     };
 
     const finallyWorkflow: Workflow = {
@@ -218,6 +220,7 @@ describe('WorkflowRunner', () => {
           id: 's1',
           type: 'shell',
           run: 'echo "${{ inputs.name }} ${{ inputs.count }}"',
+          allowInsecure: true,
           needs: [],
         },
       ],
@@ -328,10 +331,10 @@ describe('WorkflowRunner', () => {
           errorsBlockExecuted = true;
         }
       },
-      error: () => {},
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
+      error: () => { },
+      warn: () => { },
+      info: () => { },
+      debug: () => { },
     };
 
     const errorsWorkflow: Workflow = {
@@ -387,10 +390,10 @@ describe('WorkflowRunner', () => {
           idempotencyHitCount++;
         }
       },
-      error: () => {},
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
+      error: () => { },
+      warn: () => { },
+      info: () => { },
+      debug: () => { },
     };
 
     const idempotencyWorkflow: Workflow = {
@@ -606,7 +609,7 @@ describe('WorkflowRunner', () => {
       inputs: {
         val: { type: 'string' },
       },
-      steps: [{ id: 'cs1', type: 'shell', run: 'echo "child-${{ inputs.val }}"', needs: [] }],
+      steps: [{ id: 'cs1', type: 'shell', run: 'echo "child-${{ inputs.val }}"', allowInsecure: true, needs: [] }],
       outputs: {
         out: '${{ steps.cs1.output.stdout.trim() }}',
       },
@@ -676,10 +679,10 @@ describe('WorkflowRunner', () => {
       log: (msg: string) => {
         if (msg.includes('Executing step: s1')) s1Executed = true;
       },
-      error: () => {},
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
+      error: () => { },
+      warn: () => { },
+      info: () => { },
+      debug: () => { },
     };
 
     const runner2 = new WorkflowRunner(fixedWorkflow, {
@@ -808,15 +811,15 @@ describe('WorkflowRunner', () => {
   it('should continue even if finally step fails', async () => {
     let finallyFailedLogged = false;
     const runnerLogger = {
-      log: () => {},
+      log: () => { },
       error: (msg: string) => {
         if (msg.includes('Finally step fin failed')) {
           finallyFailedLogged = true;
         }
       },
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
+      warn: () => { },
+      info: () => { },
+      debug: () => { },
     };
 
     const failFinallyWorkflow: Workflow = {
@@ -838,10 +841,10 @@ describe('WorkflowRunner', () => {
           retryLogged = true;
         }
       },
-      error: () => {},
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
+      error: () => { },
+      warn: () => { },
+      info: () => { },
+      debug: () => { },
     };
 
     const retryWorkflow: Workflow = {
@@ -1037,15 +1040,15 @@ describe('WorkflowRunner', () => {
     // Verify warnings
     let warningLogged = false;
     const logger = {
-      log: () => {},
-      error: () => {},
+      log: () => { },
+      error: () => { },
       warn: (msg: string) => {
         if (msg.includes("Resuming a run marked as 'running'")) {
           warningLogged = true;
         }
       },
-      info: () => {},
-      debug: () => {},
+      info: () => { },
+      debug: () => { },
     };
 
     const runner = new WorkflowRunner(workflow, {
@@ -1150,9 +1153,9 @@ describe('WorkflowRunner', () => {
           loggedResume = true;
         }
       },
-      error: () => {},
-      warn: () => {},
-      info: () => {},
+      error: () => { },
+      warn: () => { },
+      info: () => { },
     };
 
     const runner = new WorkflowRunner(workflow, {
@@ -1173,5 +1176,30 @@ describe('WorkflowRunner', () => {
     finalDb.close();
 
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
+  });
+
+  it('should support safe direct shell execution via args', async () => {
+    const argsWorkflow: Workflow = {
+      name: 'args-wf',
+      inputs: {
+        val: { type: 'string', default: 'foo "bar" baz' },
+      },
+      steps: [
+        {
+          id: 's1',
+          type: 'shell',
+          args: ['echo', '${{ inputs.val }}'],
+          needs: [],
+        },
+      ],
+      outputs: {
+        out: '${{ steps.s1.output.stdout.trim() }}',
+      },
+    } as unknown as Workflow;
+
+    const runner = new WorkflowRunner(argsWorkflow, { dbPath });
+    const outputs = await runner.run();
+    // Bun.spawn with args array should preserve quotes and spaces without needing escape()
+    expect(outputs.out).toBe('foo "bar" baz');
   });
 });

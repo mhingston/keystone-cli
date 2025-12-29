@@ -42,29 +42,59 @@ export async function executeShellStep(
   dryRun?: boolean,
   abortSignal?: AbortSignal
 ): Promise<StepResult> {
-  if (abortSignal?.aborted) {
-    throw new Error('Step canceled');
+  if (step.args) {
+    const command = step.args.map((a) => ExpressionEvaluator.evaluateString(a, context)).join(' ');
+    if (dryRun) {
+      logger.log(`[DRY RUN] Would execute: ${command}`);
+      return {
+        output: { stdout: '[DRY RUN] Success', stderr: '', exitCode: 0 },
+        status: 'success',
+      };
+    }
+
+    const result = await executeShellArgs(step.args, context, logger, abortSignal, step.dir);
+    return formatShellResult(result, logger);
   }
-  if (dryRun) {
-    const command = ExpressionEvaluator.evaluateString(step.run, context);
-    logger.log(`[DRY RUN] Would execute shell command: ${command}`);
-    return {
-      output: { stdout: '[DRY RUN] Success', stderr: '', exitCode: 0 },
-      status: 'success',
-    };
+
+  if (!step.run) {
+    throw new Error('Shell step must have either "run" or "args"');
   }
-  // Check for risk and prompt if TTY
+
+  // Strict Mode Check: Detect unescaped expressions in the raw template
+  // We check if there are any ${{ }} blocks that don't start with escape(
+  const hasUnescapedExpr = (s: string) => {
+    const matches = s.match(/\${{.*?}}/g);
+    if (!matches) return false;
+    return matches.some((m) => !/\${{\s*escape\s*\(/.test(m));
+  };
+
+  if (!step.allowInsecure && hasUnescapedExpr(step.run)) {
+    throw new Error(
+      `Security Error: Shell command contains unescaped expressions which are vulnerable to injection.\n` +
+      `Use \${{ escape(...) }} to safely interpolate values, or set 'allowInsecure: true' if you trust the source.\n` +
+      `Command template: ${step.run}`
+    );
+  }
+
   const command = ExpressionEvaluator.evaluateString(step.run, context);
   const isRisky = detectShellInjectionRisk(command);
 
   if (isRisky && !step.allowInsecure) {
     throw new Error(
-      `Security Error: Command contains shell metacharacters that may indicate injection risk.\n   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}\n   To execute this command, set 'allowInsecure: true' on the step definition.`
+      `Security Error: Evaluated command contains shell metacharacters that may indicate injection risk.\n` +
+      `   Command: ${command.substring(0, 100)}${command.length > 100 ? '...' : ''}\n` +
+      `   To execute this command, use \${{ escape(...) }} for inputs or set 'allowInsecure: true'.`
     );
   }
 
   const result = await executeShell(step, context, logger, abortSignal, command);
+  return formatShellResult(result, logger);
+}
 
+/**
+ * Format the internal ShellResult into a StepResult
+ */
+function formatShellResult(result: ShellResult, logger: Logger): StepResult {
   if (result.stdout) {
     logger.log(result.stdout.trim());
   }
@@ -494,6 +524,65 @@ export async function executeShell(
         stderr,
         exitCode: shellError.exitCode,
       };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Execute a command directly without a shell using an argument array
+ */
+export async function executeShellArgs(
+  argsTemplates: string[],
+  context: ExpressionContext,
+  logger: Logger = new ConsoleLogger(),
+  abortSignal?: AbortSignal,
+  dir?: string
+): Promise<ShellResult> {
+  const args = argsTemplates.map((t) => ExpressionEvaluator.evaluateString(t, context));
+  const cwd = dir ? ExpressionEvaluator.evaluateString(dir, context) : undefined;
+  const env: Record<string, string> = context.env ? { ...context.env } : {};
+  const mergedEnv = { ...Bun.env, ...env };
+  const maxOutputBytes = LIMITS.MAX_PROCESS_OUTPUT_BYTES;
+
+  const proc = Bun.spawn(args, {
+    cwd,
+    env: mergedEnv,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+
+  const abortHandler = () => {
+    try {
+      proc.kill();
+    } catch { }
+  };
+
+  if (abortSignal) {
+    abortSignal.addEventListener('abort', abortHandler, { once: true });
+  }
+
+  try {
+    const stdoutPromise = readStreamWithLimit(proc.stdout, maxOutputBytes);
+    const stderrPromise = readStreamWithLimit(proc.stderr, maxOutputBytes);
+
+    const exitCode = await proc.exited;
+    const [stdoutResult, stderrResult] = await Promise.all([stdoutPromise, stderrPromise]);
+
+    if (abortSignal) {
+      abortSignal.removeEventListener('abort', abortHandler);
+    }
+
+    return {
+      stdout: stdoutResult.text,
+      stderr: stderrResult.text,
+      exitCode,
+      stdoutTruncated: stdoutResult.truncated,
+      stderrTruncated: stderrResult.truncated,
+    };
+  } catch (error) {
+    if (abortSignal) {
+      abortSignal.removeEventListener('abort', abortHandler);
     }
     throw error;
   }

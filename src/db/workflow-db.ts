@@ -84,6 +84,20 @@ export interface ThoughtEvent {
   created_at: string;
 }
 
+/**
+ * Base error class for database operations
+ */
+export class DatabaseError extends Error {
+  constructor(
+    public override message: string,
+    public code?: string | number,
+    public retryable = false
+  ) {
+    super(message);
+    this.name = 'DatabaseError';
+  }
+}
+
 export class WorkflowDb {
   private db: Database;
 
@@ -363,7 +377,7 @@ export class WorkflowDb {
    * Default maxRetries is 20 to handle high-contention scenarios.
    */
   private async withRetry<T>(operation: () => T, maxRetries = 20): Promise<T> {
-    let lastError: Error | undefined;
+    let lastError: any;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
@@ -371,7 +385,7 @@ export class WorkflowDb {
       } catch (error) {
         // Check if this is a SQLITE_BUSY error
         if (this.isSQLiteBusyError(error)) {
-          lastError = error instanceof Error ? error : new Error(String(error));
+          lastError = error;
 
           // Log warning after threshold to help diagnose contention issues
           if (attempt === DB.RETRY_WARN_THRESHOLD) {
@@ -384,17 +398,23 @@ export class WorkflowDb {
           // Exponential backoff with jitter
           const delayMs = Math.min(
             DB.RETRY_MAX_DELAY_MS,
-            DB.RETRY_BASE_DELAY_MS * DB.RETRY_BACKOFF_MULTIPLIER ** attempt + Math.random() * DB.RETRY_JITTER_MS
+            DB.RETRY_BASE_DELAY_MS * DB.RETRY_BACKOFF_MULTIPLIER ** attempt +
+            Math.random() * DB.RETRY_JITTER_MS
           );
           await Bun.sleep(delayMs);
           continue;
         }
-        // If it's not a SQLITE_BUSY error, throw immediately
-        throw error;
+
+        // Wrap non-busy errors in DatabaseError
+        const msg = error instanceof Error ? error.message : String(error);
+        const code = (error as any)?.code;
+        throw new DatabaseError(msg, code, false);
       }
     }
 
-    throw lastError || new Error('SQLite operation failed after retries');
+    const msg = lastError instanceof Error ? lastError.message : String(lastError);
+    const code = (lastError as any)?.code;
+    throw new DatabaseError(`SQLite operation failed after ${maxRetries} retries: ${msg}`, code, true);
   }
 
   private formatExpiresAt(ttlSeconds?: number): string | null {

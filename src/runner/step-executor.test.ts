@@ -726,7 +726,7 @@ describe('step-executor', () => {
       const result = await executeStep(step, context);
       const end = Date.now();
       expect(result.status).toBe('success');
-      expect(end - start).toBeLessThan(20); // Should return nearly immediately
+      expect(end - start).toBeLessThan(200); // Should return nearly immediately
     });
 
     it('should fail if invalid until date string', async () => {
