@@ -437,38 +437,40 @@ const EvalSchema = z.object({
 
 // ===== Workflow Schema =====
 
-export const WorkflowSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  inputs: z.record(InputSchema).optional(),
-  outputs: z.record(z.string()).optional(),
-  outputSchema: z.any().optional(), // JSON Schema for final workflow outputs
-  env: z.record(z.string()).optional(),
-  concurrency: z.union([z.number().int().positive(), z.string()]).optional(),
-  pools: z.record(z.union([z.number().int().positive(), z.string()])).optional(), // Resource pool overrides
-  steps: z.array(StepSchema),
-  errors: z.array(StepSchema).optional(),
-  finally: z.array(StepSchema).optional(),
-  compensate: z.lazy(() => StepSchema).optional(), // Top-level compensation for the entire workflow
-  eval: EvalSchema.optional(),
-}).superRefine((data, ctx) => {
-  const checkShellSteps = (steps: Step[] | undefined, pathPrefix: (string | number)[]) => {
-    if (!steps) return;
-    steps.forEach((step, index) => {
-      if (step.type === 'shell' && !step.run && !step.args) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Shell step must have either "run" or "args"',
-          path: [...pathPrefix, index],
-        });
-      }
-    });
-  };
+export const WorkflowSchema = z
+  .object({
+    name: z.string(),
+    description: z.string().optional(),
+    inputs: z.record(InputSchema).optional(),
+    outputs: z.record(z.string()).optional(),
+    outputSchema: z.any().optional(), // JSON Schema for final workflow outputs
+    env: z.record(z.string()).optional(),
+    concurrency: z.union([z.number().int().positive(), z.string()]).optional(),
+    pools: z.record(z.union([z.number().int().positive(), z.string()])).optional(), // Resource pool overrides
+    steps: z.array(StepSchema),
+    errors: z.array(StepSchema).optional(),
+    finally: z.array(StepSchema).optional(),
+    compensate: z.lazy(() => StepSchema).optional(), // Top-level compensation for the entire workflow
+    eval: EvalSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    const checkShellSteps = (steps: Step[] | undefined, pathPrefix: (string | number)[]) => {
+      if (!steps) return;
+      steps.forEach((step, index) => {
+        if (step.type === 'shell' && !step.run && !step.args) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Shell step must have either "run" or "args"',
+            path: [...pathPrefix, index],
+          });
+        }
+      });
+    };
 
-  checkShellSteps(data.steps, ['steps']);
-  checkShellSteps(data.errors, ['errors']);
-  checkShellSteps(data.finally, ['finally']);
-});
+    checkShellSteps(data.steps, ['steps']);
+    checkShellSteps(data.errors, ['errors']);
+    checkShellSteps(data.finally, ['finally']);
+  });
 
 // ===== Agent Schema =====
 

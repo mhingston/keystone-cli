@@ -76,11 +76,11 @@ describe('AuthManager', () => {
   describe('setLogger()', () => {
     it('should set the static logger', () => {
       const mockLogger = {
-        log: mock(() => { }),
-        warn: mock(() => { }),
-        error: mock(() => { }),
-        info: mock(() => { }),
-        debug: mock(() => { }),
+        log: mock(() => {}),
+        warn: mock(() => {}),
+        error: mock(() => {}),
+        info: mock(() => {}),
+        debug: mock(() => {}),
       };
       AuthManager.setLogger(mockLogger);
       // Trigger a log through save failure to verify
@@ -164,7 +164,7 @@ describe('AuthManager', () => {
         )
       );
 
-      const consoleSpy = spyOn(console, 'error').mockImplementation(() => { });
+      const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
       const token = await AuthManager.getCopilotToken();
 
       expect(token).toBeUndefined();
@@ -467,7 +467,7 @@ describe('AuthManager', () => {
       let fetchHandler: any;
       const mockServer = {
         port: 51121,
-        stop: mock(() => { }),
+        stop: mock(() => {}),
       };
 
       // @ts-ignore - mock Bun.serve
@@ -477,7 +477,7 @@ describe('AuthManager', () => {
       });
 
       // Mock openBrowser to prevent browser opening
-      const openBrowserSpy = spyOn(AuthManager, 'openBrowser').mockImplementation(() => { });
+      const openBrowserSpy = spyOn(AuthManager, 'openBrowser').mockImplementation(() => {});
 
       try {
         const loginPromise = AuthManager.loginGoogleGemini('test-project');
@@ -519,7 +519,7 @@ describe('AuthManager', () => {
     it('loginOpenAIChatGPT should handle OAuth callback', async () => {
       let fetchHandler: any;
       const mockServer = {
-        stop: mock(() => { }),
+        stop: mock(() => {}),
       };
 
       // @ts-ignore - mock Bun.serve
@@ -529,7 +529,7 @@ describe('AuthManager', () => {
       });
 
       // Mock openBrowser to prevent browser opening
-      const openBrowserSpy = spyOn(AuthManager, 'openBrowser').mockImplementation(() => { });
+      const openBrowserSpy = spyOn(AuthManager, 'openBrowser').mockImplementation(() => {});
 
       try {
         const loginPromise = AuthManager.loginOpenAIChatGPT();

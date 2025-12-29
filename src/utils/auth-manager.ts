@@ -62,7 +62,7 @@ const GOOGLE_GEMINI_OAUTH_CLIENT_ID =
 const GOOGLE_GEMINI_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/cloud-platform',
   'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile'
+  'https://www.googleapis.com/auth/userinfo.profile',
 ];
 const GOOGLE_GEMINI_LOAD_ENDPOINTS = [
   'https://cloudcode-pa.googleapis.com',
@@ -79,8 +79,7 @@ export class AuthManager {
   static openBrowser(url: string): void {
     try {
       const { platform } = process;
-      const command =
-        platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
+      const command = platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
       const { spawn } = require('node:child_process');
       spawn(command, [url]);
     } catch {
@@ -100,13 +99,13 @@ export class AuthManager {
     try {
       const fs = require('node:fs');
       fs.chmodSync(dir, 0o700);
-    } catch { }
+    } catch {}
 
     const authPath = join(dir, 'auth.json');
     if (existsSync(authPath)) {
       try {
         require('node:fs').chmodSync(authPath, 0o600);
-      } catch { }
+      } catch {}
     }
     return authPath;
   }
@@ -443,7 +442,7 @@ export class AuthManager {
         ) {
           return data.cloudaicompanionProject.id;
         }
-      } catch { }
+      } catch {}
     }
 
     return undefined;
