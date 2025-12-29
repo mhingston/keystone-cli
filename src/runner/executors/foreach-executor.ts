@@ -155,10 +155,10 @@ export class ForeachExecutor {
       const existingIterations = new Map<number, any>();
       if (shouldCheckDb) {
         try {
-          // Use getStepsByRun(runId) to fetch all steps, then filter in memory
-          const allSteps = await this.db.getStepsByRun(runId);
-          for (const s of allSteps) {
-            if (s.step_id === step.id && typeof s.iteration_index === 'number') {
+          // Use getStepIterations(runId, stepId) for optimized fetch
+          const iterations = await this.db.getStepIterations(runId, step.id);
+          for (const s of iterations) {
+            if (typeof s.iteration_index === 'number') {
               existingIterations.set(s.iteration_index, s);
             }
           }

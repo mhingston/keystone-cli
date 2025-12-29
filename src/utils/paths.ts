@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join, resolve, isAbsolute } from 'node:path';
+import { join, resolve, isAbsolute, sep } from 'node:path';
 import { realpathSync } from 'node:fs';
 
 export class PathResolver {
@@ -97,7 +97,7 @@ export class PathResolver {
     while (true) {
       try {
         const real = realpathSync(current);
-        if (!real.startsWith(realCwd)) {
+        if (real !== realCwd && !real.startsWith(realCwd + sep)) {
           throw new Error(
             `${label} "${targetPath}" is outside the project directory. ` +
             `Use 'allowOutsideCwd: true' if this is intended.`

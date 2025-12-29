@@ -62,9 +62,17 @@ export async function executeShellStep(
   // Strict Mode Check: Detect unescaped expressions in the raw template
   // We check if there are any ${{ }} blocks that don't start with escape(
   const hasUnescapedExpr = (s: string) => {
+    // Finds ${{ ... }} blocks
     const matches = s.match(/\${{.*?}}/g);
     if (!matches) return false;
-    return matches.some((m) => !/\${{\s*escape\s*\(/.test(m));
+
+    // Check if the expression is strictly wrapped in escape(...)
+    // Matches: ${{ escape(...) }} or ${{ escape( ... ) }}
+    // Does NOT match: ${{ "foo" + escape(...) }}
+    return matches.some((m) => {
+      const content = m.slice(3, -2).trim(); // Remove ${{ and }}
+      return !/^escape\s*\(.*\)$/.test(content);
+    });
   };
 
   if (!step.allowInsecure && hasUnescapedExpr(step.run)) {
@@ -392,6 +400,7 @@ export async function executeShell(
   const canUseSpawn = !hasShellMetas && !isBuiltin;
 
   try {
+    let abortHandler: (() => void) | undefined;
     let stdoutString = '';
     let stderrString = '';
     let exitCode = 0;
@@ -464,7 +473,7 @@ export async function executeShell(
         stdout: 'pipe',
         stderr: 'pipe',
       });
-      const abortHandler = () => {
+      abortHandler = () => {
         try {
           proc.kill();
         } catch { }
@@ -494,7 +503,7 @@ export async function executeShell(
         stdout: 'pipe',
         stderr: 'pipe',
       });
-      const abortHandler = () => {
+      abortHandler = () => {
         try {
           proc.kill();
         } catch { }
@@ -525,6 +534,9 @@ export async function executeShell(
       stderrTruncated,
     };
   } catch (error) {
+    if (abortSignal && abortHandler) {
+      abortSignal.removeEventListener('abort', abortHandler);
+    }
     // Handle shell execution errors (Bun throws ShellError with exitCode, stdout, stderr)
     if (error && typeof error === 'object' && 'exitCode' in error) {
       const shellError = error as {
@@ -568,7 +580,8 @@ export async function executeShellArgs(
   const args = argsTemplates.map((t) => ExpressionEvaluator.evaluateString(t, context));
   const cwd = dir ? ExpressionEvaluator.evaluateString(dir, context) : undefined;
   const env: Record<string, string> = context.env ? { ...context.env } : {};
-  const mergedEnv = { ...Bun.env, ...env };
+  const hostEnv = filterSensitiveEnv(Bun.env);
+  const mergedEnv = { ...hostEnv, ...env };
   const maxOutputBytes = LIMITS.MAX_PROCESS_OUTPUT_BYTES;
 
   const proc = Bun.spawn(args, {
@@ -606,10 +619,9 @@ export async function executeShellArgs(
       stdoutTruncated: stdoutResult.truncated,
       stderrTruncated: stderrResult.truncated,
     };
-  } catch (error) {
+  } finally {
     if (abortSignal) {
       abortSignal.removeEventListener('abort', abortHandler);
     }
-    throw error;
   }
 }

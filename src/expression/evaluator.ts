@@ -684,7 +684,8 @@ export class ExpressionEvaluator {
             if (arg.type === 'ArrowFunctionExpression') {
               return ExpressionEvaluator.createArrowFunction(
                 arg as ArrowFunctionExpression,
-                context
+                context,
+                nodeCounter
               );
             }
             return ExpressionEvaluator.evaluateNode(arg, context);
@@ -793,7 +794,8 @@ export class ExpressionEvaluator {
             if (arg.type === 'ArrowFunctionExpression') {
               return ExpressionEvaluator.createArrowFunction(
                 arg as ArrowFunctionExpression,
-                context
+                context,
+                nodeCounter
               );
             }
             return ExpressionEvaluator.evaluateNode(arg, context);
@@ -808,7 +810,11 @@ export class ExpressionEvaluator {
       case 'ArrowFunctionExpression': {
         // Arrow functions should be handled in the context of CallExpression
         // If we reach here, it means they're being used outside of a method call
-        return ExpressionEvaluator.createArrowFunction(node as ArrowFunctionExpression, context);
+        return ExpressionEvaluator.createArrowFunction(
+          node as ArrowFunctionExpression,
+          context,
+          nodeCounter
+        );
       }
 
       default:
@@ -821,7 +827,8 @@ export class ExpressionEvaluator {
    */
   private static createArrowFunction(
     arrowNode: ArrowFunctionExpression,
-    context: ExpressionContext
+    context: ExpressionContext,
+    nodeCounter: { count: number }
   ): (...args: unknown[]) => unknown {
     return (...args: unknown[]) => {
       // Create a new context with arrow function parameters
@@ -835,7 +842,7 @@ export class ExpressionEvaluator {
       });
 
       // Evaluate the body with the new context
-      return ExpressionEvaluator.evaluateNode(arrowNode.body, arrowContext);
+      return ExpressionEvaluator.evaluateNode(arrowNode.body, arrowContext, 0, nodeCounter);
     };
   }
 

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { dirname, join } from 'node:path';
@@ -409,7 +409,7 @@ export class WorkflowRunner {
         const stepDef = JSON.parse(compRecord.definition) as Step;
         this.logger.log(`  Running compensation: ${stepDef.id} (undoing ${compRecord.step_id})`);
 
-        await this.db.updateCompensationStatus(compRecord.id, 'running');
+        await this.db.updateCompensationStatus(compRecord.id, StepStatus.RUNNING);
 
         // Build context for compensation
         // It has access to the original step's output via steps.<step_id>.output
@@ -431,14 +431,14 @@ export class WorkflowRunner {
             workflowName: this.workflow.name,
           });
 
-          if (result.status === 'success') {
+          if (result.status === StepStatus.SUCCESS) {
             this.logger.log(`  ✓ Compensation ${stepDef.id} succeeded`);
-            await this.db.updateCompensationStatus(compRecord.id, 'success', result.output);
+            await this.db.updateCompensationStatus(compRecord.id, StepStatus.SUCCESS, result.output);
           } else {
             this.logger.error(`  ✗ Compensation ${stepDef.id} failed: ${result.error}`);
             await this.db.updateCompensationStatus(
               compRecord.id,
-              'failed',
+              StepStatus.FAILED,
               result.output,
               result.error
             );
@@ -446,7 +446,7 @@ export class WorkflowRunner {
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           this.logger.error(`  ✗ Compensation ${stepDef.id} crashed: ${errMsg}`);
-          await this.db.updateCompensationStatus(compRecord.id, 'failed', null, errMsg);
+          await this.db.updateCompensationStatus(compRecord.id, StepStatus.FAILED, null, errMsg);
         }
 
         // 2. Recursive rollback for sub-workflows
@@ -542,8 +542,11 @@ export class WorkflowRunner {
       version: 2, // Cache versioning
     };
 
-    // @ts-ignore - Bun.hash exists in Bun environment
-    const hash = Bun.hash(JSON.stringify(data)).toString(16);
+    // Use runtime-agnostic hashing
+    // @ts-ignore - Check for Bun environment
+    const hash = typeof Bun !== 'undefined'
+      ? Bun.hash(JSON.stringify(data)).toString(16)
+      : createHash('sha256').update(JSON.stringify(data)).digest('hex');
     return hash;
   }
 

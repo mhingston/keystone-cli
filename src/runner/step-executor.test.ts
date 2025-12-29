@@ -306,7 +306,7 @@ describe('step-executor', () => {
 
       const result = await executeStep(step, context);
       expect(result.status).toBe('failed');
-      expect(result.error).toContain('Access denied');
+      expect(result.error).toContain('outside the project directory');
     });
 
     it('should block path traversal with .. inside path resolving outside', async () => {
@@ -321,7 +321,7 @@ describe('step-executor', () => {
 
       const result = await executeStep(step, context);
       expect(result.status).toBe('failed');
-      expect(result.error).toContain('Access denied');
+      expect(result.error).toContain('outside the project directory');
     });
   });
 

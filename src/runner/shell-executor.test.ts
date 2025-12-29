@@ -72,6 +72,7 @@ describe('shell-executor', () => {
         needs: [],
         run: 'pwd',
         dir: '/tmp',
+        allowOutsideCwd: true,
       };
 
       const result = await executeShell(step, context);
