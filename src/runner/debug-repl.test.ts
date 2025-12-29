@@ -96,10 +96,9 @@ describe('DebugRepl', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(mockLogger.log).toHaveBeenCalled();
-    // biome-ignore lint/suspicious/noExplicitAny: accessing mock property
-    const lastCall = (mockLogger.log as unknown as any).mock.calls.find((call: any[]) =>
-      String(call[0]).includes('foo')
-    );
+    const lastCall = (
+      (mockLogger.log as unknown as { mock: { calls: any[][] } }).mock.calls as any[][]
+    ).find((call: any[]) => String(call[0]).includes('foo'));
     expect(lastCall?.[0]).toContain('bar');
     input.write('exit\n');
   });
@@ -233,8 +232,7 @@ describe('DebugRepl', () => {
     const repl = new DebugRepl(mockContext, mockStep, mockError, mockLogger, input, output);
 
     const spySpawnSync = spyOn(cp, 'spawnSync').mockImplementation(
-      // biome-ignore lint/suspicious/noExplicitAny: mocking child_process
-      () => ({ error: null, status: 0 }) as any
+      () => ({ error: null, status: 0 }) as unknown as cp.SpawnSyncReturns<Buffer>
     );
     const spyWriteFileSync = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
     const updatedStep = { ...mockStep, run: 'echo "fixed"' };
@@ -276,8 +274,7 @@ describe('DebugRepl', () => {
     const repl = new DebugRepl(mockContext, mockStep, mockError, mockLogger, input, output);
 
     const spySpawnSync = spyOn(cp, 'spawnSync').mockImplementation(
-      // biome-ignore lint/suspicious/noExplicitAny: mocking child_process
-      () => ({ error: null, status: 0 }) as any
+      () => ({ error: null, status: 0 }) as unknown as cp.SpawnSyncReturns<Buffer>
     );
     const spyWriteFileSync = spyOn(fs, 'writeFileSync').mockImplementation(() => {});
     const spyReadFileSync = spyOn(fs, 'readFileSync').mockImplementation(

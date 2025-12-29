@@ -59,8 +59,7 @@ export class OptimizationRunner {
     let bestPrompt =
       targetStep.type === 'llm'
         ? (targetStep as LlmStep).prompt
-        : // biome-ignore lint/suspicious/noExplicitAny: generic step access
-          (targetStep as any).run;
+        : (targetStep as unknown as { run: string }).run;
     let bestScore = -1;
     let currentPrompt = bestPrompt;
 
@@ -157,8 +156,7 @@ export class OptimizationRunner {
           timeout: TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS,
         });
         if (typeof result === 'object' && result !== null && 'stdout' in result) {
-          // biome-ignore lint/suspicious/noExplicitAny: result typing
-          const match = (result as any).stdout.match(/\d+/);
+          const match = (result as { stdout: string }).stdout.match(/\d+/);
           if (match) return Number.parseInt(match[0], 10);
         }
         // If raw result is number
@@ -207,7 +205,6 @@ export class OptimizationRunner {
 
     const result = await executeLlmStep(
       evalStep,
-      // biome-ignore lint/suspicious/noExplicitAny: context typing
       context as any,
       async () => {
         throw new Error('Tools not supported in eval');
@@ -216,8 +213,7 @@ export class OptimizationRunner {
     );
 
     if (result.status === 'success' && result.output && typeof result.output === 'object') {
-      // biome-ignore lint/suspicious/noExplicitAny: output typing
-      return (result.output as any).score || 0;
+      return (result.output as { score?: number }).score || 0;
     }
 
     // Try to extract number if JSON failed but text output exists
@@ -269,7 +265,6 @@ Return ONLY the new prompt text.`,
     try {
       const result = await executeLlmStep(
         metaStep,
-        // biome-ignore lint/suspicious/noExplicitAny: context typing
         context as any,
         async () => {
           throw new Error('Tools not supported in meta-opt');

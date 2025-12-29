@@ -141,9 +141,6 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
     const undo1Index = logs.findIndex((l) => l.includes('undoing step1'));
 
     if (undo2Index === -1 || undo1Index === -1 || undo2Index >= undo1Index) {
-      console.log('--- COMPENSATION LOGS ---');
-      console.log(logs.filter((l) => l.includes('undoing') || l.includes('rollback')).join('\n'));
-      console.log('--- END ---');
     }
 
     expect(undo2Index).toBeGreaterThan(-1);
@@ -245,9 +242,6 @@ describe('WorkflowRunner - Subflows & Compensations', () => {
 
     const wfUndoIndex = logs.findIndex((l) => l.includes('undoing workflow'));
     if (wfUndoIndex === -1) {
-      console.log('--- WF COMP LOGS ---');
-      console.log(logs.join('\n'));
-      console.log('--- END ---');
     }
     expect(wfUndoIndex).toBeGreaterThan(-1);
 

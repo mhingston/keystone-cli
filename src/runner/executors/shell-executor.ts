@@ -236,6 +236,8 @@ let usingRe2 = false;
  * Uses RE2 if available for ReDoS safety, falls back to native regex.
  */
 function getDetectionPattern(): { test: (s: string) => boolean } {
+  if (re2Pattern) return re2Pattern;
+
   if (!re2LoadAttempted) {
     re2LoadAttempted = true;
     try {
@@ -250,7 +252,12 @@ function getDetectionPattern(): { test: (s: string) => boolean } {
       usingRe2 = false;
     }
   }
-  return re2Pattern!;
+
+  if (!re2Pattern) {
+    re2Pattern = new RegExp(COMBINED_PATTERN_SOURCE);
+  }
+
+  return re2Pattern;
 }
 
 /**
@@ -317,7 +324,8 @@ async function readStreamWithLimit(
   return { text, truncated: false };
 }
 
-export function detectShellInjectionRisk(command: string): boolean {
+export function detectShellInjectionRisk(rawCommand: string): boolean {
+  let command = rawCommand;
   // Limit command length to prevent DoS via very long strings
   if (command.length > LIMITS.MAX_SHELL_COMMAND_CHECK_LENGTH) {
     // Truncate for pattern matching, but this is conservative - long commands are suspicious

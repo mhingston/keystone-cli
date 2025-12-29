@@ -43,8 +43,9 @@ export class SecretManager {
     // Strict allowlist for safe system environment variables
     const safeSystemVars = ['PATH', 'HOME', 'PWD', 'SHELL', 'LANG', 'TZ'];
     for (const key of safeSystemVars) {
-      if (process.env[key]) {
-        secrets[key] = process.env[key]!;
+      const value = process.env[key];
+      if (value) {
+        secrets[key] = value;
       }
     }
 

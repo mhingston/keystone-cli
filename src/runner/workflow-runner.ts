@@ -1685,11 +1685,9 @@ Do not change the 'id' or 'type' or 'auto_heal' fields.
     let textToEmbed = `Step ID: ${step.id} (${step.type})\n`;
 
     if (step.type === 'llm') {
-      // biome-ignore lint/suspicious/noExplicitAny: generic access
-      textToEmbed += `Task Context/Prompt:\n${(step as any).prompt}\n\n`;
+      textToEmbed += `Task Context/Prompt:\n${(step as LlmStep).prompt}\n\n`;
     } else if (step.type === 'shell') {
-      // biome-ignore lint/suspicious/noExplicitAny: generic access
-      textToEmbed += `Command:\n${(step as any).run}\n\n`;
+      textToEmbed += `Command:\n${(step as unknown as { run: string }).run}\n\n`;
     }
 
     textToEmbed += `Successful Outcome:\n${JSON.stringify(result.output, null, 2)}`;
@@ -1726,8 +1724,7 @@ Rules:
    - Creating missing directories
    - Adjusting flags or arguments`;
 
-    // biome-ignore lint/suspicious/noExplicitAny: generic access
-    const runCommand = (step as any).run;
+    const runCommand = (step as unknown as { run: string }).run;
     const userContent = `The following step failed:
 \`\`\`json
 ${JSON.stringify({ type: step.type, run: runCommand }, null, 2)}
@@ -1745,31 +1742,14 @@ Please provide the fixed step configuration as JSON.`;
       { role: 'user', content: userContent },
     ];
 
-    try {
-      // Use the default model (gpt-4o) or configured default for the Mechanic
-      // We'll use gpt-4o as a strong default for this reasoning task
-      const getAdapterFn = this.options.getAdapter || getAdapter;
-      const { adapter, resolvedModel } = getAdapterFn('gpt-4o');
-      this.logger.log(`  🤖 Mechanic is analyzing the failure using ${resolvedModel}...`);
+    // Use the default model (gpt-4o) or configured default for the Mechanic
+    // We'll use gpt-4o as a strong default for this reasoning task
+    const getAdapterFn = this.options.getAdapter || getAdapter;
+    const { adapter } = getAdapterFn('gpt-4o');
 
-      const response = await adapter.chat(messages, {
-        model: resolvedModel,
-      });
+    const response = await adapter.chat(messages);
 
-      const content = response.message.content;
-      if (!content) {
-        throw new Error('Mechanic returned empty response');
-      }
-
-      try {
-        const fixedConfig = extractJson(content) as Partial<Step>;
-        return fixedConfig;
-      } catch (e) {
-        throw new Error(`Failed to parse Mechanic's response as JSON: ${content}`);
-      }
-    } catch (err) {
-      throw new Error(`Mechanic unavailable: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    return extractJson(response.message.content || '{}') as Partial<Step>;
   }
 
   /**

@@ -6,8 +6,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import type { Command } from 'commander';
 
-// Import templates
-import agentHandoffWorkflow from '../templates/agent-handoff.yaml' with { type: 'text' };
 import exploreAgent from '../templates/agents/explore.md' with { type: 'text' };
 import generalAgent from '../templates/agents/general.md' with { type: 'text' };
 import handoffRouterAgent from '../templates/agents/handoff-router.md' with { type: 'text' };
@@ -18,17 +16,34 @@ import architectAgent from '../templates/agents/keystone-architect.md' with { ty
 import softwareEngineerAgent from '../templates/agents/software-engineer.md' with { type: 'text' };
 import summarizerAgent from '../templates/agents/summarizer.md' with { type: 'text' };
 import testerAgent from '../templates/agents/tester.md' with { type: 'text' };
-import decomposeImplementWorkflow from '../templates/decompose-implement.yaml' with {
+import idempotencyExample from '../templates/control-flow/idempotency-example.yaml' with {
   type: 'text',
 };
-import decomposeWorkflow from '../templates/decompose-problem.yaml' with { type: 'text' };
-import decomposeResearchWorkflow from '../templates/decompose-research.yaml' with { type: 'text' };
-import decomposeReviewWorkflow from '../templates/decompose-review.yaml' with { type: 'text' };
-import devWorkflow from '../templates/dev.yaml' with { type: 'text' };
-import reviewLoopWorkflow from '../templates/review-loop.yaml' with { type: 'text' };
-import scaffoldWorkflow from '../templates/scaffold-feature.yaml' with { type: 'text' };
-import scaffoldGenerateWorkflow from '../templates/scaffold-generate.yaml' with { type: 'text' };
-import scaffoldPlanWorkflow from '../templates/scaffold-plan.yaml' with { type: 'text' };
+import artifactExample from '../templates/features/artifact-example.yaml' with { type: 'text' };
+import scriptExample from '../templates/features/script-example.yaml' with { type: 'text' };
+// Import templates
+import agentHandoffWorkflow from '../templates/patterns/agent-handoff.yaml' with { type: 'text' };
+import decomposeImplementWorkflow from '../templates/scaffolding/decompose-implement.yaml' with {
+  type: 'text',
+};
+import decomposeWorkflow from '../templates/scaffolding/decompose-problem.yaml' with {
+  type: 'text',
+};
+import decomposeResearchWorkflow from '../templates/scaffolding/decompose-research.yaml' with {
+  type: 'text',
+};
+import decomposeReviewWorkflow from '../templates/scaffolding/decompose-review.yaml' with {
+  type: 'text',
+};
+import devWorkflow from '../templates/scaffolding/dev.yaml' with { type: 'text' };
+import reviewLoopWorkflow from '../templates/scaffolding/review-loop.yaml' with { type: 'text' };
+import scaffoldWorkflow from '../templates/scaffolding/scaffold-feature.yaml' with { type: 'text' };
+import scaffoldGenerateWorkflow from '../templates/scaffolding/scaffold-generate.yaml' with {
+  type: 'text',
+};
+import scaffoldPlanWorkflow from '../templates/scaffolding/scaffold-plan.yaml' with {
+  type: 'text',
+};
 
 const DEFAULT_CONFIG = `# Keystone Configuration
 default_provider: openai
@@ -99,6 +114,9 @@ const SEEDS = [
   { path: '.keystone/workflows/agents/handoff-specialist.md', content: handoffSpecialistAgent },
   { path: '.keystone/workflows/dev.yaml', content: devWorkflow },
   { path: '.keystone/workflows/agents/tester.md', content: testerAgent },
+  { path: '.keystone/workflows/script-example.yaml', content: scriptExample },
+  { path: '.keystone/workflows/artifact-example.yaml', content: artifactExample },
+  { path: '.keystone/workflows/idempotency-example.yaml', content: idempotencyExample },
 ];
 
 export function registerInitCommand(program: Command): void {

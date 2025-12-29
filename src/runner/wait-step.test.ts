@@ -75,7 +75,9 @@ describe('Wait Step', () => {
     // Verify event STILL exists
     const eventAfter = await db.getEvent(eventName);
     expect(eventAfter).not.toBeNull();
-    expect(JSON.parse(eventAfter?.data!)).toEqual(eventData);
+    if (eventAfter) {
+      expect(JSON.parse(eventAfter.data)).toEqual(eventData);
+    }
   });
 
   it('should handle sequential wait steps for the same one-shot event', async () => {

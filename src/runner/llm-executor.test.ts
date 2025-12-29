@@ -251,7 +251,7 @@ You are a context-aware agent.`;
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
 
-    const executeStepFn = async (s: Step) => {
+    const executeStepFn = async (s: any) => {
       if (s.type === 'shell') {
         return { status: 'success' as const, output: { stdout: 'tool result' } };
       }
@@ -283,7 +283,7 @@ You are a context-aware agent.`;
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
 
-    const executeStepFn = async (s: Step) => {
+    const executeStepFn = async (s: any) => {
       if (s.type === 'shell') {
         return { status: 'success' as const, output: { stdout: 'tool result' } };
       }
@@ -680,7 +680,8 @@ You are a context-aware agent.`;
     };
     const context: ExpressionContext = { inputs: {}, steps: {} };
     let toolExecuted = false;
-    const executeStepFn = async (s: Step) => {
+
+    const executeStepFn = async (s: any) => {
       if (s.id === 'adhoc-step') {
         toolExecuted = true;
         return { status: 'success' as const, output: { stdout: 'adhoc result' } };
@@ -768,7 +769,7 @@ You are a context-aware agent.`;
       getAdapter
     );
 
-    expect(capturedStep?.type).toBe('engine');
+    expect((capturedStep as any)?.type).toBe('engine');
     expect(chatCount).toBe(2);
   });
 
@@ -939,6 +940,7 @@ You are a context-aware agent.`;
       error: mock(() => {}),
       warn: mock(() => {}),
       info: mock(() => {}),
+      debug: mock(() => {}),
     };
 
     const emitEvent = mock(() => {});
@@ -1049,7 +1051,6 @@ You are a context-aware agent.`;
 
     let capturedPrompt = '';
     const chatMock = mock(async (messages: LLMMessage[]) => {
-      // console.log('MESSAGES:', JSON.stringify(messages, null, 2));
       capturedPrompt = messages.find((m) => m.role === 'user')?.content || '';
       return { message: { role: 'assistant', content: 'Response' } };
     }) as unknown as LLMAdapter['chat'];
@@ -1262,7 +1263,7 @@ You are a context-aware agent.`;
     let sawEnvUpdate = false;
     let sawMemoryUpdate = false;
 
-    const executeStepFn = async (_step: Step, toolContext: ExpressionContext) => {
+    const executeStepFn = async (_step: any, toolContext: ExpressionContext) => {
       if (_step.id === 'update-step') {
         return {
           status: 'success' as const,

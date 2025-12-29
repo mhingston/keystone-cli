@@ -17,8 +17,7 @@ describe('MCPClient Audit Fixes', () => {
       }),
       kill: () => {},
       on: () => {},
-      // biome-ignore lint/suspicious/noExplicitAny: Mocking complex object
-    } as any);
+    } as unknown as child_process.ChildProcess);
   });
 
   afterEach(() => {

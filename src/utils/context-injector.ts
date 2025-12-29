@@ -180,14 +180,15 @@ export class ContextInjector {
     config?: ContextInjectorConfig
   ): ContextData {
     // Default config from ConfigLoader
-    if (!config) {
+    let effectiveConfig = config;
+    if (!effectiveConfig) {
       try {
         const appConfig = ConfigLoader.load();
         const contextConfig = appConfig.features?.context_injection;
         if (!contextConfig?.enabled) {
           return {};
         }
-        config = {
+        effectiveConfig = {
           enabled: contextConfig.enabled,
           search_depth: contextConfig.search_depth ?? 3,
           sources: contextConfig.sources ?? ['readme', 'agents_md', 'cursor_rules'],
@@ -197,7 +198,7 @@ export class ContextInjector {
       }
     }
 
-    if (!config.enabled) {
+    if (!effectiveConfig.enabled) {
       return {};
     }
 
@@ -211,17 +212,20 @@ export class ContextInjector {
     // Build context based on sources
     const context: ContextData = {};
 
-    if (config.sources.includes('readme') || config.sources.includes('agents_md')) {
-      const dirContext = ContextInjector.scanDirectoryContext(dir, config.search_depth);
-      if (config.sources.includes('readme')) {
+    if (
+      effectiveConfig.sources.includes('readme') ||
+      effectiveConfig.sources.includes('agents_md')
+    ) {
+      const dirContext = ContextInjector.scanDirectoryContext(dir, effectiveConfig.search_depth);
+      if (effectiveConfig.sources.includes('readme')) {
         context.readme = dirContext.readme;
       }
-      if (config.sources.includes('agents_md')) {
+      if (effectiveConfig.sources.includes('agents_md')) {
         context.agentsMd = dirContext.agentsMd;
       }
     }
 
-    if (config.sources.includes('cursor_rules')) {
+    if (effectiveConfig.sources.includes('cursor_rules')) {
       context.cursorRules = ContextInjector.scanRules(filesAccessed);
     }
 

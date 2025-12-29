@@ -13,8 +13,7 @@ export class BlueprintUtils {
   /**
    * Recursively sort object keys for stable JSON stringification
    */
-  // biome-ignore lint/suspicious/noExplicitAny: Generic JSON sort utility
-  private static sortObject(obj: any): any {
+  private static sortObject(obj: unknown): unknown {
     if (obj === null || typeof obj !== 'object') {
       return obj;
     }
@@ -30,11 +29,10 @@ export class BlueprintUtils {
       });
     }
 
-    // biome-ignore lint/suspicious/noExplicitAny: Building dynamic sorted object
-    const sortedObj: any = {};
-    const sortedKeys = Object.keys(obj).sort();
+    const sortedObj: Record<string, unknown> = {};
+    const sortedKeys = Object.keys(obj as object).sort();
     for (const key of sortedKeys) {
-      sortedObj[key] = BlueprintUtils.sortObject(obj[key]);
+      sortedObj[key] = BlueprintUtils.sortObject((obj as Record<string, unknown>)[key]);
     }
     return sortedObj;
   }

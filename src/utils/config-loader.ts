@@ -12,8 +12,10 @@ export class ConfigLoader {
     return process.env[key];
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: Generic deep merge utility
-  private static deepMerge(target: any, source: any): any {
+  private static deepMerge(
+    target: Record<string, unknown>,
+    source: Record<string, unknown>
+  ): Record<string, unknown> {
     const output = { ...target };
     if (source && typeof source === 'object' && !Array.isArray(source)) {
       for (const key of Object.keys(source)) {
@@ -21,7 +23,10 @@ export class ConfigLoader {
           if (!(key in target)) {
             Object.assign(output, { [key]: source[key] });
           } else {
-            output[key] = ConfigLoader.deepMerge(target[key], source[key]);
+            output[key] = ConfigLoader.deepMerge(
+              target[key] as Record<string, unknown>,
+              source[key] as Record<string, unknown>
+            );
           }
         } else {
           Object.assign(output, { [key]: source[key] });

@@ -404,8 +404,7 @@ const WaitStepSchema = BaseStepSchema.extend({
 
 // ===== Discriminated Union for Steps =====
 
-// biome-ignore lint/suspicious/noExplicitAny: Recursive Zod type
-export const StepSchema: z.ZodType<any> = z.lazy(() =>
+export const StepSchema: z.ZodType<unknown> = z.lazy(() =>
   z.discriminatedUnion('type', [
     ShellStepSchema,
     LlmStepSchema,

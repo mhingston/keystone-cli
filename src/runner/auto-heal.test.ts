@@ -29,8 +29,7 @@ describe('WorkflowRunner Auto-Heal', () => {
       dbPath: ':memory:',
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: Accessing private property for testing
-    const db = (runner as any).db;
+    const db = (runner as unknown as { db: any }).db;
     await db.createRun(runner.runId, workflow.name, {});
 
     const spy = jest.spyOn(StepExecutor, 'executeStep');
@@ -44,8 +43,7 @@ describe('WorkflowRunner Auto-Heal', () => {
       }
 
       if (step.id === 'fail-step') {
-        // biome-ignore lint/suspicious/noExplicitAny: Accessing run property dynamically
-        if ((step as any).run === 'echo "fixed"') {
+        if ((step as unknown as { run: string }).run === 'echo "fixed"') {
           return { status: 'success', output: 'fixed' };
         }
         return { status: 'failed', output: null, error: 'Command failed' };
@@ -54,8 +52,9 @@ describe('WorkflowRunner Auto-Heal', () => {
       return { status: 'failed', output: null, error: 'Unknown step' };
     });
 
-    // biome-ignore lint/suspicious/noExplicitAny: Accessing private property for testing
-    await (runner as any).executeStepWithForeach(workflow.steps[0]);
+    await (
+      runner as unknown as { executeStepWithForeach: (step: Step) => Promise<void> }
+    ).executeStepWithForeach(workflow.steps[0]);
 
     expect(spy).toHaveBeenCalledTimes(3);
 

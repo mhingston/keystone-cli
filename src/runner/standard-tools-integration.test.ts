@@ -42,8 +42,7 @@ System prompt`,
   });
 
   it('should inject standard tools when useStandardTools is true', async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: mock
-    let capturedTools: any[] = [];
+    let capturedTools: unknown[] = [];
 
     const chatMock = mock(async (messages, options) => {
       capturedTools = options.tools || [];
@@ -63,8 +62,7 @@ System prompt`,
           ],
         },
         usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-      } as any;
+      };
     }) as unknown as LLMAdapter['chat'];
     const getAdapter = createMockGetAdapter(chatMock);
 
@@ -133,8 +131,7 @@ System prompt`,
         return {
           message: { role: 'assistant', content: 'stop' },
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-          // biome-ignore lint/suspicious/noExplicitAny: mock
-        } as any;
+        };
       }
       return {
         message: {
@@ -147,8 +144,7 @@ System prompt`,
             },
           ],
         },
-        // biome-ignore lint/suspicious/noExplicitAny: mock
-      } as any;
+      };
     }) as unknown as LLMAdapter['chat'];
     const getAdapter = createMockGetAdapter(chatMock);
 

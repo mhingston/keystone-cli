@@ -116,7 +116,6 @@ describe('OpenAIAdapter', () => {
     // @ts-ignore
     const fetchMock = global.fetch as MockFetch;
     // @ts-ignore
-    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
     const [url, init] = fetchMock.mock.calls[0] as [string, any];
     expect(url).toBe('https://api.openai.com/v1/embeddings');
     expect(init.headers.Authorization).toBe('Bearer fake-key');
@@ -260,7 +259,6 @@ describe('AnthropicAdapter', () => {
     const fetchMock = global.fetch as MockFetch;
     // @ts-ignore
     // @ts-ignore
-    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
     const [url, init] = fetchMock.mock.calls[0] as [string, any];
 
     expect(url).toBe('https://api.anthropic.com/v1/messages');
@@ -335,7 +333,6 @@ describe('AnthropicAdapter', () => {
     ]);
 
     // @ts-ignore
-    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
     const init = global.fetch.mock.calls[0][1] as any;
     const body = JSON.parse(init.body);
     expect(body.messages[0].role).toBe('assistant');
@@ -427,7 +424,6 @@ describe('AnthropicClaudeAdapter', () => {
     // @ts-ignore
     const fetchMock = global.fetch as MockFetch;
     // @ts-ignore
-    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
     const [url, init] = fetchMock.mock.calls[0] as [string, any];
 
     expect(url).toBe('https://api.anthropic.com/v1/messages');
@@ -477,7 +473,6 @@ describe('CopilotAdapter', () => {
     const fetchMock = global.fetch as MockFetch;
     // @ts-ignore
     // @ts-ignore
-    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
     const [url, init] = fetchMock.mock.calls[0] as [string, any];
     expect(url).toBe('https://api.githubcopilot.com/chat/completions');
     expect(init.headers.Authorization).toBe('Bearer mock-token');
@@ -528,7 +523,6 @@ describe('OpenAIChatGPTAdapter', () => {
       ],
     };
 
-    // biome-ignore lint/suspicious/noExplicitAny: mock
     const mcpManager = {
       getClient: mock(async () => ({
         request: mock(async () => ({ content: [{ type: 'text', text: 'mcp-result' }] })),
@@ -560,7 +554,6 @@ describe('OpenAIChatGPTAdapter', () => {
     // @ts-ignore
     const fetchMock = global.fetch as MockFetch;
     // @ts-ignore
-    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
     const [url, init] = fetchMock.mock.calls[0] as [string, any];
 
     expect(url).toBe('https://api.openai.com/v1/chat/completions');
@@ -640,7 +633,6 @@ describe('GoogleGeminiAdapter', () => {
     // @ts-ignore
     const fetchMock = global.fetch as MockFetch;
     // @ts-ignore
-    // biome-ignore lint/suspicious/noExplicitAny: mock fetch init
     const [url, init] = fetchMock.mock.calls[0] as [string, any];
 
     expect(url).toBe('https://cloudcode-pa.googleapis.com/v1internal:generateContent');
@@ -666,16 +658,21 @@ describe('GoogleGeminiAdapter', () => {
 
 describe('getAdapter', () => {
   beforeEach(() => {
+    resetRuntimeHelpers();
+    ConfigLoader.clear();
     // Setup a clean config for each test
     ConfigLoader.setConfig({
       default_provider: 'openai',
       providers: {
         openai: { type: 'openai', api_key_env: 'OPENAI_API_KEY' },
         anthropic: { type: 'anthropic', api_key_env: 'ANTHROPIC_API_KEY' },
-        copilot: { type: 'copilot' },
-        'chatgpt-provider': { type: 'openai-chatgpt' },
+        copilot: { type: 'copilot', base_url: 'https://copilot.com' },
+        'chatgpt-provider': { type: 'openai-chatgpt', base_url: 'https://chat.openai.com' },
         'claude-subscription': { type: 'anthropic-claude' },
-        'gemini-subscription': { type: 'google-gemini' },
+        'gemini-subscription': { type: 'google-gemini', project_id: 'test-project' },
+        'openai-chatgpt': { type: 'openai-chatgpt', base_url: 'https://chat.openai.com' },
+        'google-gemini': { type: 'google-gemini', project_id: 'test-project' },
+        'anthropic-claude': { type: 'anthropic-claude' },
       },
       model_mappings: {
         'claude-4*': 'claude-subscription',
@@ -684,35 +681,14 @@ describe('getAdapter', () => {
         'gpt-*': 'openai',
         'gemini-*': 'gemini-subscription',
         'copilot:*': 'copilot',
+        'claude-3-opus-20240229': 'anthropic-claude',
+        'gemini-3-pro-high': 'google-gemini',
       },
       storage: { retention_days: 30, redact_secrets_at_rest: true },
       mcp_servers: {},
       engines: { allowlist: {}, denylist: [] },
       concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
       expression: { strict: false },
-    });
-  });
-
-  beforeEach(() => {
-    resetRuntimeHelpers();
-    ConfigLoader.clear();
-    ConfigLoader.setConfig({
-      default_provider: 'openai',
-      providers: {
-        openai: { type: 'openai' },
-        anthropic: { type: 'anthropic' },
-        copilot: { type: 'copilot', base_url: 'https://copilot.com' },
-        'openai-chatgpt': { type: 'openai-chatgpt', base_url: 'https://chat.openai.com' },
-        'google-gemini': { type: 'google-gemini', project_id: 'test-project' },
-        'anthropic-claude': { type: 'anthropic-claude' },
-      },
-      model_mappings: {
-        'claude-*': 'anthropic',
-        'gpt-*': 'openai',
-        'gemini-*': 'google-gemini',
-        'claude-3-opus-20240229': 'anthropic-claude',
-        'gemini-3-pro-high': 'google-gemini',
-      },
       log_level: 'info',
     } as any);
   });
@@ -887,23 +863,18 @@ describe('AnthropicAdapter Streaming Errors', () => {
 });
 
 describe('OpenAIChatGPTAdapter Usage Limits', () => {
-  beforeEach(() => {
-    mock.restore();
-    spyOn(AuthManager, 'getOpenAIChatGPTToken').mockResolvedValue('fake-token');
-  });
-
-  afterEach(() => {
-    mock.restore();
-  });
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    mock.restore();
+    spyOn(AuthManager, 'getOpenAIChatGPTToken').mockResolvedValue('fake-token');
     // @ts-ignore
     global.fetch = mock();
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    mock.restore();
   });
 
   it('should throw specific error for usage limits', async () => {

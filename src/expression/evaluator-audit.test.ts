@@ -59,8 +59,10 @@ describe('ExpressionEvaluator Audit Fixes', () => {
 
     it('should support level 3 array nesting', () => {
       // ${{ [ [ [ 1 ] ] ] }}
-      // biome-ignore lint/suspicious/noExplicitAny: generic loose validation for test
-      const res = ExpressionEvaluator.evaluate('${{ [ [ [ 1 ] ] ] }}', nestedContext) as any;
+      const res = ExpressionEvaluator.evaluate(
+        '${{ [ [ [ 1 ] ] ] }}',
+        nestedContext
+      ) as number[][][];
       expect(res[0][0][0]).toBe(1);
     });
   });

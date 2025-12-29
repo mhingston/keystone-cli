@@ -9,8 +9,7 @@ export interface TestDefinition {
       step?: string;
       type?: string;
       prompt?: string;
-      // biome-ignore lint/suspicious/noExplicitAny: Mock responses can be any type
-      response: any;
+      response: unknown;
     }>;
   };
   options?: {
@@ -21,12 +20,10 @@ export interface TestDefinition {
       string,
       {
         status: string;
-        // biome-ignore lint/suspicious/noExplicitAny: Step outputs can be any type
-        output: any;
+        output: unknown;
         error?: string;
       }
     >;
-    // biome-ignore lint/suspicious/noExplicitAny: Workflow outputs can be any type
-    outputs: Record<string, any>;
+    outputs: Record<string, unknown>;
   };
 }

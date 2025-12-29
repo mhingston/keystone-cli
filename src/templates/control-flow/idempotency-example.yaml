@@ -1,0 +1,29 @@
+$schema: https://raw.githubusercontent.com/mhingston/keystone-cli/main/schemas/workflow.json
+name: idempotency-example
+description: "Demonstrate safely retrying side-effecting steps"
+
+inputs:
+  order_id:
+    type: string
+    default: "order-123"
+
+steps:
+  - id: risky_operation
+    type: shell
+    # This key ensures that for a given order_id, this step runs only once
+    # even if the workflow is retried or resumed.
+    idempotencyKey: '"process-order-" + inputs.order_id'
+    # Scope can be global (across all runs) or run (just this run)
+    idempotencyScope: global
+    # Expire the record after 1 day
+    idempotencyTtlSeconds: 86400
+    run: |
+      echo "Processing order ${{ inputs.order_id }}..."
+      # Simulate a side effect
+      sleep 1
+      echo "Charged payment for ${{ inputs.order_id }}"
+
+  - id: next_step
+    type: shell
+    needs: [risky_operation]
+    run: echo "Order processed."

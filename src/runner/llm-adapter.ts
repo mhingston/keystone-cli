@@ -1414,8 +1414,7 @@ export class CopilotAdapter implements LLMAdapter {
 }
 
 export class LocalEmbeddingAdapter implements LLMAdapter {
-  // biome-ignore lint/suspicious/noExplicitAny: transformers pipeline type
-  private static extractor: any = null;
+  private static extractor: unknown = null;
 
   async chat(
     _messages: LLMMessage[],

@@ -1,0 +1,26 @@
+$schema: https://raw.githubusercontent.com/mhingston/keystone-cli/main/schemas/workflow.json
+name: script-example
+description: "Demonstrate sandboxed JavaScript execution"
+
+steps:
+  - id: generate_data
+    type: shell
+    run: echo '{"values":[1,2,3,4,5]}'
+
+  - id: process_data
+    type: script
+    allowInsecure: true
+    needs: [generate_data]
+    run: |
+      const data = JSON.parse(steps.generate_data.output.stdout);
+      // Calculate sum and average
+      const sum = data.values.reduce((a, b) => a + b, 0);
+      const avg = sum / data.values.length;
+      return { sum, avg, count: data.values.length };
+
+  - id: print_result
+    type: shell
+    needs: [process_data]
+    run: |
+      echo "Sum: ${{ steps.process_data.output.sum }}"
+      echo "Average: ${{ steps.process_data.output.avg }}"

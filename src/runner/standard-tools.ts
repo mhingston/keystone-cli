@@ -520,8 +520,7 @@ export const STANDARD_TOOLS: AgentTool[] = [
  */
 export function validateStandardToolSecurity(
   toolName: string,
-  // biome-ignore lint/suspicious/noExplicitAny: arguments can be any shape
-  args: any,
+  args: unknown,
   options: { allowOutsideCwd?: boolean; allowInsecure?: boolean }
 ): void {
   const cwd = process.cwd();

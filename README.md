@@ -139,6 +139,9 @@ Top-level workflows:
 - `decompose-problem`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
 - `dev`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
 - `agent-handoff`: Demonstrates agent handoffs and tool-driven context updates.
+- `script-example`: Demonstrates sandboxed JavaScript execution.
+- `artifact-example`: Demonstrates artifact upload and download between steps.
+- `idempotency-example`: Demonstrates safe retries for side-effecting steps.
 
 Sub-workflows:
 - `scaffold-plan`: Generates a file plan from `requirements` input.

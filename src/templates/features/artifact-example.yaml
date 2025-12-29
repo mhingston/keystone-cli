@@ -1,0 +1,37 @@
+$schema: https://raw.githubusercontent.com/mhingston/keystone-cli/main/schemas/workflow.json
+name: artifact-example
+description: "Demonstrate artifact upload and download between steps"
+
+steps:
+  - id: create_content
+    type: shell
+    run: |
+      mkdir -p ./output
+      echo "Hello from step 1" > ./output/file1.txt
+      echo "Hello from step 1 (second file)" > ./output/file2.txt
+
+  - id: upload_files
+    type: artifact
+    op: upload
+    name: build-outputs
+    paths: ["./output/*.txt"]
+    needs: [create_content]
+
+  - id: clean_local
+    type: shell
+    needs: [upload_files]
+    run: rm -rf ./output
+
+  - id: download_files
+    type: artifact
+    op: download
+    name: build-outputs
+    path: ./downloaded
+    needs: [clean_local]
+
+  - id: verify
+    type: shell
+    needs: [download_files]
+    run: |
+      ls -R ./downloaded
+      cat ./downloaded/file1.txt
