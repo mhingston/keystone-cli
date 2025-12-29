@@ -150,8 +150,15 @@ export class WorkflowDb {
     this.db.exec('PRAGMA journal_mode = WAL;'); // Write-ahead logging
     this.db.exec('PRAGMA foreign_keys = ON;'); // Enable foreign key enforcement
     this.db.exec('PRAGMA busy_timeout = 5000;'); // Retry busy signals for up to 5s
-    this.runMigrations();
-    this.initStatements();
+
+    // Wrap initialization in try-catch to ensure db is closed on error
+    try {
+      this.runMigrations();
+      this.initStatements();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   private initStatements(): void {

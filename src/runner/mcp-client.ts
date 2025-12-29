@@ -3,7 +3,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { type Interface, createInterface } from 'node:readline';
 import pkg from '../../package.json' with { type: 'json' };
-import { MCP } from '../utils/constants.ts';
+import { MCP, TIMEOUTS } from '../utils/constants.ts';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
 
 // Re-export for backwards compatibility
@@ -290,7 +290,7 @@ class SSETransport implements MCPTransport {
     this.logger = logger;
   }
 
-  async connect(timeout = 60000): Promise<void> {
+  async connect(timeout: number = TIMEOUTS.SSE_CONNECTION_TIMEOUT_MS): Promise<void> {
     this.abortController = new AbortController();
 
     return new Promise((resolve, reject) => {

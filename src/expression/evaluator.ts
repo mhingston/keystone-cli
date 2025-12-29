@@ -363,19 +363,11 @@ export class ExpressionEvaluator {
         ast = jsep(expr);
         // Only cache if maxCacheSize > 0 (caching enabled)
         if (ExpressionEvaluator.maxCacheSize > 0) {
-          // Manage cache size - evict to 90% capacity when full to reduce eviction overhead
-          // This ensures cache never exceeds maxCacheSize while minimizing churn
+          // Manage cache size with incremental eviction to reduce GC pressure
           if (ExpressionEvaluator.jsepCache.size >= ExpressionEvaluator.maxCacheSize) {
-            const targetSize = Math.floor(ExpressionEvaluator.maxCacheSize * 0.9);
-            const keysToDelete: string[] = [];
-            for (const key of ExpressionEvaluator.jsepCache.keys()) {
-              if (ExpressionEvaluator.jsepCache.size - keysToDelete.length <= targetSize) {
-                break;
-              }
-              keysToDelete.push(key);
-            }
-            for (const key of keysToDelete) {
-              ExpressionEvaluator.jsepCache.delete(key);
+            const firstKey = ExpressionEvaluator.jsepCache.keys().next().value;
+            if (firstKey !== undefined) {
+              ExpressionEvaluator.jsepCache.delete(firstKey);
             }
           }
           ExpressionEvaluator.jsepCache.set(expr, ast);

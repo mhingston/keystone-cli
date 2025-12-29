@@ -142,6 +142,8 @@ export class ForeachExecutor {
       // Initialize results array
       const itemResults: StepContext[] = existingContext?.items || new Array(items.length);
       const shouldCheckDb = !!existingContext;
+      // Track estimated result size to prevent memory exhaustion
+      let estimatedResultsBytes = 0;
 
       // Ensure array is correct length
       if (itemResults.length !== items.length) {
@@ -282,6 +284,23 @@ export class ForeachExecutor {
 
                 this.logger.log(`  ⤷ [${i + 1}/${items.length}] Executing iteration...`);
                 itemResults[i] = await this.executeStepFn(step, itemContext, stepExecId);
+
+                // Track result size to prevent memory exhaustion
+                if (itemResults[i]?.output !== undefined) {
+                  try {
+                    estimatedResultsBytes += JSON.stringify(itemResults[i].output).length;
+                  } catch {
+                    // If serialization fails, estimate based on type
+                    estimatedResultsBytes += 1024;
+                  }
+                  if (estimatedResultsBytes > LIMITS.MAX_FOREACH_RESULTS_BYTES) {
+                    throw new Error(
+                      `Foreach step "${step.id}" accumulated results exceed maximum size of ` +
+                      `${LIMITS.MAX_FOREACH_RESULTS_BYTES} bytes. Consider reducing output size or batching.`
+                    );
+                  }
+                }
+
                 if (
                   itemResults[i].status === StepStatus.FAILED ||
                   itemResults[i].status === StepStatus.SUSPENDED

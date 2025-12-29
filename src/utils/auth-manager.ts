@@ -111,15 +111,46 @@ export class AuthManager {
 
   private static sanitizeError(error: unknown): string {
     let message = error instanceof Error ? error.message : String(error);
-    // Limit message length to prevent ReDoS attacks with crafted inputs
+    // Limit message length to prevent DoS with very long inputs
     const MAX_SANITIZE_LENGTH = 10_000;
     if (message.length > MAX_SANITIZE_LENGTH) {
       message = message.substring(0, MAX_SANITIZE_LENGTH) + '... [truncated]';
     }
-    return message.replace(
-      /(?:token|key|secret|password|credential|auth|private|cookie|session|signature)(?:["'\\s:=]+)([a-zA-Z0-9._~%-]+)/gi,
-      (match, p1) => match.replace(p1, '***REDACTED***')
-    );
+
+    // Simple token-based redaction (avoids ReDoS-prone regex)
+    const sensitiveKeywords = [
+      'token', 'key', 'secret', 'password', 'credential',
+      'auth', 'private', 'cookie', 'session', 'signature'
+    ];
+
+    // Split on common delimiters preserving them
+    const parts = message.split(/([:\s="']+)/);
+    let prevWasSensitive = false;
+
+    return parts.map((part) => {
+      const lower = part.toLowerCase();
+
+      // Check if current part is a sensitive keyword
+      if (sensitiveKeywords.some(kw => lower.includes(kw))) {
+        prevWasSensitive = true;
+        return part;
+      }
+
+      // If previous part was sensitive and this looks like a value, redact it
+      if (prevWasSensitive && /^[a-zA-Z0-9._~%=-]+$/.test(part) && part.length > 3) {
+        prevWasSensitive = false;
+        return '***REDACTED***';
+      }
+
+      // Delimiter parts reset the flag
+      if (/^[:\s="']+$/.test(part)) {
+        // Keep prevWasSensitive as is - it's just a delimiter
+        return part;
+      }
+
+      prevWasSensitive = false;
+      return part;
+    }).join('');
   }
 
   static save(data: AuthData): void {

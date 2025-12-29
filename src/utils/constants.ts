@@ -15,6 +15,8 @@ export const TIMEOUTS = {
   REGEX_TIMEOUT_MS: 1000,
   /** Timeout for OAuth login flows (5 minutes) */
   OAUTH_LOGIN_TIMEOUT_MS: 5 * 60 * 1000,
+  /** SSE connection timeout for MCP client */
+  SSE_CONNECTION_TIMEOUT_MS: 60000,
 } as const;
 
 /** Database related constants */
@@ -77,6 +79,8 @@ export const LIMITS = {
   ERROR_MESSAGE_TRUNCATE_LENGTH: 500,
   /** Maximum iterations for foreach loops to prevent memory exhaustion */
   MAX_FOREACH_ITERATIONS: 10_000,
+  /** Maximum bytes for accumulated foreach results (100MB) */
+  MAX_FOREACH_RESULTS_BYTES: 100 * 1024 * 1024,
   /** Default maximum retries for database operations */
   MAX_DB_RETRIES: 20,
 } as const;
