@@ -3,10 +3,11 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { type Interface, createInterface } from 'node:readline';
 import pkg from '../../package.json' with { type: 'json' };
+import { MCP } from '../utils/constants.ts';
 import { ConsoleLogger, type Logger } from '../utils/logger.ts';
 
-// MCP Protocol version - update when upgrading to newer MCP spec
-export const MCP_PROTOCOL_VERSION = '2024-11-05';
+// Re-export for backwards compatibility
+export const MCP_PROTOCOL_VERSION = MCP.PROTOCOL_VERSION;
 
 // Maximum buffer size for incoming messages (10MB) to prevent memory exhaustion
 const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
@@ -30,9 +31,7 @@ function splitLines(str: string): string[] {
     }
   }
   // Return remaining content as incomplete line (will be buffered)
-  if (start < str.length) {
-    lines.push(str.substring(start));
-  }
+  lines.push(str.substring(start));
   return lines;
 }
 
@@ -209,11 +208,11 @@ class StdConfigTransport implements MCPTransport {
     // Uses specific patterns to avoid false positives with legitimate variables.
     const safeEnv: Record<string, string> = {};
     const sensitivePatterns = [
-      /^.*_(API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_KEY)$/i,
-      /^(API_KEY|AUTH_TOKEN|SECRET_KEY|PRIVATE_KEY|PASSWORD|CREDENTIALS?)$/i,
-      /^(AWS_SECRET|GITHUB_TOKEN|NPM_TOKEN|SSH_KEY|PGP_PASSPHRASE)$/i,
-      /^.*_AUTH_(TOKEN|KEY|SECRET)$/i,
-      /^(COOKIE|SESSION_ID|SESSION_SECRET)$/i,
+      /^.*_(API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_KEY)(_.*)?$/i,
+      /^(API_KEY|AUTH_TOKEN|SECRET_KEY|PRIVATE_KEY|PASSWORD|CREDENTIALS?)(_.*)?$/i,
+      /^(AWS_SECRET|GITHUB_TOKEN|NPM_TOKEN|SSH_KEY|PGP_PASSPHRASE)(_.*)?$/i,
+      /^.*_AUTH_(TOKEN|KEY|SECRET)(_.*)?$/i,
+      /^(COOKIE|SESSION_ID|SESSION_SECRET)(_.*)?$/i,
     ];
 
     for (const [key, value] of Object.entries(process.env)) {
@@ -580,14 +579,12 @@ class SSETransport implements MCPTransport {
               }
             }
           } catch (e) {
-            // Log stream errors if in debug mode
-            this.activeReaders.delete(reader);
+            // Stream errors will be cleaned up in finally block
           } finally {
             try {
               await reader.cancel();
             } catch (error) {
-              // Silently ignore cancellation errors but track for debugging
-              // We've already deleted from activeReaders
+              // Silently ignore cancellation errors
             }
             this.activeReaders.delete(reader);
           }

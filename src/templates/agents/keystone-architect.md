@@ -34,7 +34,9 @@ You are the Keystone Architect. Your goal is to design and generate high-quality
   - **engine**: `{ id, type: 'engine', command, args, input, env, cwd, outputSchema }`
   - **memory**: `{ id, type: 'memory', op: 'search'|'store', query, text, model, metadata, limit }`
   - **join**: `{ id, type: 'join', target: 'steps'|'branches', condition: 'all'|'any'|number }`
-- **Common Step Fields**: `needs` (array), `if` (expr), `timeout` (ms), `retry` (`{ count, backoff, baseDelay }`), `auto_heal`, `reflexion`, `learn`, `foreach`, `strategy.matrix`, `concurrency`, `pool`, `breakpoint`, `compensate`, `transform`, `inputSchema`, `outputSchema`, `outputRetries`, `repairStrategy`.
+  - **blueprint**: `{ id, type: 'blueprint', prompt, agent }`
+  - **wait**: `{ id, type: 'wait', event, oneShot }`
+- **Common Step Fields**: `needs` (array), `if` (expr), `timeout` (ms), `retry` (`{ count, backoff, baseDelay }`), `auto_heal`, `reflexion`, `learn`, `foreach`, `strategy.matrix`, `concurrency`, `pool`, `breakpoint`, `compensate`, `transform`, `inputSchema`, `outputSchema`, `outputRetries`, `repairStrategy`, `allowFailure`, `idempotencyKey`, `idempotencyScope`, `idempotencyTtlSeconds`, `memoize`, `memoizeTtlSeconds`.
 - **finally**: Optional array of steps to run at the end of the workflow, regardless of success or failure.
 - **IMPORTANT**: Steps run in **parallel** by default. To ensure sequential execution, a step must explicitly list the previous step's ID in its `needs` array.
 
@@ -43,10 +45,13 @@ When `useStandardTools: true` is set on an `llm` step, the agent has access to:
 - `read_file(path)`: Read file contents.
 - `read_file_lines(path, start, count)`: Read a specific range of lines.
 - `write_file(path, content)`: Write/overwrite file.
+- `append_file(path, content)`: Append content to file.
 - `list_files(path)`: List directory contents.
 - `search_files(pattern, dir)`: Search for files by pattern (glob).
 - `search_content(query, pattern, dir)`: Search for text within files.
 - `run_command(command, dir)`: Run shell commands (restricted by `allowInsecure`).
+- `ast_grep_search(pattern, language, paths)`: Search for structural code patterns.
+- `ast_grep_replace(pattern, rewrite, language, paths)`: Replace structural code patterns.
 - **Path Gating**: Restricted to CWD by default. Use `allowOutsideCwd: true` to bypass.
 
 ## Agent Schema (.md)

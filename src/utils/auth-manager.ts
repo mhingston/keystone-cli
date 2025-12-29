@@ -110,7 +110,12 @@ export class AuthManager {
   }
 
   private static sanitizeError(error: unknown): string {
-    const message = error instanceof Error ? error.message : String(error);
+    let message = error instanceof Error ? error.message : String(error);
+    // Limit message length to prevent ReDoS attacks with crafted inputs
+    const MAX_SANITIZE_LENGTH = 10_000;
+    if (message.length > MAX_SANITIZE_LENGTH) {
+      message = message.substring(0, MAX_SANITIZE_LENGTH) + '... [truncated]';
+    }
     return message.replace(
       /(?:token|key|secret|password|credential|auth|private|cookie|session|signature)(?:["'\\s:=]+)([a-zA-Z0-9._~%-]+)/gi,
       (match, p1) => match.replace(p1, '***REDACTED***')
@@ -441,6 +446,7 @@ export class AuthManager {
                   redirect_uri: GOOGLE_GEMINI_OAUTH_REDIRECT_URI,
                   code_verifier: verifier,
                 }),
+                signal: AbortSignal.timeout(30000),
               });
 
               if (!response.ok) {
@@ -579,6 +585,7 @@ export class AuthManager {
                     redirect_uri: OPENAI_CHATGPT_REDIRECT_URI,
                     code_verifier: verifier,
                   }),
+                  signal: AbortSignal.timeout(30000),
                 });
 
                 if (!response.ok) {
@@ -672,6 +679,7 @@ export class AuthManager {
           grant_type: 'refresh_token',
           refresh_token,
         }),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) {
@@ -723,6 +731,7 @@ export class AuthManager {
           grant_type: 'refresh_token',
           refresh_token,
         }),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) {
@@ -770,6 +779,7 @@ export class AuthManager {
           refresh_token,
           client_id: ANTHROPIC_OAUTH_CLIENT_ID,
         }),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) {
