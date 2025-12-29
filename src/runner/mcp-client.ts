@@ -168,7 +168,8 @@ export async function validateRemoteUrl(
       }
     } catch (error) {
       throw new Error(
-        `SSRF Protection: Failed to resolve hostname "${hostname}": ${error instanceof Error ? error.message : String(error)
+        `SSRF Protection: Failed to resolve hostname "${hostname}": ${
+          error instanceof Error ? error.message : String(error)
         }`
       );
     }
@@ -521,7 +522,8 @@ class SSETransport implements MCPTransport {
     if (!response.ok) {
       const text = await response.text();
       throw new Error(
-        `Failed to send message to MCP server: ${response.status} ${response.statusText}${text ? ` - ${text}` : ''
+        `Failed to send message to MCP server: ${response.status} ${response.statusText}${
+          text ? ` - ${text}` : ''
         }`
       );
     }
@@ -613,7 +615,7 @@ class SSETransport implements MCPTransport {
   close(): void {
     // Cancel all active readers to prevent memory leaks
     for (const reader of this.activeReaders) {
-      reader.cancel().catch(() => { });
+      reader.cancel().catch(() => {});
     }
     this.activeReaders.clear();
     this.abortController?.abort();

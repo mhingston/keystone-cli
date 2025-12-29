@@ -58,7 +58,7 @@ const ANTHROPIC_OAUTH_SCOPE = 'org:create_api_key user:profile user:inference';
 const GOOGLE_GEMINI_OAUTH_CLIENT_ID =
   process.env.KEYSTONE_GOOGLE_CLIENT_ID ??
   '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
-const GOOGLE_GEMINI_OAUTH_REDIRECT_URI = 'http://localhost:51121/oauth-callback';
+// Redirect URI is dynamically constructed based on the ephemeral port
 const GOOGLE_GEMINI_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/cloud-platform',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -454,9 +454,11 @@ export class AuthManager {
       }, TIMEOUTS.OAUTH_LOGIN_TIMEOUT_MS);
 
       serverRef.current = Bun.serve({
-        port: 51121,
-        async fetch(req) {
+        port: 0, // Use ephemeral port to avoid conflicts
+        async fetch(req, server) {
           const url = new URL(req.url);
+          const redirectUri = `http://localhost:${server.port}/oauth-callback`;
+
           if (url.pathname === '/oauth-callback') {
             const error = url.searchParams.get('error');
             if (error) {
@@ -487,7 +489,7 @@ export class AuthManager {
                   client_secret: AuthManager.getGoogleGeminiClientSecret(),
                   code,
                   grant_type: 'authorization_code',
-                  redirect_uri: GOOGLE_GEMINI_OAUTH_REDIRECT_URI,
+                  redirect_uri: redirectUri,
                   code_verifier: verifier,
                 }),
                 signal: AbortSignal.timeout(30000),
@@ -560,10 +562,19 @@ export class AuthManager {
         },
       });
 
+      // serverRef.current is set by Bun.serve but might not be immediately available if we accessed it too early
+      // typically Bun.serve returns the server instance synchronously
+      const port = serverRef.current?.port;
+      if (!port) {
+        reject(new Error('Failed to start local server for OAuth'));
+        return;
+      }
+      const redirectUri = `http://localhost:${port}/oauth-callback`;
+
       const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
         client_id: GOOGLE_GEMINI_OAUTH_CLIENT_ID,
         response_type: 'code',
-        redirect_uri: GOOGLE_GEMINI_OAUTH_REDIRECT_URI,
+        redirect_uri: redirectUri,
         scope: GOOGLE_GEMINI_OAUTH_SCOPES.join(' '),
         code_challenge: challenge,
         code_challenge_method: 'S256',

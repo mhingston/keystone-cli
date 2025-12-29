@@ -25,7 +25,7 @@ export class ForeachExecutor {
     private executeStepFn: ExecuteStepCallback,
     private abortSignal?: AbortSignal,
     private resourcePool?: ResourcePoolManager
-  ) { }
+  ) {}
 
   /**
    * Aggregate outputs from multiple iterations of a foreach step
@@ -99,7 +99,7 @@ export class ForeachExecutor {
     if (items.length > LIMITS.MAX_FOREACH_ITERATIONS) {
       throw new Error(
         `Foreach step "${step.id}" exceeds maximum iteration limit of ${LIMITS.MAX_FOREACH_ITERATIONS}. ` +
-        `Got ${items.length} items. Consider batching or reducing the dataset.`
+          `Got ${items.length} items. Consider batching or reducing the dataset.`
       );
     }
 
@@ -307,7 +307,7 @@ export class ForeachExecutor {
                   if (estimatedResultsBytes > LIMITS.MAX_FOREACH_RESULTS_BYTES) {
                     throw new Error(
                       `Foreach step "${step.id}" accumulated results exceed maximum size of ` +
-                      `${LIMITS.MAX_FOREACH_RESULTS_BYTES} bytes. Consider reducing output size or batching.`
+                        `${LIMITS.MAX_FOREACH_RESULTS_BYTES} bytes. Consider reducing output size or batching.`
                     );
                   }
                 }

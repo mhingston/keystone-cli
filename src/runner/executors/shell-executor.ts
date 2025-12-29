@@ -189,7 +189,7 @@ async function readStreamWithLimit(
   if (maxBytes <= 0) {
     try {
       await stream.cancel?.();
-    } catch { }
+    } catch {}
     return { text: TRUNCATED_SUFFIX, truncated: true };
   }
 
@@ -211,7 +211,7 @@ async function readStreamWithLimit(
       text += decoder.decode();
       try {
         await reader.cancel();
-      } catch { }
+      } catch {}
       return { text: `${text}${TRUNCATED_SUFFIX}`, truncated: true };
     }
 
@@ -255,10 +255,9 @@ export async function executeShell(
   if (!step.allowInsecure) {
     if (detectShellInjectionRisk(command)) {
       throw new Error(
-        `Security Error: Command execution blocked.\nCommand: "${command.substring(0, 100)}${command.length > 100 ? '...' : ''
-        }"\nReason: Contains characters not in the strict whitelist (alphanumeric, whitespace, and _./:@,+=~-).\n` +
-        `This protects against shell injection attacks.\n` +
-        `Fix: either simplify your command or set 'allowInsecure: true' in your step definition if you trust the input.`
+        `Security Error: Command execution blocked.\nCommand: "${command.substring(0, 100)}${
+          command.length > 100 ? '...' : ''
+        }"\nReason: Contains characters not in the strict whitelist (alphanumeric, whitespace, and _./:@,+=~-).\nThis protects against shell injection attacks.\nFix: either simplify your command or set 'allowInsecure: true' in your step definition if you trust the input.`
       );
     }
   }
@@ -313,7 +312,7 @@ export async function executeShell(
     const abortHandler = () => {
       try {
         proc.kill();
-      } catch { }
+      } catch {}
     };
 
     if (abortSignal) {
@@ -395,7 +394,7 @@ export async function executeShellArgs(
   const abortHandler = () => {
     try {
       proc.kill();
-    } catch { }
+    } catch {}
   };
 
   if (abortSignal) {

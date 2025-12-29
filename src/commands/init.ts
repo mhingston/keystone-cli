@@ -3,7 +3,8 @@
  * Initialize a new Keystone project
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { constants } from 'node:fs';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import type { Command } from 'commander';
 
 import exploreAgent from '../templates/agents/explore.md' with { type: 'text' };
@@ -123,14 +124,24 @@ export function registerInitCommand(program: Command): void {
   program
     .command('init')
     .description('Initialize a new Keystone project')
-    .action(() => {
+    .action(async () => {
       console.log('🏛️  Initializing Keystone project...\n');
+
+      // Helper to check existence
+      const exists = async (path: string) => {
+        try {
+          await access(path, constants.F_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      };
 
       // Create directories
       const dirs = ['.keystone', '.keystone/workflows', '.keystone/workflows/agents'];
       for (const dir of dirs) {
-        if (!existsSync(dir)) {
-          mkdirSync(dir, { recursive: true });
+        if (!(await exists(dir))) {
+          await mkdir(dir, { recursive: true });
           console.log(`✓ Created ${dir}/`);
         } else {
           console.log(`⊘ ${dir}/ already exists`);
@@ -139,8 +150,8 @@ export function registerInitCommand(program: Command): void {
 
       // Create default config
       const configPath = '.keystone/config.yaml';
-      if (!existsSync(configPath)) {
-        writeFileSync(configPath, DEFAULT_CONFIG);
+      if (!(await exists(configPath))) {
+        await writeFile(configPath, DEFAULT_CONFIG);
         console.log(`✓ Created ${configPath}`);
       } else {
         console.log(`⊘ ${configPath} already exists`);
@@ -148,8 +159,8 @@ export function registerInitCommand(program: Command): void {
 
       // Create example .env
       const envPath = '.env';
-      if (!existsSync(envPath)) {
-        writeFileSync(envPath, ENV_TEMPLATE);
+      if (!(await exists(envPath))) {
+        await writeFile(envPath, ENV_TEMPLATE);
         console.log(`✓ Created ${envPath}`);
       } else {
         console.log(`⊘ ${envPath} already exists`);
@@ -157,8 +168,8 @@ export function registerInitCommand(program: Command): void {
 
       // Seed default workflows and agents
       for (const seed of SEEDS) {
-        if (!existsSync(seed.path)) {
-          writeFileSync(seed.path, seed.content);
+        if (!(await exists(seed.path))) {
+          await writeFile(seed.path, seed.content);
           console.log(`✓ Seeded ${seed.path}`);
         } else {
           console.log(`⊘ ${seed.path} already exists`);
