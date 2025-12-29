@@ -14,6 +14,10 @@ export async function executeMemoryStep(
   _logger: Logger,
   options: StepExecutorOptions
 ): Promise<StepResult> {
+  const abortSignal = options.abortSignal;
+  if (abortSignal?.aborted) {
+    throw new Error('Memory operation aborted');
+  }
   const memoryDb = options.memoryDb;
   if (!memoryDb) {
     throw new Error('Memory database not initialized');
@@ -39,7 +43,7 @@ export async function executeMemoryStep(
       const text = ExpressionEvaluator.evaluateString(step.text || '', context);
       if (!text) throw new Error('Text is required for memory store operation');
 
-      const embedding = await adapter.embed(text);
+      const embedding = await adapter.embed(text, undefined, { signal: abortSignal });
       const metadata = step.metadata || {};
       const id = await memoryDb.store(text, embedding, metadata as Record<string, unknown>);
 
@@ -52,7 +56,7 @@ export async function executeMemoryStep(
       const query = ExpressionEvaluator.evaluateString(step.query || '', context);
       if (!query) throw new Error('Query is required for memory search operation');
 
-      const embedding = await adapter.embed(query);
+      const embedding = await adapter.embed(query, undefined, { signal: abortSignal });
       const limit = step.limit || 5;
       const results = await memoryDb.search(embedding, limit);
 

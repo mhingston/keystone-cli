@@ -12,7 +12,7 @@ export async function executeScriptStep(
   step: ScriptStep,
   context: ExpressionContext,
   logger: Logger,
-  options: { sandbox?: typeof SafeSandbox } = {}
+  options: { sandbox?: typeof SafeSandbox; abortSignal?: AbortSignal } = {}
 ): Promise<StepResult> {
   if (!step.allowInsecure) {
     return {
@@ -24,7 +24,10 @@ export async function executeScriptStep(
 
   try {
     const sandbox = options.sandbox || DefaultSandbox;
-    const result = await sandbox.execute(step.run, context, { logger });
+    const result = await sandbox.execute(step.run, context as any, {
+      logger,
+      signal: options.abortSignal,
+    });
 
     return {
       status: 'success',

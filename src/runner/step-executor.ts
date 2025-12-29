@@ -73,13 +73,14 @@ export async function executeStep(
         result = await executeShellStep(step, context, logger, dryRun, abortSignal);
         break;
       case 'file':
-        result = await executeFileStep(step, context, logger);
+        result = await executeFileStep(step, context, logger, abortSignal);
         break;
       case 'artifact':
         result = await executeArtifactStep(step, context, logger, {
           artifactRoot,
           workflowDir,
           runId,
+          abortSignal,
         });
         break;
       case 'request':
@@ -129,10 +130,13 @@ export async function executeStep(
         if (!executeWorkflowFn) {
           throw new Error('Workflow executor not provided');
         }
-        result = await executeWorkflowFn(step, context);
+        result = await executeWorkflowFn(step, context, abortSignal);
         break;
       case 'script':
-        result = await executeScriptStep(step, context, logger, { sandbox: options.sandbox });
+        result = await executeScriptStep(step, context, logger, {
+          sandbox: options.sandbox,
+          abortSignal,
+        });
         break;
       case 'engine':
         result = await executeEngineStepWrapper(step, context, logger, {
@@ -161,7 +165,7 @@ export async function executeStep(
         );
         break;
       case 'join':
-        result = await executeJoinStep(step, context, logger);
+        result = await executeJoinStep(step, context, logger, abortSignal);
         break;
       default:
         throw new Error(`Unknown step type: ${(step as Step).type}`);

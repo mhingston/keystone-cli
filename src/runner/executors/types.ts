@@ -43,7 +43,11 @@ export interface StepResult {
 }
 
 export interface StepExecutorOptions {
-  executeWorkflowFn?: (step: WorkflowStep, context: ExpressionContext) => Promise<StepResult>;
+  executeWorkflowFn?: (
+    step: WorkflowStep,
+    context: ExpressionContext,
+    abortSignal?: AbortSignal
+  ) => Promise<StepResult>;
   mcpManager?: MCPManager;
   db?: WorkflowDb;
   memoryDb?: MemoryDb;

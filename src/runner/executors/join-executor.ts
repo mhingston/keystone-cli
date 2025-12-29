@@ -9,8 +9,12 @@ import type { StepResult } from './types.ts';
 export async function executeJoinStep(
   step: JoinStep,
   context: ExpressionContext,
-  _logger: Logger
+  _logger: Logger,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
+  if (abortSignal?.aborted) {
+    throw new Error('Join operation aborted');
+  }
   // Join step logic:
   // It aggregates outputs from its 'needs'.
   // Since the runner ensures dependencies are met (or processed),

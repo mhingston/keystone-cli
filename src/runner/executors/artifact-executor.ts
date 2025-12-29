@@ -52,8 +52,16 @@ export async function executeArtifactStep(
   step: ArtifactStep,
   context: ExpressionContext,
   logger: Logger,
-  options: { artifactRoot?: string; workflowDir?: string; runId?: string }
+  options: {
+    artifactRoot?: string;
+    workflowDir?: string;
+    runId?: string;
+    abortSignal?: AbortSignal;
+  }
 ): Promise<StepResult> {
+  if (options.abortSignal?.aborted) {
+    throw new Error('Artifact operation aborted');
+  }
   const baseDir = options.workflowDir || process.cwd();
   const rawName = ExpressionEvaluator.evaluateString(step.name, context);
   if (typeof rawName !== 'string' || rawName.trim().length === 0) {
@@ -105,6 +113,9 @@ export async function executeArtifactStep(
 
     const files: string[] = [];
     for (const filePath of matchedFiles) {
+      if (options.abortSignal?.aborted) {
+        throw new Error('Artifact upload aborted');
+      }
       assertWithinBaseDir(baseDir, filePath, step.allowOutsideCwd);
       const relativePath = resolveSafeRelativePath(baseDir, filePath);
       const destination = path.join(artifactPath, relativePath);

@@ -191,7 +191,7 @@ export interface MCPResponse {
 }
 
 interface MCPTransport {
-  send(message: unknown): Promise<void>;
+  send(message: unknown, signal?: AbortSignal): Promise<void>;
   onMessage(callback: (message: MCPResponse) => void): void;
   close(): void;
   setLogger(logger: Logger): void;
@@ -239,8 +239,12 @@ class StdConfigTransport implements MCPTransport {
     this.logger = logger;
   }
 
-  async send(message: unknown): Promise<void> {
-    this.process.stdin?.write(`${JSON.stringify(message)}\n`);
+  async send(message: unknown, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new Error('MCP send aborted');
+    const success = this.process.stdin?.write(`${JSON.stringify(message)}\n`);
+    if (!success) {
+      throw new Error('Failed to write to MCP server stdin');
+    }
   }
 
   onMessage(callback: (message: MCPResponse) => void): void {
@@ -485,7 +489,8 @@ class SSETransport implements MCPTransport {
     });
   }
 
-  async send(message: unknown): Promise<void> {
+  async send(message: unknown, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw new Error('MCP send aborted');
     if (!this.endpoint) {
       throw new Error('SSE transport not connected or endpoint not received');
     }
@@ -503,6 +508,7 @@ class SSETransport implements MCPTransport {
       method: 'POST',
       headers,
       body: JSON.stringify(message),
+      signal,
     });
 
     if (!response.ok) {
@@ -696,7 +702,8 @@ export class MCPClient {
 
   private async request(
     method: string,
-    params: Record<string, unknown> = {}
+    params: Record<string, unknown> = {},
+    signal?: AbortSignal
   ): Promise<MCPResponse> {
     const id = this.messageId++;
     const message = {
@@ -717,7 +724,19 @@ export class MCPClient {
 
       this.pendingRequests.set(id, { resolve, reject, timeoutId });
 
-      this.transport.send(message).catch((err) => {
+      const onAbort = () => {
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(id);
+        reject(new Error('MCP request aborted'));
+      };
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+
+      this.transport.send(message, signal).catch((err) => {
+        signal?.removeEventListener('abort', onAbort);
         clearTimeout(timeoutId);
         this.pendingRequests.delete(id);
         this._isHealthy = false;
@@ -726,29 +745,37 @@ export class MCPClient {
     });
   }
 
-  async initialize() {
-    const response = await this.request('initialize', {
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: {
-        name: 'keystone-cli',
-        version: pkg.version,
+  async initialize(signal?: AbortSignal) {
+    const response = await this.request(
+      'initialize',
+      {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: {
+          name: 'keystone-cli',
+          version: pkg.version,
+        },
       },
-    });
+      signal
+    );
     this._isHealthy = true;
     return response;
   }
 
-  async listTools(): Promise<MCPTool[]> {
-    const response = await this.request('tools/list');
+  async listTools(signal?: AbortSignal): Promise<MCPTool[]> {
+    const response = await this.request('tools/list', {}, signal);
     return response.result?.tools || [];
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const response = await this.request('tools/call', {
-      name,
-      arguments: args,
-    });
+  async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    const response = await this.request(
+      'tools/call',
+      {
+        name,
+        arguments: args,
+      },
+      signal
+    );
     if (response.error) {
       throw new Error(`MCP tool call failed: ${JSON.stringify(response.error)}`);
     }

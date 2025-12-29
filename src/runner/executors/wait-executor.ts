@@ -15,6 +15,9 @@ export async function executeWaitStep(
   logger: Logger,
   options: StepExecutorOptions
 ): Promise<StepResult> {
+  if (options.abortSignal?.aborted) {
+    throw new Error('Wait operation aborted');
+  }
   const eventName = ExpressionEvaluator.evaluateString(step.event, context);
   const db = options.db ?? container.resolveOptional<WorkflowDb>('db');
   if (!db) {

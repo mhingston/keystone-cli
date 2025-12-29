@@ -11,7 +11,7 @@ import type { MCPManager } from '../mcp-manager.ts';
  * Interface to avoid circular dependencies with WorkflowRunner
  */
 export interface RunnerFactory {
-    create(workflow: any, options: any): {
+    create(workflow: any, options: { signal?: AbortSignal;[key: string]: any }): {
         run(): Promise<Record<string, unknown>>;
         runId: string;
     };
@@ -31,8 +31,12 @@ export async function executeSubWorkflow(
         parentMcpManager: MCPManager;
         parentDepth: number;
         parentOptions: any;
+        abortSignal?: AbortSignal;
     }
 ): Promise<StepResult> {
+    if (options.abortSignal?.aborted) {
+        throw new Error('Sub-workflow aborted');
+    }
     const workflowPath = WorkflowRegistry.resolvePath(step.path, options.parentWorkflowDir);
     const workflow = WorkflowParser.loadWorkflow(workflowPath);
     const subWorkflowDir = dirname(workflowPath);
@@ -54,6 +58,7 @@ export async function executeSubWorkflow(
         mcpManager: options.parentMcpManager,
         workflowDir: subWorkflowDir,
         depth: options.parentDepth + 1,
+        signal: options.abortSignal,
     });
 
     try {

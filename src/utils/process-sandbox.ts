@@ -30,6 +30,8 @@ export interface ProcessSandboxOptions {
   logger?: Logger;
   /** Use Bun Worker instead of subprocess (default: false) */
   useWorker?: boolean;
+  /** Abort signal for manual cancellation */
+  signal?: AbortSignal;
 }
 
 export interface ProcessSandboxResult {
@@ -77,6 +79,10 @@ export class ProcessSandbox {
       const result = options.useWorker
         ? await ProcessSandbox.runInWorker(scriptPath, timeout, options)
         : await ProcessSandbox.runInSubprocess(scriptPath, timeout, options);
+
+      if (options.signal?.aborted) {
+        throw new Error('Script execution aborted');
+      }
 
       if (result.timedOut) {
         throw new Error(`Script execution timed out after ${timeout}ms`);
@@ -129,7 +135,7 @@ export class ProcessSandbox {
         if (dangerousKeys.includes(key)) {
           throw new Error(
             `Security Error: Context contains forbidden key "${key}"${path ? ` at path "${path}"` : ''}. ` +
-              `This may indicate a prototype pollution attack.`
+            `This may indicate a prototype pollution attack.`
           );
         }
         checkForDangerousKeys(
@@ -277,12 +283,29 @@ globalThis.console = __keystone_console;
         resolve({ success: false, timedOut: true });
       }, timeout);
 
+      const onAbort = () => {
+        clearTimeout(timeoutHandle);
+        worker.terminate();
+        resolve({ success: false, error: 'Script execution aborted' });
+      };
+
+      if (options.signal) {
+        if (options.signal.aborted) {
+          onAbort();
+          return;
+        }
+        options.signal.addEventListener('abort', onAbort, { once: true });
+      }
+
       worker.onmessage = (event) => {
         const data = event.data;
         if (data?.type === 'log') {
           options.logger?.log(data.message);
         } else if (data?.type === 'result') {
           clearTimeout(timeoutHandle);
+          if (options.signal) {
+            options.signal.removeEventListener('abort', onAbort);
+          }
           worker.terminate();
           resolve(data);
         }
@@ -290,6 +313,9 @@ globalThis.console = __keystone_console;
 
       worker.onerror = (error) => {
         clearTimeout(timeoutHandle);
+        if (options.signal) {
+          options.signal.removeEventListener('abort', onAbort);
+        }
         worker.terminate();
         resolve({ success: false, error: error.message });
       };
@@ -345,6 +371,20 @@ globalThis.console = __keystone_console;
         child.kill('SIGKILL');
       }, timeout);
 
+      const onAbort = () => {
+        clearTimeout(timeoutHandle);
+        child.kill('SIGKILL');
+        resolve({ success: false, error: 'Script execution aborted' });
+      };
+
+      if (options.signal) {
+        if (options.signal.aborted) {
+          onAbort();
+          return;
+        }
+        options.signal.addEventListener('abort', onAbort, { once: true });
+      }
+
       // Collect stdout and intercept logs
       let buffer = '';
       child.stdout.on('data', (data: Buffer) => {
@@ -370,6 +410,9 @@ globalThis.console = __keystone_console;
       child.on('close', (exitCode) => {
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
+        }
+        if (options.signal) {
+          options.signal.removeEventListener('abort', onAbort);
         }
 
         if (timedOut) {
@@ -402,6 +445,9 @@ globalThis.console = __keystone_console;
       child.on('error', (error) => {
         if (timeoutHandle) {
           clearTimeout(timeoutHandle);
+        }
+        if (options.signal) {
+          options.signal.removeEventListener('abort', onAbort);
         }
         resolve({
           success: false,

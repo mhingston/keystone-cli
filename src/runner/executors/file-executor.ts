@@ -236,8 +236,12 @@ export function applySearchReplaceBlocks(content: string, blocks: SearchReplaceB
 export async function executeFileStep(
   step: FileStep,
   context: ExpressionContext,
-  logger: Logger
+  logger: Logger,
+  abortSignal?: AbortSignal
 ): Promise<StepResult> {
+  if (abortSignal?.aborted) {
+    throw new Error('File operation aborted');
+  }
   const targetPath = ExpressionEvaluator.evaluateString(step.path, context);
   assertWithinCwd(targetPath, step.allowOutsideCwd);
 

@@ -123,6 +123,7 @@ export interface RunOptions {
   memoryDb?: MemoryDb;
   onEvent?: EventHandler;
   memoize?: boolean;
+  signal?: AbortSignal;
 }
 
 // Redacted StepContext and ForeachStepContext (moved to workflow-state.ts)
@@ -236,6 +237,14 @@ export class WorkflowRunner {
     );
     this.mcpManager = options.mcpManager || new MCPManager();
     this.initResourcePool(options);
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        this.abortController.abort();
+      } else {
+        options.signal.addEventListener('abort', () => this.abortController.abort(), { once: true });
+      }
+    }
 
     this.setupSignalHandlers();
   }
@@ -2085,7 +2094,8 @@ Revise the output to address the feedback. Return only the corrected output.`;
    */
   private async executeSubWorkflow(
     step: WorkflowStep,
-    context: ExpressionContext
+    context: ExpressionContext,
+    abortSignal?: AbortSignal
   ): Promise<StepResult> {
     const factory: RunnerFactory = {
       create: (workflow, options) => new WorkflowRunner(workflow, options),
@@ -2099,6 +2109,7 @@ Revise the output to address the feedback. Return only the corrected output.`;
       parentMcpManager: this.mcpManager,
       parentDepth: this.depth,
       parentOptions: this.options,
+      abortSignal,
     });
   }
 

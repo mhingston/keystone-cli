@@ -142,9 +142,9 @@ export function ensureOnnxRuntimeLibraryPath(): void {
   }
 
   process.env[envKey] = merged.join(delimiter);
-  if (runtimePath && typeof Bun !== 'undefined' && typeof Bun.dlopen === 'function') {
+  if (runtimePath && typeof Bun !== 'undefined' && typeof (Bun as any).dlopen === 'function') {
     try {
-      Bun.dlopen(runtimePath, {});
+      (Bun as any).dlopen(runtimePath, {});
     } catch {
       // Best-effort preloading for compiled binaries.
     }
@@ -249,6 +249,9 @@ async function getTransformersPipeline(): Promise<TransformersPipeline> {
       }
     }
     cachedPipeline = module.pipeline;
+  }
+  if (!cachedPipeline) {
+    throw new Error('Failed to load transformers pipeline');
   }
   return cachedPipeline;
 }
@@ -393,7 +396,7 @@ export interface LLMAdapter {
       responseSchema?: any; // Native JSON schema for structured output
     }
   ): Promise<LLMResponse>;
-  embed?(text: string, model?: string): Promise<number[]>;
+  embed?(text: string, model?: string, options?: { signal?: AbortSignal }): Promise<number[]>;
 }
 
 export class OpenAIAdapter implements LLMAdapter {
@@ -435,13 +438,13 @@ export class OpenAIAdapter implements LLMAdapter {
         stream: isStreaming,
         response_format: options?.responseSchema
           ? {
-              type: 'json_schema',
-              json_schema: {
-                name: 'output',
-                strict: true,
-                schema: options.responseSchema,
-              },
-            }
+            type: 'json_schema',
+            json_schema: {
+              name: 'output',
+              strict: true,
+              schema: options.responseSchema,
+            },
+          }
           : undefined,
       }),
       signal: options?.signal,
@@ -474,7 +477,11 @@ export class OpenAIAdapter implements LLMAdapter {
     };
   }
 
-  async embed(text: string, model = 'text-embedding-3-small'): Promise<number[]> {
+  async embed(
+    text: string,
+    model = 'text-embedding-3-small',
+    options?: { signal?: AbortSignal }
+  ): Promise<number[]> {
     const response = await fetch(`${this.baseUrl}/embeddings`, {
       method: 'POST',
       headers: {
@@ -485,6 +492,7 @@ export class OpenAIAdapter implements LLMAdapter {
         model,
         input: text,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -627,19 +635,19 @@ export class AnthropicAdapter implements LLMAdapter {
 
     const anthropicTools = options?.tools
       ? options.tools.map((t) => ({
-          name: t.function.name,
-          description: t.function.description,
-          input_schema: t.function.parameters,
-        }))
+        name: t.function.name,
+        description: t.function.description,
+        input_schema: t.function.parameters,
+      }))
       : undefined;
 
     // If responseSchema is provided, Anthropic requires using tool call to force output
     const responseTool = options?.responseSchema
       ? {
-          name: 'record_output',
-          description: 'Record the structured output matching the requested schema',
-          input_schema: options.responseSchema,
-        }
+        name: 'record_output',
+        description: 'Record the structured output matching the requested schema',
+        input_schema: options.responseSchema,
+      }
       : undefined;
 
     const combinedTools = [...(anthropicTools || []), ...(responseTool ? [responseTool] : [])];
@@ -918,13 +926,13 @@ export class OpenAIChatGPTAdapter implements LLMAdapter {
         include: ['reasoning.encrypted_content'],
         response_format: options?.responseSchema
           ? {
-              type: 'json_schema',
-              json_schema: {
-                name: 'output',
-                strict: true,
-                schema: options.responseSchema,
-              },
-            }
+            type: 'json_schema',
+            json_schema: {
+              name: 'output',
+              strict: true,
+              schema: options.responseSchema,
+            },
+          }
           : undefined,
       }),
       signal: options?.signal,
@@ -1100,8 +1108,8 @@ export class GoogleGeminiAdapter implements LLMAdapter {
     const systemInstruction =
       systemParts.length > 0
         ? {
-            parts: [{ text: systemParts.join('\n\n') }],
-          }
+          parts: [{ text: systemParts.join('\n\n') }],
+        }
         : undefined;
 
     return { contents, systemInstruction };
@@ -1420,13 +1428,18 @@ export class LocalEmbeddingAdapter implements LLMAdapter {
   ): Promise<LLMResponse> {
     throw new Error(
       'Local models in Keystone currently only support memory/embedding operations. ' +
-        'To use a local LLM for chat/generation, please use an OpenAI-compatible local server ' +
-        '(like Ollama, LM Studio, or LocalAI) and configure it as an OpenAI provider in your config.'
+      'To use a local LLM for chat/generation, please use an OpenAI-compatible local server ' +
+      '(like Ollama, LM Studio, or LocalAI) and configure it as an OpenAI provider in your config.'
     );
   }
 
-  async embed(text: string, model = 'Xenova/all-MiniLM-L6-v2'): Promise<number[]> {
+  async embed(
+    text: string,
+    model = 'Xenova/all-MiniLM-L6-v2',
+    options?: { signal?: AbortSignal }
+  ): Promise<number[]> {
     const modelToUse = model === 'local' ? 'Xenova/all-MiniLM-L6-v2' : model;
+    if (options?.signal?.aborted) throw new Error('Embedding aborted');
     if (!LocalEmbeddingAdapter.extractor) {
       try {
         ensureOnnxRuntimeLibraryPath();
