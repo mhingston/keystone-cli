@@ -48,4 +48,5 @@ steps:
   - id: show_context
     type: shell
     needs: [route]
-    run: echo "Memory: ${{ memory.user }} on ${{ memory.topic }} (env=${{ env.CURRENT_TOPIC }})"
+    run: |
+      echo "Memory: ${{ memory.user }} on ${{ memory.topic }} (env=${{ env.CURRENT_TOPIC }})"
