@@ -34,7 +34,7 @@ Keystone allows you to define complex automation workflows using a simple YAML s
 
 ---
 
-## ✨ Features
+## <a id="features"></a>✨ Features
 
 - ⚡ **Local-First:** Built on Bun with a local SQLite database for state management.
 - 🧩 **Declarative:** Define workflows in YAML with automatic dependency tracking (DAG).
@@ -51,7 +51,7 @@ Keystone allows you to define complex automation workflows using a simple YAML s
 
 ---
 
-## 🚀 Installation
+## <a id="installation"></a>🚀 Installation
 
 Ensure you have [Bun](https://bun.sh) installed.
 
@@ -89,7 +89,7 @@ source <(keystone completion bash)
 
 ---
 
-## 🚦 Quick Start
+## <a id="quick-start"></a>🚦 Quick Start
 
 ### 1. Initialize a Project
 ```bash
@@ -130,7 +130,7 @@ keystone ui
 
 ---
 
-## 🧰 Bundled Workflows
+## <a id="bundled-workflows"></a>🧰 Bundled Workflows
 
 `keystone init` seeds these workflows under `.keystone/workflows/` (and the agents they rely on under `.keystone/workflows/agents/`):
 
@@ -163,7 +163,7 @@ Sub-workflows are used by the top-level workflows, but can be run directly if yo
 
 ---
 
-## ⚙️ Configuration
+## <a id="configuration"></a>⚙️ Configuration
 
 Keystone loads configuration from project `.keystone/config.yaml` (and user-level config; see `keystone config show` for search order) to manage model providers and model mappings.
 
@@ -358,7 +358,7 @@ Or use the `keystone auth login` command to securely store them in your local ma
 
 ---
 
-## 📝 Workflow Example
+## <a id="workflow-example"></a>📝 Workflow Example
 
 Workflows are defined in YAML. Dependencies are automatically resolved based on the `needs` field, and **Keystone also automatically detects implicit dependencies** from your `${{ }}` expressions.
 
@@ -441,7 +441,7 @@ expression:
 
 ---
 
-## 🏗️ Step Types
+## <a id="step-types"></a>🏗️ Step Types
 
 Keystone supports several specialized step types:
 
@@ -726,7 +726,7 @@ Until `strategy.matrix` is wired end-to-end, use explicit `foreach` with an arra
 
 ---
 
-## 🔧 Advanced Features
+## <a id="advanced-features"></a>🔧 Advanced Features
 
 ### Idempotency Keys
 
@@ -939,7 +939,7 @@ You can also define a workflow-level `compensate` step to handle overall cleanup
 
 ---
 
-## 🤖 Agent Definitions
+## <a id="agent-definitions"></a>🤖 Agent Definitions
 
 Agents are defined in Markdown files with YAML frontmatter, making them easy to read and version control.
 
@@ -1123,7 +1123,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 
 ---
 
-## 🛠️ CLI Commands
+## <a id="cli-commands"></a>🛠️ CLI Commands
 
 | Command | Description |
 | :--- | :--- |
@@ -1187,7 +1187,7 @@ Input keys passed via `-i key=val` must be alphanumeric/underscore and cannot be
 ### Dry Run
 `keystone run --dry-run` prints shell commands without executing them and skips non-shell steps (including human prompts). Outputs from skipped steps are empty, so conditional branches may differ from a real run.
 
-## 🛡️ Security
+## <a id="security"></a>🛡️ Security
 
 ### Shell Execution
 Keystone blocks shell commands that match common injection/destructive patterns (like `rm -rf /` or pipes to shells). To run them, set `allowInsecure: true` on the step. Prefer `${{ escape(...) }}` when interpolating user input.
@@ -1215,7 +1215,7 @@ Request steps enforce SSRF protections and require HTTPS by default. Cross-origi
 
 ---
 
-## 🏗️ Architecture
+## <a id="architecture"></a>🏗️ Architecture
 
 ```mermaid
 graph TD
@@ -1256,7 +1256,7 @@ graph TD
     LLM --> MCPClient[MCP Client]
 ```
 
-## 📂 Project Structure
+## <a id="project-structure"></a>📂 Project Structure
 
 - `src/cli.ts`: CLI entry point.
 - `src/db/`: SQLite persistence layer.
@@ -1271,6 +1271,6 @@ graph TD
 
 ---
 
-## 📄 License
+## <a id="license"></a>📄 License
 
 MIT
