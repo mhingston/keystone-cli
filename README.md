@@ -134,22 +134,23 @@ keystone ui
 
 `keystone init` seeds these workflows under `.keystone/workflows/` (and the agents they rely on under `.keystone/workflows/agents/`):
 
-Top-level workflows:
-- `scaffold-feature`: Interactive workflow scaffolder. Prompts for requirements, plans files, generates content, and writes them.
-- `decompose-problem`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
-- `dev`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
-- `agent-handoff`: Demonstrates agent handoffs and tool-driven context updates.
-- `script-example`: Demonstrates sandboxed JavaScript execution.
-- `artifact-example`: Demonstrates artifact upload and download between steps.
-- `idempotency-example`: Demonstrates safe retries for side-effecting steps.
+Top-level workflows (seeded in `.keystone/workflows/`):
+- `scaffold-feature.yaml`: Interactive workflow scaffolder. Prompts for requirements, plans files, generates content, and writes them.
+- `decompose-problem.yaml`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
+- `dev.yaml`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
+- `agent-handoff.yaml`: Demonstrates agent handoffs and tool-driven context updates.
+- `full-feature-demo.yaml`: A comprehensive workflow demonstrating multiple step types (shell, file, request, etc.).
+- `script-example.yaml`: Demonstrates sandboxed JavaScript execution.
+- `artifact-example.yaml`: Demonstrates artifact upload and download between steps.
+- `idempotency-example.yaml`: Demonstrates safe retries for side-effecting steps.
 
-Sub-workflows:
-- `scaffold-plan`: Generates a file plan from `requirements` input.
-- `scaffold-generate`: Generates file contents from `requirements` plus a `files` plan.
-- `decompose-research`: Runs a single research task (`task`) with optional `context`/`constraints`.
-- `decompose-implement`: Runs a single implementation task (`task`) with optional `research` findings.
-- `decompose-review`: Reviews a single implementation task (`task`) with optional `implementation` results.
-- `review-loop`: Reusable generate → critique → refine loop with a quality gate.
+Sub-workflows (seeded in `.keystone/workflows/`):
+- `scaffold-plan.yaml`: Generates a file plan from `requirements` input.
+- `scaffold-generate.yaml`: Generates file contents from `requirements` plus a `files` plan.
+- `decompose-research.yaml`: Runs a single research task (`task`) with optional `context`/`constraints`.
+- `decompose-implement.yaml`: Runs a single implementation task (`task`) with optional `research` findings.
+- `decompose-review.yaml`: Reviews a single implementation task (`task`) with optional `implementation` results.
+- `review-loop.yaml`: Reusable generate → critique → refine loop with a quality gate.
 
 Example runs:
 ```bash
@@ -198,7 +199,7 @@ providers:
   google-gemini:
     type: google-gemini
     base_url: https://cloudcode-pa.googleapis.com
-    default_model: gemini-3-pro-high
+    default_model: gemini-1.5-pro
   groq:
     type: openai
     base_url: https://api.groq.com/openai/v1
@@ -481,7 +482,8 @@ Keystone supports several specialized step types:
     ```yaml
     outputMapping:
       final_result: result_from_subflow
-      status: state
+      # 'from' can be used for explicit mapping or expression
+      # status: { from: "steps.some_step.status" }
     ```
 - `join`: Aggregate outputs from dependencies and enforce a completion condition.
   - `condition`: `'all'` (default), `'any'`, or a number.
@@ -499,6 +501,7 @@ Keystone supports several specialized step types:
   - `op: store`: Store text with metadata.
   - `op: search`: Search for similar text using vector embeddings.
   - `text` / `query`: The content to store or search for.
+  - `model`: Optional embedding model (defaults to `local`). Currently only local embeddings (via `Transformers.js`) are supported.
   - `metadata`: Optional object for filtering or additional context.
   - `limit`: Number of results to return (default `5`).
   ```yaml
@@ -551,8 +554,8 @@ All steps support common features:
 - `retry`: `{ count, backoff: 'linear'|'exponential', baseDelay }`.
 - `timeout`: Maximum execution time in milliseconds (best-effort; supported steps receive an abort signal).
 - `foreach`: Iterate over an array in parallel.
-- `concurrency`: Limit parallel items for `foreach` (must be a positive integer).
-- `strategy.matrix`: Experimental parser-time expansion into `foreach` (prefer explicit `foreach` for now).
+- `concurrency`: Limit parallel items for `foreach` (must be a positive integer). Defaults to `50`.
+- `strategy.matrix`: Multi-axis expansion into `foreach` at parse-time.
 - `pool`: Assign step to a resource pool.
 - `breakpoint`: Pause before executing the step when running with `--debug`.
 - `compensate`: Step to run if the workflow rolls back.

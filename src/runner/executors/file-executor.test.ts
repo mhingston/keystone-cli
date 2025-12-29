@@ -36,13 +36,15 @@ describe('file-executor', () => {
       const blocks: SearchReplaceBlock[] = [
         { search: ' indent', replace: 'dedent' }, // one space vs two
       ];
-      // Should not find ' indent' because actual is '  indent' (double space) if strict?
-      // Actually '  indent'.split(' indent') -> [' ', ''] -> found once!
-      // Wait '  indent'.includes(' indent') is true.
-      // '  indent'.split(' indent') -> [' ', ''] (length 2).
-      // So it works.
       const result = applySearchReplaceBlocks(content, blocks);
       expect(result).toBe(' dedent');
+    });
+
+    it('should handle CRLF line endings by treating them as LF', () => {
+      const content = 'line1\r\nline2\r\nline3';
+      const blocks: SearchReplaceBlock[] = [{ search: 'line2', replace: 'modified' }];
+      const result = applySearchReplaceBlocks(content, blocks);
+      expect(result).toBe('line1\nmodified\nline3');
     });
   });
 });

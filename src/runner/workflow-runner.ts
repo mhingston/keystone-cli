@@ -583,184 +583,6 @@ export class WorkflowRunner {
     }
   }
 
-  private buildStepInputs(step: Step, context: ExpressionContext): Record<string, unknown> {
-    const stripUndefined = (value: Record<string, unknown>) => {
-      const result: Record<string, unknown> = {};
-      for (const [key, val] of Object.entries(value)) {
-        if (val !== undefined) {
-          result[key] = val;
-        }
-      }
-      return result;
-    };
-
-    switch (step.type) {
-      case 'shell': {
-        let env: Record<string, string> | undefined;
-        if (step.env) {
-          env = {};
-          for (const [key, value] of Object.entries(step.env)) {
-            env[key] = ExpressionEvaluator.evaluateString(value as string, context);
-          }
-        }
-        return stripUndefined({
-          run: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').ShellStep).run,
-            context
-          ),
-          dir: step.dir ? ExpressionEvaluator.evaluateString(step.dir, context) : undefined,
-          env,
-          allowInsecure: step.allowInsecure,
-        });
-      }
-      case 'file':
-        return stripUndefined({
-          path: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').FileStep).path,
-            context
-          ),
-          content:
-            (step as import('../parser/schema.ts').FileStep).content !== undefined
-              ? ExpressionEvaluator.evaluateString(
-                  (step as import('../parser/schema.ts').FileStep).content as string,
-                  context
-                )
-              : undefined,
-          op: step.op,
-          allowOutsideCwd: step.allowOutsideCwd,
-        });
-      case 'artifact':
-        return stripUndefined({
-          op: step.op,
-          name: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').ArtifactStep).name,
-            context
-          ),
-          paths: (step as import('../parser/schema.ts').ArtifactStep).paths?.map((p) =>
-            ExpressionEvaluator.evaluateString(p, context)
-          ),
-          path: (step as import('../parser/schema.ts').ArtifactStep).path
-            ? ExpressionEvaluator.evaluateString(
-                (step as import('../parser/schema.ts').ArtifactStep).path as string,
-                context
-              )
-            : undefined,
-          allowOutsideCwd: step.allowOutsideCwd,
-        });
-      case 'request': {
-        let headers: Record<string, string> | undefined;
-        if (step.headers) {
-          headers = {};
-          for (const [key, value] of Object.entries(step.headers)) {
-            headers[key] = ExpressionEvaluator.evaluateString(value as string, context);
-          }
-        }
-        return stripUndefined({
-          url: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').RequestStep).url,
-            context
-          ),
-          method: step.method,
-          headers,
-          body:
-            step.body !== undefined
-              ? ExpressionEvaluator.evaluateObject(step.body, context)
-              : undefined,
-          allowInsecure: step.allowInsecure,
-        });
-      }
-      case 'human':
-        return stripUndefined({
-          message: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').HumanStep).message,
-            context
-          ),
-          inputType: step.inputType,
-        });
-      case 'sleep': {
-        const evaluated = ExpressionEvaluator.evaluate(step.duration.toString(), context);
-        return { duration: Number(evaluated) };
-      }
-      case 'llm':
-        return stripUndefined({
-          agent: ExpressionEvaluator.evaluateString(step.agent, context),
-          provider: step.provider
-            ? ExpressionEvaluator.evaluateString(step.provider, context)
-            : undefined,
-          model: step.model ? ExpressionEvaluator.evaluateString(step.model, context) : undefined,
-          prompt: ExpressionEvaluator.evaluateString(step.prompt, context),
-          tools: step.tools,
-          maxIterations: step.maxIterations,
-          useGlobalMcp: step.useGlobalMcp,
-          allowClarification: step.allowClarification,
-          mcpServers: step.mcpServers,
-          useStandardTools: step.useStandardTools,
-          allowOutsideCwd: step.allowOutsideCwd,
-          allowInsecure: step.allowInsecure,
-        });
-      case 'workflow':
-        return stripUndefined({
-          path: (step as import('../parser/schema.ts').WorkflowStep).path,
-          inputs: step.inputs
-            ? ExpressionEvaluator.evaluateObject(step.inputs, context)
-            : undefined,
-        });
-      case 'script':
-        return stripUndefined({
-          run: step.run,
-          allowInsecure: step.allowInsecure,
-        });
-      case 'engine': {
-        const env: Record<string, string> = {};
-        for (const [key, value] of Object.entries(step.env || {})) {
-          env[key] = ExpressionEvaluator.evaluateString(value as string, context);
-        }
-        return stripUndefined({
-          command: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').EngineStep).command,
-            context
-          ),
-          args: (step as import('../parser/schema.ts').EngineStep).args?.map((arg) =>
-            ExpressionEvaluator.evaluateString(arg, context)
-          ),
-          input:
-            (step as import('../parser/schema.ts').EngineStep).input !== undefined
-              ? ExpressionEvaluator.evaluateObject(
-                  (step as import('../parser/schema.ts').EngineStep).input,
-                  context
-                )
-              : undefined,
-          env,
-          cwd: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').EngineStep).cwd,
-            context
-          ),
-        });
-      }
-      case 'memory':
-        return stripUndefined({
-          op: step.op,
-          query: step.query ? ExpressionEvaluator.evaluateString(step.query, context) : undefined,
-          text: step.text ? ExpressionEvaluator.evaluateString(step.text, context) : undefined,
-          model: step.model,
-          metadata: step.metadata
-            ? ExpressionEvaluator.evaluateObject(step.metadata, context)
-            : undefined,
-          limit: step.limit,
-        });
-      case 'wait':
-        return stripUndefined({
-          event: ExpressionEvaluator.evaluateString(
-            (step as import('../parser/schema.ts').WaitStep).event,
-            context
-          ),
-          oneShot: (step as import('../parser/schema.ts').WaitStep).oneShot,
-        });
-      default:
-        return {};
-    }
-  }
-
   /**
    * Collect primitive secret values from structured inputs.
    */
@@ -1432,8 +1254,16 @@ export class WorkflowRunner {
             // Get corrected command from Mechanic
             const fixedStep = await this.getFixFromReflexion(step, errorMsg, hint);
 
-            // Merge fixed properties
-            const newStep = { ...step, ...fixedStep };
+            // Merge fixed properties, excluding critical ones for security
+            const {
+              id: _id,
+              type: _type,
+              auto_heal: _ah,
+              reflexion: _ref,
+              needs: _needs,
+              ...rest
+            } = fixedStep;
+            const newStep = { ...step, ...rest };
 
             // Retry with new step definition
             const nextContext = {
@@ -1473,8 +1303,16 @@ export class WorkflowRunner {
             // Get fix from agent
             const fixedStep = await this.getFixFromAgent(step, errorMsg, context);
 
-            // Merge fixed properties into the step
-            const newStep = { ...step, ...fixedStep };
+            // Merge fixed properties, excluding critical ones for security
+            const {
+              id: _id,
+              type: _type,
+              auto_heal: _ah,
+              reflexion: _ref,
+              needs: _needs,
+              ...rest
+            } = fixedStep;
+            const newStep = { ...step, ...rest };
 
             // Retry with new step definition
             const nextContext = {

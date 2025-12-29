@@ -17,6 +17,7 @@ import architectAgent from '../templates/agents/keystone-architect.md' with { ty
 import softwareEngineerAgent from '../templates/agents/software-engineer.md' with { type: 'text' };
 import summarizerAgent from '../templates/agents/summarizer.md' with { type: 'text' };
 import testerAgent from '../templates/agents/tester.md' with { type: 'text' };
+import fullFeatureDemo from '../templates/basics/full-feature-demo.yaml' with { type: 'text' };
 import idempotencyExample from '../templates/control-flow/idempotency-example.yaml' with {
   type: 'text',
 };
@@ -118,6 +119,7 @@ const SEEDS = [
   { path: '.keystone/workflows/script-example.yaml', content: scriptExample },
   { path: '.keystone/workflows/artifact-example.yaml', content: artifactExample },
   { path: '.keystone/workflows/idempotency-example.yaml', content: idempotencyExample },
+  { path: '.keystone/workflows/full-feature-demo.yaml', content: fullFeatureDemo },
 ];
 
 export function registerInitCommand(program: Command): void {

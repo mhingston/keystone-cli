@@ -116,7 +116,7 @@ export function applyUnifiedDiff(content: string, patch: string, targetPath: str
   const diff = parseUnifiedDiff(patch);
   assertDiffMatchesTarget(diff.newFile || diff.originalFile, targetPath);
 
-  const lines = content.split('\n');
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
   const resultLines = [...lines];
 
   // Apply hunks in reverse order to keep line numbers valid
@@ -188,7 +188,7 @@ export function parseSearchReplaceBlocks(patch: string): SearchReplaceBlock[] {
 }
 
 export function applySearchReplaceBlocks(content: string, blocks: SearchReplaceBlock[]): string {
-  let result = content;
+  let result = content.replace(/\r\n/g, '\n');
 
   for (const block of blocks) {
     const parts = result.split(block.search);

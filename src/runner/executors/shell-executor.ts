@@ -43,6 +43,15 @@ export async function executeShellStep(
   abortSignal?: AbortSignal
 ): Promise<StepResult> {
   if (step.args) {
+    if (!step.allowInsecure) {
+      const hasExpression = step.args.some((a) => ExpressionEvaluator.hasExpression(a));
+      if (hasExpression) {
+        throw new Error(
+          "Security Error: 'args' with expressions requires 'allowInsecure: true'.\nUse 'run' with 'escape()' for secure interpolation, or 'args' with static values."
+        );
+      }
+    }
+
     const command = step.args.map((a) => ExpressionEvaluator.evaluateString(a, context)).join(' ');
     if (dryRun) {
       logger.log(`[DRY RUN] Would execute: ${command}`);
@@ -200,13 +209,35 @@ async function readStreamWithLimit(
 }
 
 // Whitelist of allowed characters for secure shell command execution
-// Allows: Alphanumeric, whitespace, and common safe punctuation (_ . / : @ , + - = ' " !)
-// Blocks: Backslashes, pipes, redirects, subshells, variables ($), etc.
+// Allows: Alphanumeric, whitespace, and common safe punctuation (_ . / : @ , + - = ' " ! ~ \)
+// Blocks: Pipes, redirects, subshells, variables ($), etc.
 const SAFE_SHELL_CHARS = /^[a-zA-Z0-9\s_./:@,+=~'"!-]+$/;
 
 export function detectShellInjectionRisk(rawCommand: string): boolean {
-  // If the command contains any character NOT in the whitelist, it's considered risky
-  return !SAFE_SHELL_CHARS.test(rawCommand);
+  // We scan the command to handle single quotes correctly.
+  // Characters inside single quotes are considered escaped/literal and safe from shell injection.
+  let inSingleQuote = false;
+
+  for (let i = 0; i < rawCommand.length; i++) {
+    const char = rawCommand[i];
+
+    if (char === "'") {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    // Outside single quotes, we enforce the strict whitelist
+    if (!inSingleQuote) {
+      if (!SAFE_SHELL_CHARS.test(char)) {
+        return true;
+      }
+    }
+    // Inside single quotes, everything is treated as a literal string by the shell,
+    // so we don't need to block special characters.
+  }
+
+  // If we ended with an unclosed single quote, it's a syntax risk
+  return inSingleQuote;
 }
 
 /**
