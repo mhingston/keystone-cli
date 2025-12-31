@@ -3,42 +3,40 @@ import { z } from 'zod';
 export const ConfigSchema = z.object({
   default_provider: z.string().default('openai'),
   default_model: z.string().optional(),
+  embedding_model: z.string().optional(),
+  embedding_dimension: z.number().int().positive().default(384),
   providers: z
     .record(
       z.object({
         type: z
-          .enum([
-            'openai',
-            'anthropic',
-            'anthropic-claude',
-            'copilot',
-            'openai-chatgpt',
-            'google-gemini',
-          ])
+          .enum(['openai', 'anthropic'])
+          .or(z.string()) // Allow custom types for BYOP
           .default('openai'),
         base_url: z.string().optional(),
         api_key_env: z.string().optional(),
         default_model: z.string().optional(),
         project_id: z.string().optional(),
+        embedding_dimension: z.number().int().positive().optional(),
+        // BYOP fields
+        package: z.string().optional(),
+        factory: z.string().optional(),
+        script: z.string().optional(),
       })
     )
     .default({
       openai: {
         type: 'openai',
+        package: '@ai-sdk/openai',
         base_url: 'https://api.openai.com/v1',
         api_key_env: 'OPENAI_API_KEY',
         default_model: 'gpt-4o',
       },
       anthropic: {
         type: 'anthropic',
+        package: '@ai-sdk/anthropic',
         base_url: 'https://api.anthropic.com/v1',
         api_key_env: 'ANTHROPIC_API_KEY',
         default_model: 'claude-3-5-sonnet-20240620',
-      },
-      copilot: {
-        type: 'copilot',
-        base_url: 'https://api.githubcopilot.com',
-        default_model: 'gpt-4o',
       },
     }),
   model_mappings: z.record(z.string()).default({

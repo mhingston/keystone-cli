@@ -4,6 +4,7 @@ import { WorkflowParser } from '../parser/workflow-parser.ts';
 export class WorkflowScheduler {
   private executionOrder: string[];
   private pendingSteps: Set<string>;
+  private runningSteps: Set<string>;
   private completedSteps: Set<string>;
   private stepMap: Map<string, Step>;
 
@@ -20,6 +21,7 @@ export class WorkflowScheduler {
     // Remaining steps to execute
     const remaining = this.executionOrder.filter((id) => !this.completedSteps.has(id));
     this.pendingSteps = new Set(remaining);
+    this.runningSteps = new Set();
   }
 
   public getExecutionOrder(): string[] {
@@ -31,12 +33,13 @@ export class WorkflowScheduler {
   }
 
   public isComplete(): boolean {
-    return this.pendingSteps.size === 0;
+    return this.pendingSteps.size === 0 && this.runningSteps.size === 0;
   }
 
   public markStepComplete(stepId: string): void {
     this.completedSteps.add(stepId);
     this.pendingSteps.delete(stepId);
+    this.runningSteps.delete(stepId);
   }
 
   public getRunnableSteps(runningCount: number, globalConcurrencyLimit: number): Step[] {
@@ -60,6 +63,13 @@ export class WorkflowScheduler {
 
   public startStep(stepId: string): void {
     this.pendingSteps.delete(stepId);
+    this.runningSteps.add(stepId);
+  }
+
+  public markStepFailed(stepId: string): void {
+    this.runningSteps.delete(stepId);
+    // Note: We don't add back to pending; it's failed.
+    // Resume will handle restoring state and scheduler will see it's not completed.
   }
 
   private isStepReady(step: Step): boolean {

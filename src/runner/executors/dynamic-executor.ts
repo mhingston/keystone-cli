@@ -9,7 +9,7 @@ import { DynamicStateManager } from '../../db/dynamic-state-manager.ts';
 import type { WorkflowDb } from '../../db/workflow-db.ts';
 import type { ExpressionContext } from '../../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../../expression/evaluator.ts';
-import type { DynamicStep, LlmStep, Step } from '../../parser/schema.ts';
+import type { DynamicStep, HumanStep, LlmStep, Step } from '../../parser/schema.ts';
 import type { Logger } from '../../utils/logger.ts';
 import { topologicalSort } from '../../utils/topo-sort.ts';
 import type { WorkflowEvent } from '../events.ts';
@@ -173,7 +173,7 @@ function convertToExecutableStep(
         ...baseProps,
         type: 'file' as const,
         path: generated.path || '',
-        op: (generated.op as any) || (generated.inputs?.op as any) || 'read',
+        op: generated.op || (generated.inputs?.op as 'read' | 'write' | 'append') || 'read',
         content: generated.content || (generated.inputs?.content as string),
       };
 
@@ -307,7 +307,7 @@ async function initializeState(
         startedAt: dbState.startedAt,
         completedAt: dbState.completedAt,
         error: dbState.error,
-        replanCount: (dbState as any).replanCount || 0,
+        replanCount: dbState.replanCount || 0,
       };
     } else {
       dbState = await stateManager.create({ runId, stepId: step.id, workflowId: state.workflowId });
@@ -379,7 +379,6 @@ async function handlePlanningPhase(
     mcpManager,
     workflowDir,
     abortSignal,
-    undefined,
     emitEvent,
     workflowName && runId ? { runId, workflow: workflowName } : undefined
   );
@@ -428,7 +427,13 @@ async function handleConfirmationPhase(
   const planJson = JSON.stringify(state.generatedPlan, null, 2);
   const message = `Please review and confirm the generated plan:\n\n${planJson}\n\nType 'yes' to confirm or provide a modified JSON plan:`;
 
-  const humanStep: any = { id: `${step.id}_confirm`, type: 'human', message, inputType: 'text' };
+  const humanStep: HumanStep = {
+    id: `${step.id}_confirm`,
+    type: 'human',
+    message,
+    inputType: 'text',
+    needs: [],
+  };
   const confirmResult = await (options.executeHumanStep || executeHumanStep)(
     humanStep,
     context,
@@ -677,7 +682,7 @@ async function handleExecutionError(
   dbState: DynamicStepState | null,
   stateManager: DynamicStateManager | null,
   saveState: ((stepId: string, state: DynamicStepState) => Promise<void>) | undefined,
-  error: any
+  error: unknown
 ): Promise<StepResult> {
   state.status = 'failed';
   state.error = error instanceof Error ? error.message : String(error);

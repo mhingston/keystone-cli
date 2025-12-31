@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import * as sqliteVec from 'sqlite-vec';
+import { ConsoleLogger } from '../utils/logger';
 import './sqlite-setup.ts';
 
 export interface MemoryEntry {
@@ -64,9 +65,13 @@ export class MemoryDb {
   private db: Database;
   // Cache connections by path to avoid reloading extensions
   private static connectionCache = new Map<string, { db: Database; refCount: number }>();
-  static readonly EMBEDDING_DIMENSION = 384;
+  private tableName: string;
 
-  constructor(public readonly dbPath = '.keystone/memory.db') {
+  constructor(
+    public readonly dbPath = '.keystone/memory.db',
+    private readonly embeddingDimension = 384
+  ) {
+    this.tableName = `vec_memory_${embeddingDimension}`;
     const cached = MemoryDb.connectionCache.get(dbPath);
     if (cached) {
       cached.refCount++;
@@ -89,10 +94,36 @@ export class MemoryDb {
   }
 
   private initSchema(): void {
+    // Check if the legacy 'vec_memory' table exists and what its dimension is
+    const legacyTable = this.db
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_memory'")
+      .get() as { sql: string } | undefined;
+
+    if (legacyTable) {
+      const match = legacyTable.sql.match(/FLOAT\[(\d+)\]/i);
+      if (match && Number.parseInt(match[1], 10) === this.embeddingDimension) {
+        // Legacy table exists and matches our dimension, reuse it
+        this.tableName = 'vec_memory';
+      } else {
+        // Mismatch or couldn't parse. We will use the specific table name `vec_memory_{dim}`.
+        // We log a warning to stdout since we don't have a logger instance here,
+        // but only if we haven't already created the specific table (to avoid spamming on every init).
+        const specificTableExists = this.db
+          .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='${this.tableName}'`)
+          .get();
+        if (!specificTableExists) {
+          ConsoleLogger.warn(
+            `\n⚠️  Vector DB: Found legacy table 'vec_memory' with dimension mismatch (expected ${this.embeddingDimension}).\n` +
+              `Using new table '${this.tableName}' instead. Old data is preserved in 'vec_memory'.\n`
+          );
+        }
+      }
+    }
+
     this.db.run(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(
+      CREATE VIRTUAL TABLE IF NOT EXISTS ${this.tableName} USING vec0(
         id TEXT PRIMARY KEY,
-        embedding FLOAT[${MemoryDb.EMBEDDING_DIMENSION}]
+        embedding FLOAT[${this.embeddingDimension}]
       );
     `);
 
@@ -106,10 +137,10 @@ export class MemoryDb {
     `);
   }
 
-  private static assertEmbeddingDimension(embedding: number[]): void {
-    if (embedding.length !== MemoryDb.EMBEDDING_DIMENSION) {
+  private assertEmbeddingDimension(embedding: number[]): void {
+    if (embedding.length !== this.embeddingDimension) {
       throw new Error(
-        `Embedding dimension mismatch: expected ${MemoryDb.EMBEDDING_DIMENSION}, got ${embedding.length}`
+        `Embedding dimension mismatch: expected ${this.embeddingDimension}, got ${embedding.length}`
       );
     }
   }
@@ -117,12 +148,8 @@ export class MemoryDb {
   /**
    * Store an embedding and its associated text/metadata.
    *
-   * Note: The async signature provides interface compatibility with potentially
-   * async backends (e.g., remote vector DBs). The current implementation uses
-   * synchronous bun:sqlite operations internally.
-   *
    * @param text - The text content to store
-   * @param embedding - The embedding vector (384 dimensions)
+   * @param embedding - The embedding vector
    * @param metadata - Optional metadata to associate with the entry
    * @returns The generated entry ID
    */
@@ -133,11 +160,11 @@ export class MemoryDb {
   ): Promise<string> {
     const id = randomUUID();
     const createdAt = new Date().toISOString();
-    MemoryDb.assertEmbeddingDimension(embedding);
+    this.assertEmbeddingDimension(embedding);
 
     // bun:sqlite transaction wrapper ensures atomicity synchronously
     const insertTransaction = this.db.transaction(() => {
-      this.db.run('INSERT INTO vec_memory(id, embedding) VALUES (?, ?)', [
+      this.db.run(`INSERT INTO ${this.tableName}(id, embedding) VALUES (?, ?)`, [
         id,
         new Float32Array(embedding),
       ]);
@@ -155,23 +182,19 @@ export class MemoryDb {
   /**
    * Search for similar embeddings using vector similarity.
    *
-   * Note: The async signature provides interface compatibility with potentially
-   * async backends (e.g., remote vector DBs). The current implementation uses
-   * synchronous bun:sqlite operations internally.
-   *
    * @param embedding - The query embedding vector
    * @param limit - Maximum number of results to return (default: 5)
    * @returns Array of matching entries with distance scores
    */
   async search(embedding: number[], limit = 5): Promise<MemoryEntry[]> {
-    MemoryDb.assertEmbeddingDimension(embedding);
+    this.assertEmbeddingDimension(embedding);
     const query = `
       SELECT 
         v.id, 
         v.distance,
         m.text,
         m.metadata
-      FROM vec_memory v
+      FROM ${this.tableName} v
       JOIN memory_metadata m ON v.id = m.id
       WHERE embedding MATCH ? AND k = ?
       ORDER BY distance

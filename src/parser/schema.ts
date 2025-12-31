@@ -444,8 +444,10 @@ const DynamicStepSchema = BaseStepSchema.extend({
   allowInsecure: z.boolean().optional(), // Allow generated steps to use insecure commands (e.g. shell redirects)
 });
 
-// ===== Discriminated Union for Steps =====
-
+// Note: `as any` casts are required here because of circular type references:
+// BaseStepSchema.compensate → StepSchema → all step schemas → BaseStepSchema
+// TypeScript cannot infer types through this cycle, so we use z.ZodType<any>
+// and cast each schema. This is a known Zod limitation with recursive schemas.
 export const StepSchema: z.ZodType<any> = z.lazy(() =>
   z.discriminatedUnion('type', [
     ShellStepSchema as any,

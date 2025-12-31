@@ -36,7 +36,11 @@ import pkg from '../package.json' with { type: 'json' };
 // Bootstrap DI container with default services
 container.factory('logger', () => new ConsoleLogger());
 container.factory('db', () => new WorkflowDb());
-container.factory('memoryDb', () => new MemoryDb());
+container.factory('memoryDb', () => {
+  const config = ConfigLoader.load();
+  const dimension = config.embedding_dimension || 384;
+  return new MemoryDb('.keystone/memory.db', dimension);
+});
 
 const program = new Command();
 const defaultRetentionDays = ConfigLoader.load().storage?.retention_days ?? 30;
@@ -455,7 +459,16 @@ program
       const eventsEnabled = !!options.events;
 
       // Load run from database to get workflow name
-      const run = await db.getRun(runId);
+      let run = await db.getRun(runId);
+
+      if (!run) {
+        // Try searching by short ID
+        const allRuns = await db.listRuns(500);
+        const matching = allRuns.find((r) => r.id.startsWith(runId));
+        if (matching) {
+          run = await db.getRun(matching.id);
+        }
+      }
 
       if (!run) {
         console.error(`✗ Run not found: ${runId}`);
@@ -502,7 +515,7 @@ program
         : undefined;
       const inputs = parseInputs(options.input);
       const runner = new WorkflowRunner(workflow, {
-        resumeRunId: runId,
+        resumeRunId: run.id,
         resumeInputs: inputs,
         workflowDir: dirname(workflowPath),
         logger,
@@ -547,7 +560,16 @@ program
           throw new Error(`No runs found for workflow "${workflow.name}"`);
         })();
 
-      const run = await db.getRun(runId);
+      let run = await db.getRun(runId);
+      if (!run) {
+        // Try searching by short ID
+        const allRuns = await db.listRuns(500);
+        const matching = allRuns.find((r) => r.id.startsWith(runId));
+        if (matching) {
+          run = await db.getRun(matching.id);
+        }
+      }
+
       if (!run) {
         throw new Error(`Run not found: ${runId}`);
       }
@@ -587,7 +609,7 @@ program
           }
         : undefined;
       const runner = new WorkflowRunner(workflow, {
-        resumeRunId: runId,
+        resumeRunId: run.id,
         resumeInputs: inputs,
         workflowDir: dirname(resolvedPath),
         logger,
@@ -737,32 +759,6 @@ program
       buildArgs.push('--external', pkg);
     }
 
-    const copyOnnxRuntimeLibs = (outfile: string): { copied: number; checked: boolean } => {
-      const runtimeDir = join(
-        projectDir,
-        'node_modules',
-        'onnxruntime-node',
-        'bin',
-        'napi-v3',
-        process.platform,
-        process.arch
-      );
-      if (!existsSync(runtimeDir)) return { copied: 0, checked: false };
-
-      const entries = readdirSync(runtimeDir, { withFileTypes: true });
-      const libPattern =
-        process.platform === 'win32' ? /^onnxruntime.*\.dll$/i : /^libonnxruntime/i;
-      let copied = 0;
-
-      for (const entry of entries) {
-        if (!entry.isFile() || !libPattern.test(entry.name)) continue;
-        copyFileSync(join(runtimeDir, entry.name), join(dirname(outfile), entry.name));
-        copied += 1;
-      }
-
-      return { copied, checked: true };
-    };
-
     const copyDir = (source: string, destination: string): void => {
       const stats = lstatSync(source);
       if (stats.isSymbolicLink()) {
@@ -784,21 +780,16 @@ program
       }
     };
 
-    const copyRuntimeDependencies = (outfile: string): { copied: number; missing: string[] } => {
+    const copyRuntimeDependencies = (
+      outfile: string,
+      additionalPackages: string[] = []
+    ): { copied: number; missing: string[] } => {
       const runtimeDir = join(dirname(outfile), 'keystone-runtime');
       const runtimeNodeModules = join(runtimeDir, 'node_modules');
       rmSync(runtimeDir, { recursive: true, force: true });
       mkdirSync(runtimeNodeModules, { recursive: true });
 
-      const roots = [
-        '@xenova/transformers',
-        'onnxruntime-node',
-        'onnxruntime-common',
-        'sharp',
-        '@huggingface/jinja',
-        'sqlite-vec',
-        `sqlite-vec-${osName}-${process.arch}`,
-      ];
+      const roots = ['sqlite-vec', `sqlite-vec-${osName}-${process.arch}`, ...additionalPackages];
 
       const require = createRequire(import.meta.url);
       const resolvePackageDir = (pkg: string): string | null => {
@@ -886,15 +877,27 @@ program
     });
 
     if (result.status === 0) {
-      const { copied, checked } = copyOnnxRuntimeLibs(outputPath);
-      if (copied > 0) {
-        console.log(`📦 Copied ${copied} ONNX Runtime library file(s) next to ${outputPath}`);
-      } else if (checked) {
-        console.log(
-          'ℹ️  ONNX Runtime library not found; local embeddings may require external setup.'
-        );
+      const keystoneConfigPath = join(keystoneDir, 'config.yaml');
+      const providerPackages: string[] = [];
+
+      if (existsSync(keystoneConfigPath)) {
+        try {
+          const configContent = readFileSync(keystoneConfigPath, 'utf8');
+          const config = parseYaml(configContent) as any;
+          if (config.providers) {
+            for (const key of Object.keys(config.providers)) {
+              const provider = config.providers[key];
+              if (provider.package && typeof provider.package === 'string') {
+                providerPackages.push(provider.package);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Warning: Failed to parse .keystone/config.yaml for providers');
+        }
       }
-      const runtimeDeps = copyRuntimeDependencies(outputPath);
+
+      const runtimeDeps = copyRuntimeDependencies(outputPath, providerPackages);
       if (runtimeDeps.copied > 0) {
         console.log(
           `📦 Copied ${runtimeDeps.copied} runtime package(s) to ${join(
@@ -1450,315 +1453,6 @@ configCmd
   });
 
 // ===== keystone auth =====
-const auth = program.command('auth').description('Authentication management');
-
-auth
-  .command('login')
-  .description('Login to an authentication provider')
-  .argument('[provider]', 'Authentication provider', 'github')
-  .option('-t, --token <token>', 'Personal Access Token (if not using interactive mode)')
-  .option('--project <project_id>', 'Google Cloud project ID (Gemini OAuth)')
-  .action(async (provider, options) => {
-    const { AuthManager } = await import('./utils/auth-manager.ts');
-    const providerName = provider.toLowerCase();
-
-    if (providerName === 'github') {
-      let token = options.token;
-
-      if (!token) {
-        try {
-          const deviceLogin = await AuthManager.initGitHubDeviceLogin();
-
-          console.log('\nTo login with GitHub:');
-          console.log(`1. Visit: ${deviceLogin.verification_uri}`);
-          console.log(`2. Enter code: ${deviceLogin.user_code}\n`);
-
-          console.log('Waiting for authorization...');
-          token = await AuthManager.pollGitHubDeviceLogin(deviceLogin.device_code);
-        } catch (error) {
-          console.error(
-            '\n✗ Failed to login with GitHub device flow:',
-            error instanceof Error ? error.message : error
-          );
-          console.log('\nFalling back to manual token entry...');
-
-          console.log('\nTo login with GitHub manually:');
-          console.log(
-            '1. Generate a Personal Access Token (Classic) with "copilot" scope (or full repo access).'
-          );
-          console.log('   https://github.com/settings/tokens/new');
-          console.log('2. Paste the token below:\n');
-
-          const prompt = 'Token: ';
-          process.stdout.write(prompt);
-          for await (const line of console) {
-            token = line.trim();
-            break;
-          }
-        }
-      }
-
-      if (token) {
-        AuthManager.save({ github_token: token });
-        // Force refresh of Copilot token to verify
-        try {
-          const copilotToken = await AuthManager.getCopilotToken();
-          if (copilotToken) {
-            console.log('\n✓ Successfully logged in to GitHub and retrieved Copilot token.');
-          } else {
-            console.error(
-              '\n✗ Saved GitHub token, but failed to retrieve Copilot token. Please check scopes.'
-            );
-          }
-        } catch (e) {
-          console.error('\n✗ Failed to verify token:', e instanceof Error ? e.message : e);
-        }
-      } else {
-        console.error('✗ No token provided.');
-        process.exit(1);
-      }
-    } else if (providerName === 'openai-chatgpt') {
-      try {
-        await AuthManager.loginOpenAIChatGPT();
-        console.log('\n✓ Successfully logged in to OpenAI ChatGPT.');
-        return;
-      } catch (error) {
-        console.error(
-          '\n✗ Failed to login with OpenAI ChatGPT:',
-          error instanceof Error ? error.message : error
-        );
-        process.exit(1);
-      }
-    } else if (providerName === 'anthropic-claude') {
-      try {
-        const { url, verifier } = AuthManager.createAnthropicClaudeAuth();
-
-        console.log('\nTo login with Anthropic Claude (Pro/Max):');
-        console.log('1. Visit the following URL in your browser:');
-        console.log(`   ${url}\n`);
-        console.log('2. Copy the authorization code and paste it below:\n');
-
-        try {
-          const { platform } = process;
-          const command =
-            platform === 'win32' ? 'start' : platform === 'darwin' ? 'open' : 'xdg-open';
-          const { spawn } = require('node:child_process');
-          spawn(command, [url]);
-        } catch (e) {
-          // Ignore if we can't open the browser automatically
-        }
-
-        let code = options.token;
-        if (!code) {
-          const prompt = 'Authorization Code: ';
-          process.stdout.write(prompt);
-          for await (const line of console) {
-            code = line.trim();
-            break;
-          }
-        }
-
-        if (!code) {
-          console.error('✗ No authorization code provided.');
-          process.exit(1);
-        }
-
-        const data = await AuthManager.exchangeAnthropicClaudeCode(code, verifier);
-        AuthManager.save({
-          anthropic_claude: {
-            access_token: data.access_token,
-            refresh_token: data.refresh_token,
-            expires_at: Math.floor(Date.now() / 1000) + data.expires_in,
-          },
-        });
-        console.log('\n✓ Successfully logged in to Anthropic Claude.');
-        return;
-      } catch (error) {
-        console.error(
-          '\n✗ Failed to login with Anthropic Claude:',
-          error instanceof Error ? error.message : error
-        );
-        process.exit(1);
-      }
-    } else if (providerName === 'gemini' || providerName === 'google-gemini') {
-      try {
-        await AuthManager.loginGoogleGemini(options.project);
-        console.log('\n✓ Successfully logged in to Google Gemini.');
-        return;
-      } catch (error) {
-        console.error(
-          '\n✗ Failed to login with Google Gemini:',
-          error instanceof Error ? error.message : error
-        );
-        process.exit(1);
-      }
-    } else if (providerName === 'openai' || providerName === 'anthropic') {
-      let key = options.token; // Use --token if provided as the API key
-
-      if (!key) {
-        console.log(`\n🔑 Login to ${providerName.toUpperCase()}`);
-        console.log(`   Please provide your ${providerName.toUpperCase()} API key.\n`);
-        const prompt = 'API Key: ';
-        process.stdout.write(prompt);
-        for await (const line of console) {
-          key = line.trim();
-          break;
-        }
-      }
-
-      if (key) {
-        if (providerName === 'openai') {
-          AuthManager.save({ openai_api_key: key });
-        } else {
-          AuthManager.save({ anthropic_api_key: key });
-        }
-        console.log(`\n✓ Successfully saved ${providerName.toUpperCase()} API key.`);
-      } else {
-        console.error('✗ No API key provided.');
-        process.exit(1);
-      }
-    } else {
-      console.error(`✗ Unsupported provider: ${providerName}`);
-      process.exit(1);
-    }
-  });
-
-auth
-  .command('status')
-  .description('Show authentication status')
-  .argument('[provider]', 'Authentication provider')
-  .action(async (provider) => {
-    const { AuthManager } = await import('./utils/auth-manager.ts');
-    const auth = AuthManager.load();
-    const providerName = provider?.toLowerCase();
-
-    console.log('\n🏛️  Authentication Status:');
-
-    if (!providerName || providerName === 'github' || providerName === 'copilot') {
-      if (auth.github_token) {
-        console.log('  ✓ Logged into GitHub');
-        if (auth.copilot_expires_at) {
-          const expires = new Date(auth.copilot_expires_at * 1000);
-          console.log(`  ✓ Copilot session expires: ${expires.toLocaleString()}`);
-        }
-      } else if (providerName) {
-        console.log(
-          `  ⊘ Not logged into GitHub. Run "keystone auth login github" to authenticate.`
-        );
-      }
-    }
-
-    if (!providerName || providerName === 'openai' || providerName === 'openai-chatgpt') {
-      if (auth.openai_api_key) {
-        console.log('  ✓ OpenAI API key configured');
-      }
-      if (auth.openai_chatgpt) {
-        console.log('  ✓ OpenAI ChatGPT subscription (OAuth) authenticated');
-        if (auth.openai_chatgpt.expires_at) {
-          const expires = new Date(auth.openai_chatgpt.expires_at * 1000);
-          console.log(`    Session expires: ${expires.toLocaleString()}`);
-        }
-      }
-
-      if (providerName && !auth.openai_api_key && !auth.openai_chatgpt) {
-        console.log(
-          `  ⊘ OpenAI authentication not configured. Run "keystone auth login openai" or "keystone auth login openai-chatgpt" to authenticate.`
-        );
-      }
-    }
-
-    if (!providerName || providerName === 'anthropic' || providerName === 'anthropic-claude') {
-      if (auth.anthropic_api_key) {
-        console.log('  ✓ Anthropic API key configured');
-      }
-      if (auth.anthropic_claude) {
-        console.log('  ✓ Anthropic Claude subscription (OAuth) authenticated');
-        if (auth.anthropic_claude.expires_at) {
-          const expires = new Date(auth.anthropic_claude.expires_at * 1000);
-          console.log(`    Session expires: ${expires.toLocaleString()}`);
-        }
-      }
-
-      if (providerName && !auth.anthropic_api_key && !auth.anthropic_claude) {
-        console.log(
-          `  ⊘ Anthropic authentication not configured. Run "keystone auth login anthropic" or "keystone auth login anthropic-claude" to authenticate.`
-        );
-      }
-    }
-
-    if (!providerName || providerName === 'gemini' || providerName === 'google-gemini') {
-      if (auth.google_gemini) {
-        console.log('  ✓ Google Gemini subscription (OAuth) authenticated');
-        if (auth.google_gemini.email) {
-          console.log(`    Account: ${auth.google_gemini.email}`);
-        }
-        if (auth.google_gemini.expires_at) {
-          const expires = new Date(auth.google_gemini.expires_at * 1000);
-          console.log(`    Session expires: ${expires.toLocaleString()}`);
-        }
-      } else if (providerName) {
-        console.log(
-          `  ⊘ Google Gemini authentication not configured. Run "keystone auth login gemini" to authenticate.`
-        );
-      }
-    }
-
-    if (
-      !auth.github_token &&
-      !auth.openai_api_key &&
-      !auth.openai_chatgpt &&
-      !auth.anthropic_api_key &&
-      !auth.anthropic_claude &&
-      !auth.google_gemini &&
-      !providerName
-    ) {
-      console.log('  ⊘ No providers configured. Run "keystone auth login" to authenticate.');
-    }
-  });
-
-auth
-  .command('logout')
-  .description('Logout and clear authentication tokens')
-  .argument('[provider]', 'Authentication provider')
-  .action(async (provider) => {
-    const { AuthManager } = await import('./utils/auth-manager.ts');
-    const providerName = provider?.toLowerCase();
-
-    const auth = AuthManager.load();
-
-    if (!providerName || providerName === 'github' || providerName === 'copilot') {
-      AuthManager.save({
-        github_token: undefined,
-        copilot_token: undefined,
-        copilot_expires_at: undefined,
-      });
-      console.log('✓ Successfully logged out of GitHub.');
-    } else if (providerName === 'openai' || providerName === 'openai-chatgpt') {
-      AuthManager.save({
-        openai_api_key: providerName === 'openai' ? undefined : auth.openai_api_key,
-        openai_chatgpt: undefined,
-      });
-      console.log(
-        `✓ Successfully cleared ${providerName === 'openai' ? 'OpenAI API key and ' : ''}ChatGPT session.`
-      );
-    } else if (providerName === 'anthropic' || providerName === 'anthropic-claude') {
-      AuthManager.save({
-        anthropic_api_key: providerName === 'anthropic' ? undefined : auth.anthropic_api_key,
-        anthropic_claude: undefined,
-      });
-      console.log(
-        `✓ Successfully cleared ${providerName === 'anthropic' ? 'Anthropic API key and ' : ''}Claude session.`
-      );
-    } else if (providerName === 'gemini' || providerName === 'google-gemini') {
-      AuthManager.save({
-        google_gemini: undefined,
-      });
-      console.log('✓ Successfully cleared Google Gemini session.');
-    } else {
-      console.error(`✗ Unknown provider: ${providerName}`);
-      process.exit(1);
-    }
-  });
 
 // ===== Internal Helper Commands (Hidden) =====
 program.command('_list-workflows', { hidden: true }).action(() => {
@@ -1819,7 +1513,6 @@ _keystone() {
         'ui:Open the TUI dashboard'
         'mcp:Start the Model Context Protocol server'
         'config:Show current configuration'
-        'auth:Authentication management'
         'completion:Generate shell completion script'
       )
       _describe -t commands 'keystone command' commands
@@ -1851,15 +1544,7 @@ _keystone() {
         logs)
           _arguments ':run_id:__keystone_runs'
           ;;
-        auth)
-          local -a auth_commands
-          auth_commands=(
-            'login:Login to an authentication provider'
-            'status:Show authentication status'
-            'logout:Logout and clear authentication tokens'
-          )
-          _describe -t auth_commands 'auth command' auth_commands
-          ;;
+
       esac
       ;;
   esac
@@ -1883,7 +1568,7 @@ __keystone_runs() {
   COMPREPLY=()
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD - 1]}"
-  opts="init validate lint graph run watch resume rerun workflows history logs prune ui mcp config auth completion"
+  opts="init validate lint graph run watch resume rerun workflows history logs prune ui mcp config completion"
 
   case "\${prev}" in
     run|graph|rerun)

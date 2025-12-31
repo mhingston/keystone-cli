@@ -50,7 +50,6 @@ export async function executeStep(
     stepExecutionId,
     artifactRoot,
     redactForStorage,
-    getAdapter,
     executeStep: injectedExecuteStep,
     executeLlmStep: injectedExecuteLlmStep,
   } = options;
@@ -109,7 +108,6 @@ export async function executeStep(
           mcpManager,
           workflowDir,
           abortSignal,
-          getAdapter,
           options.emitEvent,
           options.workflowName
             ? { runId: options.runId, workflow: options.workflowName }

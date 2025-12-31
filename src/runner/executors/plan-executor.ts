@@ -97,7 +97,6 @@ export async function executePlanStep(
     options.mcpManager,
     options.artifactRoot, // Note: using artifactRoot as fallback for workflowDir if not explicit
     options.abortSignal,
-    options.getAdapter,
     options.emitEvent,
     options.runId ? { runId: options.runId } : undefined
   );

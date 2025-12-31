@@ -101,14 +101,6 @@ export const ITERATIONS = {
 
 /** LLM-related constants for conversation management */
 export const LLM = {
-  /** Name for summary context messages */
-  SUMMARY_MESSAGE_NAME: 'context_summary',
-  /** Maximum bytes for summary messages */
-  SUMMARY_MESSAGE_MAX_BYTES: 4000,
-  /** Maximum bytes per input message when building summary */
-  SUMMARY_INPUT_MESSAGE_MAX_BYTES: 2000,
-  /** Maximum total bytes for summary input */
-  SUMMARY_INPUT_TOTAL_MAX_BYTES: 64 * 1024,
   /** Opening tag for thinking blocks in streaming responses */
   THINKING_OPEN_TAG: '<thinking>',
   /** Closing tag for thinking blocks in streaming responses */
@@ -117,15 +109,6 @@ export const LLM = {
   TRANSFER_TOOL_NAME: 'transfer_to_agent',
   /** Key for context updates in tool outputs */
   CONTEXT_UPDATE_KEY: '__keystone_context',
-  /** Default summary model per provider type */
-  SUMMARY_MODEL_BY_PROVIDER_TYPE: {
-    openai: 'gpt-4o-mini',
-    'openai-chatgpt': 'gpt-4o-mini',
-    copilot: 'gpt-4o-mini',
-    anthropic: 'claude-3-haiku-20240307',
-    'anthropic-claude': 'claude-3-haiku-20240307',
-    'google-gemini': 'gemini-1.5-flash',
-  } as Record<string, string>,
 } as const;
 
 /** MCP (Model Context Protocol) related constants */

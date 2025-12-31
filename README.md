@@ -34,7 +34,7 @@ Keystone allows you to define complex automation workflows using a simple YAML s
 
 ---
 
-## <a id="features"></a>✨ Features
+## <a id="features">✨ Features</a>
 
 - ⚡ **Local-First:** Built on Bun with a local SQLite database for state management.
 - 🧩 **Declarative:** Define workflows in YAML with automatic dependency tracking (DAG).
@@ -52,7 +52,7 @@ Keystone allows you to define complex automation workflows using a simple YAML s
 
 ---
 
-## <a id="installation"></a>🚀 Installation
+## <a id="installation">🚀 Installation</a>
 
 Ensure you have [Bun](https://bun.sh) installed.
 
@@ -90,7 +90,7 @@ source <(keystone completion bash)
 
 ---
 
-## <a id="quick-start"></a>🚦 Quick Start
+## <a id="quick-start">🚦 Quick Start</a>
 
 ### 1. Initialize a Project
 ```bash
@@ -98,53 +98,64 @@ keystone init
 ```
 This creates the `.keystone/` directory for configuration and seeds `.keystone/workflows/` plus `.keystone/workflows/agents/` with bundled workflows and agents (see "Bundled Workflows" below).
 
-### 2. Configure your Environment
-Add your API keys to the generated `.env` file:
+### 2. Install AI SDK Providers
+Keystone uses the **Vercel AI SDK**. Install the provider packages you need:
+```bash
+npm install @ai-sdk/openai @ai-sdk/anthropic
+# Or use other AI SDK providers like @ai-sdk/google, @ai-sdk/mistral, etc.
+```
+
+### 3. Configure Providers
+Edit `.keystone/config.yaml` to configure your providers:
+```yaml
+default_provider: openai
+
+providers:
+  openai:
+    package: "@ai-sdk/openai"
+    api_key_env: OPENAI_API_KEY
+    default_model: gpt-4o
+  
+  anthropic:
+    package: "@ai-sdk/anthropic"
+    api_key_env: ANTHROPIC_API_KEY
+    default_model: claude-3-5-sonnet-20240620
+
+model_mappings:
+  "gpt-*": openai
+  "claude-*": anthropic
+```
+
+Then add your API keys to `.env`:
 ```env
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
-Alternatively, you can use the built-in authentication management:
-```bash
-keystone auth login openai
-keystone auth login anthropic
-keystone auth login anthropic-claude
-keystone auth login openai-chatgpt
-keystone auth login gemini
-keystone auth login github
-```
-Use `anthropic-claude` for Claude Pro/Max subscriptions (OAuth) instead of an API key.
-Use `openai-chatgpt` for ChatGPT Plus/Pro subscriptions (OAuth) instead of an API key.
-Use `gemini` (alias `google-gemini`) for Google Gemini subscriptions (OAuth) instead of an API key.
-Use `github` to authenticate GitHub Copilot via the GitHub device flow.
 
-### 3. Run a Workflow
+See the [Configuration](#configuration) section for more details on BYOP (Bring Your Own Provider).
+
+### 4. Run a Workflow
 ```bash
 keystone run scaffold-feature
 ```
 Keystone automatically looks in `.keystone/workflows/` (locally and in your home directory) for `.yaml` or `.yml` files.
 
-### 4. Monitor with the Dashboard
+### 5. Monitor with the Dashboard
 ```bash
 keystone ui
 ```
 
 ---
 
-## <a id="bundled-workflows"></a>🧰 Bundled Workflows
+## <a id="bundled-workflows">🧰 Bundled Workflows</a>
 
 `keystone init` seeds these workflows under `.keystone/workflows/` (and the agents they rely on under `.keystone/workflows/agents/`):
 
-Top-level workflows (seeded in `.keystone/workflows/`):
+Top-level utility workflows (seeded in `.keystone/workflows/`):
 - `scaffold-feature.yaml`: Interactive workflow scaffolder. Prompts for requirements, plans files, generates content, and writes them.
 - `decompose-problem.yaml`: Decomposes a problem into research/implementation/review tasks, waits for approval, runs sub-workflows, and summarizes.
 - `dev.yaml`: Self-bootstrapping DevMode workflow for an interactive plan/implement/verify loop.
-- `agent-handoff.yaml`: Demonstrates agent handoffs and tool-driven context updates.
-- `full-feature-demo.yaml`: A comprehensive workflow demonstrating multiple step types (shell, file, request, etc.).
-- `script-example.yaml`: Demonstrates sandboxed JavaScript execution.
-- `artifact-example.yaml`: Demonstrates artifact upload and download between steps.
-- `idempotency-example.yaml`: Demonstrates safe retries for side-effecting steps.
-- `dynamic-demo.yaml`: Demonstrates LLM-driven dynamic workflow orchestration where steps are generated at runtime.
+- `dynamic-decompose.yaml`: Dynamic version of decompose-problem using LLM-driven orchestration.
 
 Sub-workflows (seeded in `.keystone/workflows/`):
 - `scaffold-plan.yaml`: Generates a file plan from `requirements` input.
@@ -158,15 +169,14 @@ Example runs:
 ```bash
 keystone run scaffold-feature
 keystone run decompose-problem -i problem="Add caching to the API" -i context="Node/Bun service"
-keystone run agent-handoff -i topic="billing" -i user="Ada"
-keystone run dynamic-demo -i task="Set up a Node.js project with TypeScript"
+keystone run dev "Improve the user profile UI"
 ```
 
 Sub-workflows are used by the top-level workflows, but can be run directly if you want just one phase.
 
 ---
 
-## <a id="configuration"></a>⚙️ Configuration
+## <a id="configuration">⚙️ Configuration</a>
 
 Keystone loads configuration from project `.keystone/config.yaml` (and user-level config; see `keystone config show` for search order) to manage model providers and model mappings.
 
@@ -181,42 +191,27 @@ State is stored at `.keystone/state.db` by default (project-local).
 default_provider: openai
 
 providers:
+  # Example: Using a standard AI SDK provider package (Bring Your Own Provider)
   openai:
-    type: openai
+    package: "@ai-sdk/openai"
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
     default_model: gpt-4o
-  openai-chatgpt:
-    type: openai-chatgpt
-    base_url: https://api.openai.com/v1
-    default_model: gpt-5-codex
+
+  # Example: Using another provider
   anthropic:
-    type: anthropic
-    base_url: https://api.anthropic.com/v1
+    package: "@ai-sdk/anthropic"
     api_key_env: ANTHROPIC_API_KEY
     default_model: claude-3-5-sonnet-20240620
-  anthropic-claude:
-    type: anthropic-claude
-    base_url: https://api.anthropic.com/v1
-    default_model: claude-3-5-sonnet-20240620
-  google-gemini:
-    type: google-gemini
-    base_url: https://cloudcode-pa.googleapis.com
-    default_model: gemini-1.5-pro
-  groq:
-    type: openai
-    base_url: https://api.groq.com/openai/v1
-    api_key_env: GROQ_API_KEY
-    default_model: llama-3.3-70b-versatile
+
+  # Example: Using a custom provider script
+  # my-custom-provider:
+  #   script: "./providers/my-provider.ts"
+  #   default_model: my-special-model
 
 model_mappings:
-  "gpt-5*": openai-chatgpt
   "gpt-*": openai
-  "claude-4*": anthropic-claude
   "claude-*": anthropic
-  "gemini-*": google-gemini
-  "o1-*": openai
-  "llama-*": groq
 
 mcp_servers:
   filesystem:
@@ -244,7 +239,75 @@ expression:
   strict: false
 ```
 
-`storage.retention_days` sets the default window used by `keystone maintenance` / `keystone prune`. `storage.redact_secrets_at_rest` controls whether secret inputs and known secrets are redacted before storing run data (default `true`).
+### Storage Configuration
+
+The `storage` section controls data retention and security for workflow runs:
+
+- **`retention_days`**: Sets the default window used by `keystone maintenance` / `keystone prune` commands to clean up old run data.
+- **`redact_secrets_at_rest`**: Controls whether secret inputs and known secrets are redacted before storing run data (default `true`).
+
+### Bring Your Own Provider (BYOP)
+
+Keystone uses the **Vercel AI SDK**, allowing you to use any compatible provider. You must install the provider package (e.g., `@ai-sdk/openai`, `ai-sdk-provider-gemini-cli`) so Keystone can resolve it.
+
+Keystone searches for provider packages in:
+1.  **Local `node_modules`**: The project where you run `keystone`.
+2.  **Global `node_modules`**: Your system-wide npm/bun/yarn directory.
+
+To install a provider globally:
+```bash
+bun install -g ai-sdk-provider-gemini-cli
+# or
+npm install -g @ai-sdk/openai
+```
+
+Then configure it in `.keystone/config.yaml` using the `package` field.
+
+### Model & Provider Resolution
+
+Keystone resolves which provider to use for a model in the following order:
+
+1. **Explicit Provider:** Use the `provider` field in an agent or step definition.
+2. **Provider Prefix:** Use the `provider:model` syntax (e.g., `model: anthropic:claude-3-5-sonnet-latest`).
+3. **Model Mappings:** Matches the model name against the `model_mappings` in your config (supports suffix `*` for prefix matching).
+4. **Default Provider:** Falls back to the `default_provider` defined in your config.
+
+#### Example: Explicit Provider in Agent
+**`.keystone/workflows/agents/summarizer.md`**
+```markdown
+---
+name: summarizer
+provider: anthropic
+model: claude-3-5-sonnet-latest
+---
+```
+
+#### Example: Provider Prefix in Step
+```yaml
+- id: notify
+  type: llm
+  agent: summarizer
+  model: anthropic:claude-3-5-sonnet-latest
+  prompt: ...
+```
+
+### OpenAI Compatible Providers
+You can add any OpenAI-compatible provider (Together AI, Perplexity, Local Ollama, etc.) by using the `@ai-sdk/openai` package and providing the `base_url` and `api_key_env`.
+
+```yaml
+providers:
+  ollama:
+    package: "@ai-sdk/openai"
+    base_url: http://localhost:11434/v1
+    api_key_env: OLLAMA_API_KEY  # Can be any value for local Ollama
+    default_model: llama3.2
+```
+
+### API Key Management
+
+For other providers, store API keys in a `.env` file in your project root:
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
 
 ### Context Injection (Opt-in)
 
@@ -269,99 +332,10 @@ When enabled, Keystone will:
 
 Context is cached for 1 minute to avoid redundant file reads.
 
-### Model & Provider Resolution
-
-Keystone resolves which provider to use for a model in the following order:
-
-1. **Explicit Provider:** Use the `provider` field in an agent or step definition.
-2. **Provider Prefix:** Use the `provider:model` syntax (e.g., `model: copilot:gpt-4o`).
-3. **Model Mappings:** Matches the model name against the `model_mappings` in your config (supports suffix `*` for prefix matching).
-4. **Default Provider:** Falls back to the `default_provider` defined in your config.
-
-#### Example: Explicit Provider in Agent
-**`.keystone/workflows/agents/summarizer.md`**
-```markdown
----
-name: summarizer
-provider: anthropic
-model: claude-3-5-sonnet-latest
----
-```
-
-#### Example: Provider Prefix in Step
-```yaml
-- id: notify
-  type: llm
-  agent: summarizer
-  model: copilot:gpt-4o
-  prompt: ...
-```
-
-### OpenAI Compatible Providers
-You can add any OpenAI-compatible provider (Together AI, Perplexity, Local Ollama, etc.) by setting the `type` to `openai` and providing the `base_url` and `api_key_env`.
-
-### GitHub Copilot Support
-
-Keystone supports using your GitHub Copilot subscription directly. To authenticate (using the GitHub Device Flow):
-
-```bash
-keystone auth login github
-```
-
-Then, you can use Copilot in your configuration:
-
-```yaml
-providers:
-  copilot:
-    type: copilot
-    default_model: gpt-4o
-```
-
-Authentication tokens for Copilot are managed automatically after the initial login. 
-
-### OpenAI ChatGPT Plus/Pro (OAuth)
-
-Keystone supports using your ChatGPT Plus/Pro subscription (OAuth) instead of an API key:
-
-```bash
-keystone auth login openai-chatgpt
-```
-
-Then map models to the `openai-chatgpt` provider in your config.
-
-### Anthropic Claude Pro/Max (OAuth)
-
-Keystone supports using your Claude Pro/Max subscription (OAuth) instead of an API key:
-
-```bash
-keystone auth login anthropic-claude
-```
-
-Then map models to the `anthropic-claude` provider in your config. This flow uses the Claude web auth code and refreshes tokens automatically.
-
-### Google Gemini (OAuth)
-
-Keystone supports using your Google Gemini subscription (OAuth) instead of an API key:
-
-```bash
-keystone auth login gemini
-```
-
-Then map models to the `google-gemini` provider in your config.
-
-### API Key Management
-
-For other providers, you can either store API keys in a `.env` file in your project root:
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-
-Or use the `keystone auth login` command to securely store them in your local machine's configuration:
-- `keystone auth login openai`
-- `keystone auth login anthropic`
 
 ---
 
-## <a id="workflow-example"></a>📝 Workflow Example
+## <a id="workflow-example">📝 Workflow Example</a>
 
 Workflows are defined in YAML. Dependencies are automatically resolved based on the `needs` field, and **Keystone also automatically detects implicit dependencies** from your `${{ }}` expressions.
 
@@ -444,7 +418,7 @@ expression:
 
 ---
 
-## <a id="step-types"></a>🏗️ Step Types
+## <a id="step-types">🏗️ Step Types</a>
 
 Keystone supports several specialized step types:
 
@@ -777,7 +751,7 @@ Until `strategy.matrix` is wired end-to-end, use explicit `foreach` with an arra
 
 ---
 
-## <a id="advanced-features"></a>🔧 Advanced Features
+## <a id="advanced-features">🔧 Advanced Features</a>
 
 ### Idempotency Keys
 
@@ -990,7 +964,7 @@ You can also define a workflow-level `compensate` step to handle overall cleanup
 
 ---
 
-## <a id="agent-definitions"></a>🤖 Agent Definitions
+## <a id="agent-definitions">🤖 Agent Definitions</a>
 
 Agents are defined in Markdown files with YAML frontmatter, making them easy to read and version control.
 
@@ -1174,7 +1148,7 @@ In these examples, the agent will have access to all tools provided by the MCP s
 
 ---
 
-## <a id="cli-commands"></a>🛠️ CLI Commands
+## <a id="cli-commands">🛠️ CLI Commands</a>
 
 | Command | Description |
 | :--- | :--- |
@@ -1197,9 +1171,6 @@ In these examples, the agent will have access to all tools provided by the MCP s
 | `dev <task>` | Run the self-bootstrapping DevMode workflow |
 | `manifest` | Show embedded assets manifest |
 | `config show` | Show current configuration and discovery paths (alias: `list`) |
-| `auth status [provider]` | Show authentication status |
-| `auth login [provider]` | Login to an authentication provider (github, openai, anthropic, openai-chatgpt, anthropic-claude, gemini/google-gemini) |
-| `auth logout [provider]` | Logout and clear authentication tokens |
 | `ui` | Open the interactive TUI dashboard |
 | `mcp start` | Start the Keystone MCP server |
 | `mcp login <server>` | Login to a remote MCP server |
@@ -1238,18 +1209,21 @@ Input keys passed via `-i key=val` must be alphanumeric/underscore and cannot be
 ### Dry Run
 `keystone run --dry-run` prints shell commands without executing them and skips non-shell steps (including human prompts). Outputs from skipped steps are empty, so conditional branches may differ from a real run.
 
-## <a id="security"></a>🛡️ Security
+## <a id="security">🛡️ Security</a>
 
 ### Shell Execution
 Keystone blocks shell commands that match common injection/destructive patterns (like `rm -rf /` or pipes to shells). To run them, set `allowInsecure: true` on the step. Prefer `${{ escape(...) }}` when interpolating user input.
 
-You can bypass this check if you trust the command:
-```yaml
 - id: deploy
   type: shell
   run: ./deploy.sh ${{ inputs.env }}
   allowInsecure: true
 ```
+
+#### Troubleshooting Security Errors
+If you see a `Security Error: Evaluated command contains shell metacharacters`, it means your command contains characters like `\n`, `|`, or `&` that were not explicitly escaped or are not in the safe whitelist.
+- **Fix 1**: Use `${{ escape(steps.id.output) }}` for any dynamic values.
+- **Fix 2**: Set `allowInsecure: true` if the command naturally uses special characters (like `echo "line1\nline2"`).
 
 ### Expression Safety
 Expressions `${{ }}` are evaluated using a safe AST parser (`jsep`) which:
@@ -1266,7 +1240,7 @@ Request steps enforce SSRF protections and require HTTPS by default. Cross-origi
 
 ---
 
-## <a id="architecture"></a>🏗️ Architecture
+## <a id="architecture">🏗️ Architecture</a>
 
 ```mermaid
 graph TD
@@ -1302,12 +1276,12 @@ graph TD
     EX --> Join[Join Step]
     EX --> Blueprint[Blueprint Step]
 
-    LLM --> Adapters[LLM Adapters]
-    Adapters --> Providers[OpenAI, Anthropic, Gemini, Copilot, etc.]
+    LLM --> Adapter[LLM Adapter (AI SDK)]
+    Adapter --> Providers[OpenAI, Anthropic, Gemini, Copilot, etc.]
     LLM --> MCPClient[MCP Client]
 ```
 
-## <a id="project-structure"></a>📂 Project Structure
+## <a id="project-structure">📂 Project Structure</a>
 
 - `src/cli.ts`: CLI entry point.
 - `src/db/`: SQLite persistence layer.
@@ -1322,6 +1296,6 @@ graph TD
 
 ---
 
-## <a id="license"></a>📄 License
+## <a id="license">📄 License</a>
 
 MIT

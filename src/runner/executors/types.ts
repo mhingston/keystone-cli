@@ -1,11 +1,11 @@
 import type { MemoryDb } from '../../db/memory-db.ts';
 import type { WorkflowDb } from '../../db/workflow-db.ts';
 import type { ExpressionContext } from '../../expression/evaluator.ts';
-import type { WorkflowStep } from '../../parser/schema.ts';
+import type { Step, WorkflowStep } from '../../parser/schema.ts';
 import type { Logger } from '../../utils/logger.ts';
 import type { SafeSandbox } from '../../utils/sandbox.ts';
 import type { WorkflowEvent } from '../events.ts';
-import type { getAdapter } from '../llm-adapter.ts';
+
 import type { MCPManager } from '../mcp-manager.ts';
 import type { executeLlmStep } from './llm-executor.ts';
 
@@ -62,8 +62,8 @@ export interface StepExecutorOptions {
   debug?: boolean;
   allowInsecure?: boolean;
   emitEvent?: (event: WorkflowEvent) => void;
-  getAdapter?: typeof getAdapter;
-  executeStep?: any; // To avoid circular dependency
+
+  executeStep?: (step: Step, context: ExpressionContext) => Promise<StepResult>; // To avoid circular dependency
   executeLlmStep?: typeof executeLlmStep;
   sandbox?: typeof SafeSandbox;
 }

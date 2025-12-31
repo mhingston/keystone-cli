@@ -1,0 +1,6 @@
+[test]
+# Timeout for tests in ms
+timeout = 60000
+
+# Preload the LLM test setup to establish mock.module() before any test runs
+

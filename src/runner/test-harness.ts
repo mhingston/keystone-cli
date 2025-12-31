@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { type ExpressionContext, ExpressionEvaluator } from '../expression/evaluator';
 import type { Step, Workflow } from '../parser/schema';
 import { ConsoleLogger, type Logger } from '../utils/logger';
-import type { LLMAdapter, LLMMessage, LLMResponse } from './llm-adapter';
+// Note: LLM mocking is now handled via module mocking of getModel in tests
 import { type StepExecutorOptions, type StepResult, executeStep } from './step-executor';
 import { WorkflowRunner } from './workflow-runner';
 
@@ -66,7 +66,6 @@ export class TestHarness {
       inputs: this.fixture.inputs,
       secrets: this.fixture.secrets,
       executeStep: this.mockExecuteStep.bind(this),
-      getAdapter: this.getMockAdapter.bind(this),
       // Use memory DB for tests
       dbPath: ':memory:',
     });
@@ -131,7 +130,6 @@ export class TestHarness {
     const result = await executeStep(step, context, logger, {
       ...options,
       executeStep: this.mockExecuteStep.bind(this),
-      getAdapter: this.getMockAdapter.bind(this),
     });
 
     this.stepResults.set(step.id, {
@@ -151,30 +149,6 @@ export class TestHarness {
     return false;
   }
 
-  private getMockAdapter(model: string): { adapter: LLMAdapter; resolvedModel: string } {
-    return {
-      resolvedModel: model,
-      adapter: {
-        chat: async (messages: LLMMessage[]) => {
-          const userMessage = messages.find((m) => m.role === 'user')?.content || '';
-
-          for (const mock of this.llmMocks) {
-            if (userMessage.includes(mock.prompt)) {
-              return {
-                message: {
-                  role: 'assistant',
-                  content:
-                    typeof mock.response === 'string'
-                      ? mock.response
-                      : JSON.stringify(mock.response),
-                },
-              };
-            }
-          }
-
-          throw new Error(`No LLM mock found for prompt: ${userMessage.substring(0, 100)}...`);
-        },
-      },
-    };
-  }
+  // Note: LLM mocking for test harness is handled via module mocking of llm-adapter
+  // If you need to mock LLM responses, use bun's mock.module() to mock getModel
 }

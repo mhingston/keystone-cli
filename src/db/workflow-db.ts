@@ -448,7 +448,7 @@ export class WorkflowDb {
    * Uses exponential backoff with jitter to reduce contention.
    */
   private async withRetry<T>(operation: () => T, maxRetries = LIMITS.MAX_DB_RETRIES): Promise<T> {
-    let lastError: any;
+    let lastError: unknown;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
@@ -477,13 +477,13 @@ export class WorkflowDb {
 
         // Wrap non-busy errors in DatabaseError
         const msg = error instanceof Error ? error.message : String(error);
-        const code = (error as any)?.code;
+        const code = (error as { code?: string | number })?.code;
         throw new DatabaseError(msg, code, false);
       }
     }
 
     const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    const code = (lastError as any)?.code;
+    const code = (lastError as { code?: string | number })?.code;
     throw new DatabaseError(
       `SQLite operation failed after ${maxRetries} retries: ${msg}`,
       code,

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { dirname, join } from 'node:path';
+import { embed, generateText } from 'ai';
 import { MemoryDb } from '../db/memory-db.ts';
 import { type RunStatus, WorkflowDb } from '../db/workflow-db.ts';
 import type { ExpressionContext } from '../expression/evaluator.ts';
@@ -18,8 +19,9 @@ import { formatSchemaErrors, validateJsonSchema } from '../utils/schema-validato
 import { WorkflowRegistry } from '../utils/workflow-registry.ts';
 import type { EventHandler, StepPhase, WorkflowEvent } from './events.ts';
 import { ForeachExecutor } from './executors/foreach-executor.ts';
-import { type RunnerFactory, executeSubWorkflow } from './executors/subworkflow-executor.ts';
-import { type LLMMessage, getAdapter } from './llm-adapter.ts';
+import type { RunnerFactory } from './executors/subworkflow-executor.ts';
+import { executeSubWorkflow } from './executors/subworkflow-executor.ts';
+import { type LLMMessage, getEmbeddingModel, getModel } from './llm-adapter.ts';
 import { MCPManager } from './mcp-manager.ts';
 import { ResourcePoolManager } from './resource-pool.ts';
 import { withRetry } from './retry.ts';
@@ -111,7 +113,7 @@ export interface RunOptions {
   dryRun?: boolean;
   debug?: boolean;
   dedup?: boolean;
-  getAdapter?: typeof getAdapter;
+
   executeStep?: typeof executeStep;
   executeLlmStep?: typeof import('./executors/llm-executor.ts').executeLlmStep;
   depth?: number;
@@ -140,7 +142,9 @@ export class WorkflowRunner {
   private _runId!: string;
   private state!: WorkflowState;
   private scheduler!: WorkflowScheduler;
+  private stepMap: Map<string, Step> = new Map();
   private inputs!: Record<string, unknown>;
+
   private secretManager: SecretManager;
   private contextBuilder!: ContextBuilder;
   private validator!: WorkflowValidator;
@@ -199,7 +203,9 @@ export class WorkflowRunner {
 
   constructor(workflow: Workflow, options: RunOptions = {}) {
     this.workflow = workflow;
+    this.stepMap = new Map(workflow.steps.map((s) => [s.id, s]));
     this.options = options;
+
     this.depth = options.depth || 0;
 
     if (this.depth > WorkflowRunner.MAX_RECURSION_DEPTH) {
@@ -544,7 +550,7 @@ export class WorkflowRunner {
     const data = {
       type: step.type,
       inputs,
-      env: step.env,
+      env: 'env' in step ? step.env : undefined,
       version: 2, // Cache versioning
     };
 
@@ -601,7 +607,8 @@ export class WorkflowRunner {
     if (!step.if) return false;
 
     try {
-      return !this.evaluateCondition(step.if, context);
+      if (typeof step.if === 'boolean') return !step.if;
+      return !this.evaluateCondition(step.if as string, context);
     } catch (error) {
       throw new Error(
         `Failed to evaluate condition for step "${step.id}": ${error instanceof Error ? error.message : String(error)}`
@@ -911,7 +918,6 @@ export class WorkflowRunner {
         stepExecutionId: stepExecId,
         artifactRoot: this.options.artifactRoot,
         redactForStorage: this.secretManager.redactForStorage.bind(this.secretManager),
-        getAdapter: this.options.getAdapter,
         executeStep: this.options.executeStep || executeStep,
         executeLlmStep: this.options.executeLlmStep,
         emitEvent: this.emitEvent.bind(this),
@@ -1272,7 +1278,7 @@ export class WorkflowRunner {
             };
 
             return this.executeStepInternal(
-              newStep,
+              newStep as Step,
               nextContext,
               stepExecId,
               idempotencyContextForRetry
@@ -1321,7 +1327,7 @@ export class WorkflowRunner {
             };
 
             return this.executeStepInternal(
-              newStep,
+              newStep as Step,
               nextContext,
               stepExecId,
               idempotencyContextForRetry
@@ -1512,32 +1518,48 @@ Do not change the 'id' or 'type' or 'auto_heal' fields.
     result: StepResult,
     _context: ExpressionContext
   ): Promise<void> {
-    const getAdapterFn = this.options.getAdapter || getAdapter;
-    const { adapter } = getAdapterFn('local'); // Default for embedding
-    if (!adapter.embed) return;
+    const config = ConfigLoader.load();
+    const modelName = config.embedding_model;
+
+    if (!modelName) return;
+
+    // Resolve dimension
+    const providerName = ConfigLoader.getProviderForModel(modelName);
+    const providerConfig = config.providers[providerName];
+    const dimension = providerConfig?.embedding_dimension || config.embedding_dimension || 384;
+
+    // We reuse or create a specialized learning memory DB if needed,
+    // but here we ensure the dimension is passed correctly.
+    // If this.memoryDb is already shared, it might need to be re-initialized if it's the wrong dimension.
+    // For now, we assume the shared memoryDb in runner is initialized with correct dimension or we pass it.
+    const memoryDb = this.memoryDb;
 
     // Combine input context (if relevant) and output
     // For now, let's keep it simple: "Step: ID\nGoal: description\nOutput: result"
-
-    // We can try to construct a summary of what happened
-    let textToEmbed = `Step ID: ${step.id} (${step.type})\n`;
-
-    if (step.type === 'llm') {
-      textToEmbed += `Task Context/Prompt:\n${(step as LlmStep).prompt}\n\n`;
-    } else if (step.type === 'shell') {
-      textToEmbed += `Command:\n${(step as unknown as { run: string }).run}\n\n`;
+    let textToEmbed = `Step: ${step.id}\n`;
+    if (step.type === 'llm' || step.type === 'plan' || step.type === 'dynamic') {
+      const goalOrPrompt = 'goal' in step ? step.goal : 'prompt' in step ? step.prompt : '';
+      textToEmbed += `Goal: ${goalOrPrompt}\n`;
     }
 
     textToEmbed += `Successful Outcome:\n${JSON.stringify(result.output, null, 2)}`;
 
-    const embedding = await adapter.embed(textToEmbed, 'local');
-    await this.memoryDb.store(textToEmbed, embedding, {
-      stepId: step.id,
-      workflow: this.workflow.name,
-      timestamp: new Date().toISOString(),
-    });
+    try {
+      const model = await getEmbeddingModel(modelName);
+      const { embedding } = await embed({ model, value: textToEmbed });
 
-    this.logger.log(`  ✨ Learned from step ${step.id}`);
+      await memoryDb.store(textToEmbed, embedding, {
+        stepId: step.id,
+        workflow: this.workflow.name,
+        timestamp: new Date().toISOString(),
+      });
+
+      this.logger.log(`  ✨ Learned from step ${step.id}`);
+    } catch (err) {
+      this.logger.warn(
+        `  ⚠ Failed to embed/store step learning: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   /**
@@ -1582,12 +1604,14 @@ Please provide the fixed step configuration as JSON.`;
 
     // Use the default model (gpt-4o) or configured default for the Mechanic
     // We'll use gpt-4o as a strong default for this reasoning task
-    const getAdapterFn = this.options.getAdapter || getAdapter;
-    const { adapter } = getAdapterFn('gpt-4o');
+    const model = await getModel('gpt-4o');
 
-    const response = await adapter.chat(messages);
+    const { text } = await generateText({
+      model,
+      messages: messages as any, // Cast to AI SDK messages
+    });
 
-    return extractJson(response.message.content || '{}') as Partial<Step>;
+    return extractJson(text || '{}') as Partial<Step>;
   }
 
   /**
@@ -1770,7 +1794,6 @@ Revise the output to address the feedback. Return only the corrected output.`;
         runId: this.runId,
         artifactRoot: this.options.artifactRoot,
         redactForStorage: this.secretManager.redactForStorage.bind(this.secretManager),
-        getAdapter: this.options.getAdapter,
         executeStep: this.options.executeStep || executeStep,
         emitEvent: this.emitEvent.bind(this),
         workflowName: this.workflow.name,
@@ -1834,7 +1857,7 @@ Revise the output to address the feedback. Return only the corrected output.`;
         runId: this.runId,
         artifactRoot: this.options.artifactRoot,
         redactForStorage: this.secretManager.redactForStorage.bind(this.secretManager),
-        getAdapter: this.options.getAdapter,
+
         executeStep: this.options.executeStep || executeStep,
         emitEvent: this.emitEvent.bind(this),
         workflowName: this.workflow.name,
@@ -2196,6 +2219,7 @@ Revise the output to address the feedback. Return only the corrected output.`;
                 this.logger.log(`[${stepIndex}/${totalSteps}] ✓ Step ${step.id} completed\n`);
               } catch (error) {
                 this.emitStepEnd(step, 'main', startedAt, error, stepIndex, totalSteps);
+                this.scheduler.markStepFailed(stepId);
                 throw error;
               } finally {
                 if (typeof release === 'function') {
@@ -2222,7 +2246,6 @@ Revise the output to address the feedback. Return only the corrected output.`;
           // 3. Wait for at least one step to finish before checking again
           if (runningPromises.size > 0) {
             await Promise.race(runningPromises.values());
-            // Yield to event loop to prevent tight loop if multiple steps finish in same tick
             await Bun.sleep(0);
           }
         }
@@ -2243,7 +2266,18 @@ Revise the output to address the feedback. Return only the corrected output.`;
         throw error;
       }
 
+      // Final check for failed steps before success update
+      for (const [id, ctx] of this.state.entries()) {
+        if (ctx.status === StepStatus.FAILED) {
+          const step = this.stepMap.get(id);
+          if (!step?.allowFailure) {
+            throw new Error(ctx.error || `Step ${id} failed`);
+          }
+        }
+      }
+
       // Evaluate outputs
+
       const outputs = this.evaluateOutputs();
 
       // Mark run as complete

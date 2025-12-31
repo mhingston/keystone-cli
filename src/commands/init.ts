@@ -17,15 +17,7 @@ import architectAgent from '../templates/agents/keystone-architect.md' with { ty
 import softwareEngineerAgent from '../templates/agents/software-engineer.md' with { type: 'text' };
 import summarizerAgent from '../templates/agents/summarizer.md' with { type: 'text' };
 import testerAgent from '../templates/agents/tester.md' with { type: 'text' };
-import fullFeatureDemo from '../templates/basics/full-feature-demo.yaml' with { type: 'text' };
-import idempotencyExample from '../templates/control-flow/idempotency-example.yaml' with {
-  type: 'text',
-};
-import dynamicDemo from '../templates/dynamic-demo.yaml' with { type: 'text' };
-import artifactExample from '../templates/features/artifact-example.yaml' with { type: 'text' };
-import scriptExample from '../templates/features/script-example.yaml' with { type: 'text' };
-// Import templates
-import agentHandoffWorkflow from '../templates/patterns/agent-handoff.yaml' with { type: 'text' };
+
 import decomposeImplementWorkflow from '../templates/scaffolding/decompose-implement.yaml' with {
   type: 'text',
 };
@@ -55,27 +47,27 @@ const DEFAULT_CONFIG = `# Keystone Configuration
 default_provider: openai
 
 providers:
+  # Install with: npm install @ai-sdk/openai @ai-sdk/anthropic
   openai:
-    type: openai
-    base_url: https://api.openai.com/v1
+    package: "@ai-sdk/openai"
     api_key_env: OPENAI_API_KEY
     default_model: gpt-4o
   anthropic:
-    type: anthropic
-    base_url: https://api.anthropic.com/v1
+    package: "@ai-sdk/anthropic"
     api_key_env: ANTHROPIC_API_KEY
     default_model: claude-3-5-sonnet-20240620
-  groq:
-    type: openai
-    base_url: https://api.groq.com/openai/v1
-    api_key_env: GROQ_API_KEY
-    default_model: llama-3.3-70b-versatile
+  
+  # Example: OpenAI-compatible provider (Groq)
+  # groq:
+  #   package: "@ai-sdk/openai"
+  #   base_url: https://api.groq.com/openai/v1
+  #   api_key_env: GROQ_API_KEY
+  #   default_model: llama-3.3-70b-versatile
 
 model_mappings:
   "gpt-*": openai
   "claude-*": anthropic
   "o1-*": openai
-  "llama-*": groq
 
 # mcp_servers:
 #   filesystem:
@@ -111,7 +103,7 @@ const SEEDS = [
   { path: '.keystone/workflows/decompose-implement.yaml', content: decomposeImplementWorkflow },
   { path: '.keystone/workflows/decompose-review.yaml', content: decomposeReviewWorkflow },
   { path: '.keystone/workflows/review-loop.yaml', content: reviewLoopWorkflow },
-  { path: '.keystone/workflows/agent-handoff.yaml', content: agentHandoffWorkflow },
+  { path: '.keystone/workflows/dev.yaml', content: devWorkflow },
   { path: '.keystone/workflows/agents/keystone-architect.md', content: architectAgent },
   { path: '.keystone/workflows/agents/general.md', content: generalAgent },
   { path: '.keystone/workflows/agents/explore.md', content: exploreAgent },
@@ -119,13 +111,7 @@ const SEEDS = [
   { path: '.keystone/workflows/agents/summarizer.md', content: summarizerAgent },
   { path: '.keystone/workflows/agents/handoff-router.md', content: handoffRouterAgent },
   { path: '.keystone/workflows/agents/handoff-specialist.md', content: handoffSpecialistAgent },
-  { path: '.keystone/workflows/dev.yaml', content: devWorkflow },
   { path: '.keystone/workflows/agents/tester.md', content: testerAgent },
-  { path: '.keystone/workflows/script-example.yaml', content: scriptExample },
-  { path: '.keystone/workflows/artifact-example.yaml', content: artifactExample },
-  { path: '.keystone/workflows/idempotency-example.yaml', content: idempotencyExample },
-  { path: '.keystone/workflows/full-feature-demo.yaml', content: fullFeatureDemo },
-  { path: '.keystone/workflows/dynamic-demo.yaml', content: dynamicDemo },
 ];
 
 export function registerInitCommand(program: Command): void {
@@ -186,8 +172,8 @@ export function registerInitCommand(program: Command): void {
 
       console.log('\n✨ Keystone project initialized!');
       console.log('\nNext steps:');
-      console.log('  1. Add your API keys to .env');
-      console.log('  2. Create a workflow in .keystone/workflows/');
-      console.log('  3. Run: keystone run <workflow>');
+      console.log('  1. Install AI SDK providers: npm install @ai-sdk/openai @ai-sdk/anthropic');
+      console.log('  2. Add your API keys to .env');
+      console.log('  3. Run a workflow: keystone run scaffold-feature');
     });
 }

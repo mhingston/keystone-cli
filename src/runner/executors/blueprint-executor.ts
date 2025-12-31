@@ -129,7 +129,6 @@ export async function executeBlueprintStep(
     mcpManager,
     workflowDir,
     abortSignal,
-    undefined,
     emitEvent,
     workflowName ? { runId, workflow: workflowName } : undefined
   );

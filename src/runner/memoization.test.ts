@@ -6,7 +6,6 @@ import { ExpressionEvaluator } from '../expression/evaluator';
 import type { Workflow } from '../parser/schema';
 import { container } from '../utils/container';
 import { ConsoleLogger } from '../utils/logger';
-import { getAdapter } from './llm-adapter';
 import { WorkflowRunner } from './workflow-runner';
 
 describe('Workflow Memoization (Auto-Hashing)', () => {
