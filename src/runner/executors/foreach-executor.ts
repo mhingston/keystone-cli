@@ -294,7 +294,7 @@ export class ForeachExecutor {
                   release = await this.resourcePool.acquire(poolName, { signal: this.abortSignal });
                 }
 
-                this.logger.log(`  ⤷ [${i + 1}/${items.length}] Executing iteration...`);
+                this.logger.debug(`  ⤷ [${i + 1}/${items.length}] Processing iteration...`);
 
                 // Execute step
                 itemResults[i] = await this.executeStepFn(step, itemContext, stepExecId);

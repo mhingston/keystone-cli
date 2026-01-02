@@ -46,7 +46,7 @@ class RedactingLogger implements Logger {
   constructor(
     private inner: Logger,
     private redactor: Redactor
-  ) {}
+  ) { }
 
   log(msg: string): void {
     this.inner.log(this.redactor.redact(msg));
@@ -193,7 +193,7 @@ export class WorkflowRunner {
 
     if (parentSignal.aborted) {
       controller.abort();
-      return { controller, cleanup: () => {} };
+      return { controller, cleanup: () => { } };
     }
 
     parentSignal.addEventListener('abort', onAbort, { once: true });
@@ -816,11 +816,11 @@ export class WorkflowRunner {
     const idempotencyContextForRetry =
       idempotencyClaimed && scopedIdempotencyKey
         ? {
-            rawKey: idempotencyKey || scopedIdempotencyKey,
-            scopedKey: scopedIdempotencyKey,
-            ttlSeconds: idempotencyTtlSeconds,
-            claimed: true,
-          }
+          rawKey: idempotencyKey || scopedIdempotencyKey,
+          scopedKey: scopedIdempotencyKey,
+          ttlSeconds: idempotencyTtlSeconds,
+          claimed: true,
+        }
         : undefined;
 
     let stepToExecute = step;
@@ -932,9 +932,9 @@ export class WorkflowRunner {
         try {
           const outputForValidation =
             stepToExecute.type === 'engine' &&
-            result.output &&
-            typeof result.output === 'object' &&
-            'summary' in result.output
+              result.output &&
+              typeof result.output === 'object' &&
+              'summary' in result.output
               ? (result.output as { summary?: unknown }).summary
               : result.output;
           this.validator.validateSchema(
@@ -2081,7 +2081,7 @@ Revise the output to address the feedback. Return only the corrected output.`;
     if (!config.logging?.suppress_security_warning) {
       this.logger.log(
         '\n⚠️  Security Warning: Only run workflows from trusted sources.\n' +
-          '   Workflows can execute arbitrary shell commands and access your environment.\n'
+        '   Workflows can execute arbitrary shell commands and access your environment.\n'
       );
     }
 
@@ -2197,7 +2197,10 @@ Revise the output to address the feedback. Return only the corrected output.`;
           // 1. Find runnable steps from scheduler
           const runnableSteps = this.scheduler
             .getRunnableSteps(runningPromises.size, globalConcurrencyLimit)
-            .filter((step) => this.resourcePool.hasCapacity(step.pool || step.type));
+            .filter(
+              (step) =>
+                step.foreach || this.resourcePool.hasCapacity(step.pool || step.type)
+            );
 
           for (const step of runnableSteps) {
             // Don't schedule new steps if canceled
@@ -2219,7 +2222,13 @@ Revise the output to address the feedback. Return only the corrected output.`;
                 this.logger.debug?.(
                   `[${stepIndex}/${totalSteps}] ⏳ Waiting for pool: ${poolName}`
                 );
-                release = await this.resourcePool.acquire(poolName, { signal: this.abortSignal });
+                // For foreach steps, we don't acquire the resource in the parent step
+                // The ForeachExecutor will handle acquiring it for each iteration
+                if (!step.foreach) {
+                  release = await this.resourcePool.acquire(poolName, {
+                    signal: this.abortSignal,
+                  });
+                }
 
                 this.logger.log(
                   `[${stepIndex}/${totalSteps}] ▶ Executing step: ${step.id} (${step.type})`

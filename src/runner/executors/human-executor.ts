@@ -5,6 +5,9 @@ import type { HumanStep, SleepStep } from '../../parser/schema.ts';
 import type { Logger } from '../../utils/logger.ts';
 import { type StepResult, WorkflowSuspendedError, WorkflowWaitingError } from './types.ts';
 
+// Global lock to ensure only one human input prompt is active at any time
+let terminalLock: Promise<void> = Promise.resolve();
+
 /**
  * Execute a human input step
  */
@@ -35,32 +38,49 @@ export async function executeHumanStep(
     throw new WorkflowSuspendedError(message, step.id, inputType);
   }
 
-  const rl = readlinePromises.createInterface({
-    input: process.stdin,
-    output: process.stdout,
+  // Acquire terminal lock to prevent overlapping readline sessions
+  const myTurn = terminalLock.then(() => { });
+  terminalLock = myTurn.then(async () => {
+    // Settle time before starting a new prompt to clear any trailing input/echo
+    await new Promise(r => setTimeout(r, 150));
   });
 
+  await myTurn;
+
   try {
-    const prompt = inputType === 'confirm' ? `${message} [Y/n] ` : `${message} `;
-    const answer = await rl.question(prompt);
+    const rl = readlinePromises.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
 
-    if (inputType === 'confirm') {
-      const normalized = answer.trim().toLowerCase();
-      if (normalized === '') {
-        return { status: 'success', output: true };
+    try {
+      // Clear visual clutter
+      process.stdout.write('\n--------------------------------------------------------------------------------\n');
+      const prompt = inputType === 'confirm' ? `${message} [Y/n] ` : `${message} `;
+      const answer = await rl.question(prompt);
+
+      if (inputType === 'confirm') {
+        const normalized = answer.trim().toLowerCase();
+        if (normalized === '') {
+          return { status: 'success', output: true };
+        }
+        if (['y', 'yes', 'true', '1'].includes(normalized)) {
+          return { status: 'success', output: true };
+        }
+        if (['n', 'no', 'false', '0'].includes(normalized)) {
+          return { status: 'success', output: false };
+        }
+        return { status: 'success', output: answer.trim() };
       }
-      if (['y', 'yes', 'true', '1'].includes(normalized)) {
-        return { status: 'success', output: true };
-      }
-      if (['n', 'no', 'false', '0'].includes(normalized)) {
-        return { status: 'success', output: false };
-      }
-      return { status: 'success', output: answer.trim() };
+
+      return { status: 'success', output: answer };
+    } finally {
+      rl.close();
+      // Wait for rl to fully release stdin
+      await new Promise(r => setTimeout(r, 200));
     }
-
-    return { status: 'success', output: answer };
-  } finally {
-    rl.close();
+  } catch (error) {
+    throw error;
   }
 }
 

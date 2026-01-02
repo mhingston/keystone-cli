@@ -1,5 +1,5 @@
 import { tool as createTool, jsonSchema, streamText } from 'ai';
-import type { TextPart, ToolCallPart, ToolResultPart } from 'ai';
+import type { ToolCallPart, ToolResultPart } from 'ai';
 import { z } from 'zod';
 import type { ExpressionContext } from '../../expression/evaluator';
 import { ExpressionEvaluator } from '../../expression/evaluator';
@@ -20,9 +20,6 @@ import { STANDARD_TOOLS, validateStandardToolSecurity } from '../standard-tools'
 import type { StepResult } from './types.ts';
 
 // --- AI SDK Message Types ---
-// These types mirror the AI SDK's CoreMessage structure for type safety
-// without tightly coupling to AI SDK internals that may change between versions.
-// The types are intentionally permissive to handle various AI SDK part types.
 
 interface CoreTextPart {
   type: 'text';
@@ -33,26 +30,18 @@ interface CoreToolCallPart {
   type: 'tool-call';
   toolCallId: string;
   toolName: string;
-  args?: unknown;
-  input?: unknown;
+  args: any;
 }
 
 interface CoreToolResultPart {
   type: 'tool-result';
   toolCallId: string;
   toolName: string;
-  result: unknown;
-  output?: unknown;
+  result: any;
+  isError?: boolean;
 }
 
-// Additional AI SDK part types we want to handle gracefully
-interface CoreOtherPart {
-  type: string;
-  [key: string]: unknown;
-}
-
-type CoreContentPart = CoreTextPart | CoreToolCallPart | CoreToolResultPart | CoreOtherPart;
-type CoreMessageContent = string | CoreContentPart[];
+type CoreContentPart = CoreTextPart | CoreToolCallPart | CoreToolResultPart;
 
 interface CoreSystemMessage {
   role: 'system';
@@ -66,13 +55,12 @@ interface CoreUserMessage {
 
 interface CoreAssistantMessage {
   role: 'assistant';
-  content: CoreMessageContent;
-  toolCalls?: ToolCallPart[];
+  content: string | CoreContentPart[];
 }
 
 interface CoreToolMessage {
   role: 'tool';
-  content: CoreContentPart[];
+  content: CoreToolResultPart[];
 }
 
 type CoreMessage = CoreSystemMessage | CoreUserMessage | CoreAssistantMessage | CoreToolMessage;
@@ -177,22 +165,31 @@ function safeJsonStringify(value: unknown): string {
 /**
  * Maps Keystone LLMMessage to AI SDK CoreMessage
  */
-function mapToCoreMessages(messages: LLMMessage[]): CoreMessage[] {
-  return messages.map((m) => {
-    if (m.role === 'user') {
-      return { role: 'user', content: m.content || '' };
-    }
+function mapToCoreMessages(messages: LLMMessage[]): any[] {
+  const coreMessages = messages.map((m) => {
+    if (m.role === 'user') return { role: 'user', content: m.content || '' };
     if (m.role === 'assistant') {
-      if (m.tool_calls && m.tool_calls.length > 0) {
-        const toolCalls: ToolCallPart[] = m.tool_calls.map((tc) => ({
-          type: 'tool-call',
-          toolCallId: tc.id,
-          toolName: tc.function.name,
-          input: JSON.parse(tc.function.arguments),
-        }));
-        return { role: 'assistant', content: m.content || '', toolCalls };
+      const parts: any[] = [];
+      if (m.content) {
+        parts.push({ type: 'text', text: m.content });
       }
-      return { role: 'assistant', content: m.content || '' };
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        for (const tc of m.tool_calls) {
+          parts.push({
+            type: 'tool-call',
+            toolCallId: tc.id || 'missing-id',
+            toolName: tc.function.name || 'missing-name',
+            input: typeof tc.function.arguments === 'string'
+              ? JSON.parse(tc.function.arguments || '{}')
+              : tc.function.arguments || {},
+          });
+        }
+      }
+      // If no text and no tool calls, add a placeholder to satisfy the schema
+      if (parts.length === 0) {
+        parts.push({ type: 'text', text: '' });
+      }
+      return { role: 'assistant', content: parts };
     }
     if (m.role === 'tool') {
       return {
@@ -200,79 +197,85 @@ function mapToCoreMessages(messages: LLMMessage[]): CoreMessage[] {
         content: [
           {
             type: 'tool-result',
-            toolCallId: m.tool_call_id || '',
-            toolName: m.name || '',
-            result: m.content || '',
+            toolCallId: m.tool_call_id || 'missing-id',
+            toolName: m.name || 'missing-name',
+            output: {
+              type: 'text',
+              value: m.content || '',
+            },
           },
         ],
       };
     }
-    // Default to system
     return { role: 'system', content: m.content || '' };
   });
+  console.log(`[llm-protocol-trace] CoreMessages: ${JSON.stringify(coreMessages)}`);
+  return coreMessages;
 }
 
 /**
  * Maps AI SDK CoreMessage to Keystone LLMMessage.
- * Accepts readonly unknown[] to handle AI SDK ResponseMessage[] which varies by SDK version.
  */
 function mapFromCoreMessages(messages: readonly unknown[]): LLMMessage[] {
   const keystoneMessages: LLMMessage[] = [];
   for (const rawMsg of messages) {
-    // Type guard for message structure
-    const msg = rawMsg as { role: string; content?: unknown };
+    const msg = rawMsg as { role: string; content?: any; toolCalls?: any[] };
+
     if (msg.role === 'assistant') {
       const rawContent = msg.content;
       const contentArray = Array.isArray(rawContent)
         ? rawContent
         : [{ type: 'text', text: String(rawContent || '') }];
-      const textPart = contentArray.find(
-        (p: { type?: string; text?: string }) => p.type === 'text'
-      );
+
+      const textPart = contentArray.find((p: any) => p.type === 'text');
       const keystoneMsg: LLMMessage = {
         role: 'assistant',
         content: textPart?.text || '',
       };
-      const toolCalls = contentArray.filter((p: { type?: string }) => p.type === 'tool-call');
+
+      const toolCalls = contentArray.filter((p: any) => p.type === 'tool-call');
       if (toolCalls.length > 0) {
-        keystoneMsg.tool_calls = toolCalls.map(
-          (tc: { toolCallId?: string; toolName?: string; args?: unknown; input?: unknown }) => ({
-            id: tc.toolCallId || '',
-            type: 'function' as const,
-            function: {
-              name: tc.toolName || '',
-              arguments:
-                typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args || tc.input || {}),
-            },
-          })
-        );
+        keystoneMsg.tool_calls = toolCalls.map((tc: any) => ({
+          id: tc.toolCallId || '',
+          type: 'function' as const,
+          function: {
+            name: tc.toolName || '',
+            arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args || tc.input || {}),
+          },
+        }));
       }
       keystoneMessages.push(keystoneMsg);
     } else if (msg.role === 'tool') {
       const rawContent = msg.content;
       const contentArray = Array.isArray(rawContent) ? rawContent : [];
       for (const part of contentArray) {
-        const typedPart = part as {
-          type?: string;
-          toolCallId?: string;
-          toolName?: string;
-          result?: unknown;
-          output?: unknown;
-        };
-        if (typedPart.type === 'tool-result') {
+        if (part.type === 'tool-result') {
           keystoneMessages.push({
             role: 'tool',
-            tool_call_id: typedPart.toolCallId,
-            name: typedPart.toolName,
-            content:
-              typeof typedPart.result === 'string'
-                ? typedPart.result
-                : JSON.stringify(typedPart.result || typedPart.output || ''),
+            content: typeof part.result === 'string' ? part.result : JSON.stringify(part.result || part.output || {}),
+            tool_call_id: part.toolCallId || '',
+            name: part.toolName || '',
           });
         }
       }
+      // Handle older SDK versions or simple string content
+      if (contentArray.length === 0 && typeof rawContent === 'string') {
+        keystoneMessages.push({
+          role: 'tool',
+          content: rawContent,
+          tool_call_id: (msg as any).toolCallId || '',
+        });
+      }
     } else if (msg.role === 'user') {
-      keystoneMessages.push({ role: 'user', content: String(msg.content || '') });
+      keystoneMessages.push({
+        role: 'user',
+        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+      });
+    } else if (msg.role === 'system') {
+      keystoneMessages.push({
+        role: 'system',
+        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+      });
     }
   }
   return keystoneMessages;
@@ -391,6 +394,8 @@ export async function executeLlmStep(
   // MCP Client tracking for cleanup
   const localMcpClients: MCPClient[] = [];
 
+  let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
   try {
     // Agent Handoff Loop: We manually loop here (instead of relying solely on SDK's maxSteps)
     // because Agent Handoffs require dynamically swapping the system prompt and tool set
@@ -412,15 +417,16 @@ export async function executeLlmStep(
 
       // Tool Registration
       const aiTools: Record<string, any> = {};
-      let pendingTransfer: Agent | null = null;
+      const tools: any[] = [];
+      let pendingTransfer: Agent | undefined;
       let requiresSuspend = false;
       let suspendData: any = null;
 
       const registerTool = (
         name: string,
-        description: string | undefined,
+        description: string,
         parameters: any,
-        execute: (args: any, context: { toolCallId: string }) => Promise<any>
+        execute: (args: any) => Promise<any>
       ) => {
         // Validate parameters is a valid JSON Schema object
         if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
@@ -428,7 +434,6 @@ export async function executeLlmStep(
         }
 
         // Safety: Ensure additionalProperties is false for object types if not specified
-        // This prevents the LLM from hallucinating arguments that are not in the schema
         const safeParameters = { ...parameters };
         if (
           safeParameters.type === 'object' &&
@@ -438,22 +443,33 @@ export async function executeLlmStep(
           safeParameters.additionalProperties = false;
         }
 
-        aiTools[name] = (createTool as any)({
+        tools.push({ name, description, parameters: safeParameters, execute });
+        logger.debug(`[llm-executor] Registered tool: ${name}`);
+
+        const schema = jsonSchema(safeParameters);
+        aiTools[name] = {
           description,
-          parameters: jsonSchema(safeParameters),
-          execute: async (args: any, { toolCallId }: { toolCallId: string }) => {
-            logger.log(
-              `  🛠️  Tool Call: ${name}${Object.keys(args || {}).length ? ` ${safeJsonStringify(args)}` : ''}`
-            );
+          parameters: schema,
+          // redundant properties for different SDK versions/providers
+          inputSchema: schema,
+          execute: async (args: any) => {
+            const actualArgs = args || {};
+            if (name !== 'ask') {
+              logger.log(
+                `  🛠️  Tool Call: ${name}${Object.keys(actualArgs).length ? ` ${safeJsonStringify(actualArgs)}` : ''}`
+              );
+            } else {
+              logger.debug(`  🛠️  Tool Call: ask ${safeJsonStringify(actualArgs)}`);
+            }
             try {
-              return await execute(args, { toolCallId });
+              return await execute(actualArgs);
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err);
               logger.error(`  ✗ Tool Error (${name}): ${errMsg}`);
-              return { error: errMsg }; // Return as object for AI SDK
+              return { error: errMsg };
             }
           },
-        });
+        };
       };
 
       const applyContextUpdate = (value: unknown): unknown => {
@@ -478,7 +494,7 @@ export async function executeLlmStep(
 
       // 1. Agent Tools
       for (const tool of activeAgent.tools) {
-        registerTool(tool.name, tool.description, tool.parameters, async (args) => {
+        registerTool(tool.name, tool.description || '', tool.parameters, async (args) => {
           if (tool.execution) {
             const toolContext = { ...context, args };
             const result = await executeStepFn(tool.execution, toolContext);
@@ -497,7 +513,7 @@ export async function executeLlmStep(
         if (!step.tools?.includes(tool as any)) {
           // It is a standard tool
           // Wrap execution with security check
-          registerTool(tool.name, tool.description, tool.parameters, async (args) => {
+          registerTool(tool.name, tool.description || '', tool.parameters || {}, async (args) => {
             validateStandardToolSecurity(tool.name, args, {
               allowOutsideCwd: step.allowOutsideCwd,
               allowInsecure: step.allowInsecure,
@@ -513,7 +529,7 @@ export async function executeLlmStep(
           });
         } else {
           // Custom step tool
-          registerTool(tool.name, tool.description, tool.parameters, async (args) => {
+          registerTool(tool.name, tool.description || '', tool.parameters || {}, async (args) => {
             if (tool.execution) {
               const toolContext = { ...context, args };
               const result = await executeStepFn(tool.execution, toolContext);
@@ -559,9 +575,9 @@ export async function executeLlmStep(
             }
 
             if (client) {
-              const tools = await client.listTools();
-              for (const t of tools) {
-                registerTool(t.name, t.description, t.inputSchema, async (args) => {
+              const mcpTools = await client.listTools();
+              for (const t of mcpTools) {
+                registerTool(t.name, t.description || '', t.inputSchema || {}, async (args) => {
                   const res = await client?.callTool(t.name, args);
                   // AI SDK expects serializable result. callTool returns useful JSON.
                   // We apply context update and return raw object handled by SDK.
@@ -585,7 +601,9 @@ export async function executeLlmStep(
           'Ask the user a clarifying question.',
           {
             type: 'object',
-            properties: { question: { type: 'string' } },
+            properties: {
+              question: { type: 'string', description: 'The question to ask the user' }
+            },
             required: ['question'],
           },
           async (args) => {
@@ -605,12 +623,11 @@ export async function executeLlmStep(
             }
 
             if (process.stdin.isTTY) {
-              logger.log(`\n🤔 Question from ${activeAgent.name}: ${question}`);
               const result = await executeStepFn(
                 {
                   id: `${step.id}-clarify`,
                   type: 'human',
-                  message: question,
+                  message: `\n🤔 Queston from ${activeAgent.name}: ${question}`,
                   inputType: 'text',
                 } as Step,
                 context
@@ -620,7 +637,7 @@ export async function executeLlmStep(
             requiresSuspend = true;
             suspendData = { question: question }; // Will abort loop
             return 'Suspended for user input';
-          }
+          },
         );
       }
 
@@ -650,116 +667,175 @@ export async function executeLlmStep(
         );
       }
 
-      // Execute Stream
-      const result = await streamText({
-        model: languageModel,
-        system: systemPrompt,
-        messages: mapToCoreMessages(currentMessages),
-        tools: aiTools,
-        toolChoice: 'auto',
-        maxSteps: step.maxIterations || 10,
-        onChunk: (event: any) => {
-          if (event.chunk.type === 'text-delta') {
-            handleStreamChunk(event.chunk.text);
-          }
-        },
-        abortSignal,
-      } as any);
-
-      // Accumulate full text for output
-      // Accumulate full text for output
+      let iterations = 0;
+      const maxIterations = step.maxIterations || 10;
       let fullText = '';
-      for await (const part of result.fullStream) {
-        if (part.type === 'text-delta') {
-          fullText += part.text;
-        } else if (part.type === 'tool-call') {
-          if (emitEvent && eventContext?.runId && eventContext?.workflow) {
-            emitEvent({
-              type: 'llm.thought',
-              timestamp: new Date().toISOString(),
-              runId: eventContext.runId,
-              workflow: eventContext.workflow,
-              stepId: step.id,
-              content: `[Tool Call] ${(part as any).toolName}(${JSON.stringify((part as any).args)})`,
-              source: 'reasoning',
-            });
-          }
-        } else if (part.type === 'tool-result') {
-          if (emitEvent && eventContext?.runId && eventContext?.workflow) {
-            emitEvent({
-              type: 'llm.thought',
-              timestamp: new Date().toISOString(),
-              runId: eventContext.runId,
-              workflow: eventContext.workflow,
-              stepId: step.id,
-              content: `[Tool Result] ${(part as any).toolName}: ${JSON.stringify((part as any).result)}`,
-              source: 'reasoning',
-            });
+      let lastTurnText = '';
+      let result: any;
+
+      while (iterations < maxIterations) {
+        iterations++;
+        logger.debug(`[llm-executor] --- Turn ${iterations} ---`);
+
+        const coreMessages = mapToCoreMessages(currentMessages);
+
+        try {
+          result = await streamText({
+            model: languageModel,
+            system: systemPrompt,
+            messages: coreMessages,
+            tools: aiTools,
+            toolChoice: 'auto',
+            onChunk: (event: any) => {
+              if (event.chunk.type === 'text-delta') {
+                handleStreamChunk(event.chunk.text);
+              }
+            },
+            abortSignal,
+          } as any);
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          logger.error(`[llm-executor] T${iterations} Error: ${errMsg}`);
+          fullText = fullText || `Error: ${errMsg}`;
+          break;
+        }
+
+        let turnText = '';
+        const toolCalls: any[] = [];
+        let hasError = false;
+
+        for await (const part of result.fullStream) {
+          if (part.type === 'text-delta') {
+            turnText += part.text;
+            fullText += part.text;
+            lastTurnText = turnText;
+          } else if (part.type === 'tool-call') {
+            toolCalls.push(part);
+          } else if (part.type === 'error') {
+            hasError = true;
+            logger.error(`[llm-executor] T${iterations} Stream error: ${part.error}`);
           }
         }
+
+        // Update usage
+        const usage = await result.usage;
+        totalUsage.prompt_tokens += usage?.inputTokens ?? 0;
+        totalUsage.completion_tokens += usage?.outputTokens ?? 0;
+        totalUsage.total_tokens += (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+
+        // Update history
+        currentMessages.push({
+          role: 'assistant',
+          content: turnText,
+          tool_calls: toolCalls.map(tc => ({
+            id: tc.toolCallId,
+            type: 'function',
+            function: {
+              name: tc.toolName,
+              arguments: JSON.stringify(tc.args || tc.input || {})
+            }
+          }))
+        });
+
+        if (hasError) break;
+
+        if (toolCalls.length > 0) {
+          let turnRequiresSuspend = false;
+          let turnSuspendData: any = null;
+
+          for (const call of toolCalls) {
+            const tool = tools.find((t: any) => t.name === call.toolName);
+            if (tool) {
+              try {
+                const toolArgs = call.args || call.input || {};
+                const toolResult = await tool.execute(toolArgs);
+
+                currentMessages.push({
+                  role: 'tool',
+                  content: JSON.stringify(toolResult),
+                  tool_call_id: call.toolCallId,
+                  name: call.toolName,
+                } as any);
+
+                // Check suspension state AFTER executing (e.g. 'ask' tool)
+                if (requiresSuspend) {
+                  turnRequiresSuspend = true;
+                  turnSuspendData = suspendData;
+                  // We MUST NOT return yet; we need to finish responding to other tool calls in this turn.
+                }
+              } catch (e) {
+                currentMessages.push({
+                  role: 'tool',
+                  content: `Error: ${e instanceof Error ? e.message : String(e)}`,
+                  tool_call_id: call.toolCallId,
+                  name: call.toolName,
+                } as any);
+              }
+            } else {
+              // Respond to unknown tool calls to prevent API errors
+              const toolList = tools.map((t: any) => t.name).join(', ');
+              logger.error(`[llm-executor] Tool ${call.toolName} not found. Registered: ${toolList}`);
+              currentMessages.push({
+                role: 'tool',
+                content: `Error: Tool ${call.toolName} not found. Available: ${toolList}`,
+                tool_call_id: call.toolCallId,
+                name: call.toolName,
+              } as any);
+            }
+          }
+
+          if (turnRequiresSuspend) {
+            return {
+              status: 'suspended',
+              output: turnSuspendData,
+            } as any;
+          }
+          continue; // Next turn
+        }
+        break; // Finished
       }
 
+      if (pendingTransfer) {
+        logger.debug(`[llm-executor] Handoff to ${pendingTransfer.name}`);
+        activeAgent = pendingTransfer;
+        continue;
+      }
+
+      // Buffer handling
       if (!step.outputSchema) {
         flushStream();
       }
 
-      // Standardize history reconstruction using result.response
-      // AI SDK's result.response.messages contains the assistant/tool messages generated in this call.
-      // We merge them with our existing currentMessages to maintain full history across handoffs.
-      const response = await result.response;
-      const responseMessages = response.messages;
-      const newMessages = mapFromCoreMessages(responseMessages);
+      const finalOutputText = await result.text;
+      logger.debug(`[llm-executor] Final turn result.text length: ${finalOutputText?.length || 0}`);
+      logger.debug(`[llm-executor] Accumulated fullText length: ${fullText?.length || 0}`);
 
-      // Merge strategy: Keep all existing messages (user prompts + previous assistant/tool exchanges)
-      // and append new messages from this turn, avoiding duplicates by role/content matching
-      const existingNonSystem = currentMessages.filter((m) => m.role !== 'system');
-      const newNonDuplicate = newMessages.filter(
-        (nm) =>
-          !existingNonSystem.some(
-            (em) =>
-              em.role === nm.role &&
-              em.content === nm.content &&
-              em.tool_call_id === nm.tool_call_id
-          )
-      );
-      currentMessages = [...existingNonSystem, ...newNonDuplicate];
-
-      const usageObj = await result.usage;
-      const totalUsage = {
-        prompt_tokens: usageObj?.inputTokens ?? 0,
-        completion_tokens: usageObj?.outputTokens ?? 0,
-        total_tokens: (usageObj?.inputTokens ?? 0) + (usageObj?.outputTokens ?? 0),
-      };
-
-      if (requiresSuspend) {
-        return {
-          status: 'suspended',
-          output: { messages: currentMessages, ...suspendData },
-          usage: totalUsage,
-        };
-      }
-
-      if (pendingTransfer) {
-        activeAgent = pendingTransfer;
-        logger.log(`  🔁 Handoff: Switching to agent ${activeAgent.name}`);
-        // Loop continues with new agent and updated history
-        continue;
-      }
-
-      // If no transfer, we are done.
+      let output: any = fullText;
 
       // Handle Output Schema parsing if needed
-      let output: any = fullText;
       if (step.outputSchema) {
+        // Prioritize lastTurnText if available and fullText is cluttered
+        logger.debug(`[llm-executor] lastTurnText (${lastTurnText.length} chars): ${lastTurnText.substring(0, 300)}...`);
+        logger.debug(`[llm-executor] fullText (${fullText.length} chars): ${fullText.substring(0, 300)}...`);
+        const candidate = lastTurnText.trim() ? lastTurnText : fullText;
         try {
-          output = extractJson(fullText);
+          output = extractJson(candidate);
         } catch (e) {
           logger.error(
-            '  ⚠️  Failed to parse output as JSON. Retrying not implemented in simple refactor.'
+            '  ⚠️  Failed to parse output as JSON. Falling back to accumulated fullText.'
           );
-          logger.warn(`  Response content (first 500 chars): ${fullText.substring(0, 500)}...`);
+          try {
+            output = extractJson(fullText);
+          } catch (e2) {
+            const contentPreview = String(fullText).substring(0, 500);
+            logger.warn(`  Response content (first 500 chars): ${contentPreview}...`);
+            throw new Error(
+              `Failed to extract valid JSON from LLM response. The model may have returned non-JSON text or an invalid format. Preview: ${contentPreview.substring(0, 200)}...`
+            );
+          }
         }
       }
+
 
       return {
         status: 'success',
