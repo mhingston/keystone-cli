@@ -443,7 +443,7 @@ export async function executeLlmStep(
           parameters: jsonSchema(safeParameters),
           execute: async (args: any, { toolCallId }: { toolCallId: string }) => {
             logger.log(
-              `  🛠️  Tool Call: ${name}${Object.keys(args).length ? ` ${safeJsonStringify(args)}` : ''}`
+              `  🛠️  Tool Call: ${name}${Object.keys(args || {}).length ? ` ${safeJsonStringify(args)}` : ''}`
             );
             try {
               return await execute(args, { toolCallId });
@@ -672,6 +672,30 @@ export async function executeLlmStep(
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') {
           fullText += part.text;
+        } else if (part.type === 'tool-call') {
+          if (emitEvent && eventContext?.runId && eventContext?.workflow) {
+            emitEvent({
+              type: 'llm.thought',
+              timestamp: new Date().toISOString(),
+              runId: eventContext.runId,
+              workflow: eventContext.workflow,
+              stepId: step.id,
+              content: `[Tool Call] ${(part as any).toolName}(${JSON.stringify((part as any).args)})`,
+              source: 'reasoning',
+            });
+          }
+        } else if (part.type === 'tool-result') {
+          if (emitEvent && eventContext?.runId && eventContext?.workflow) {
+            emitEvent({
+              type: 'llm.thought',
+              timestamp: new Date().toISOString(),
+              runId: eventContext.runId,
+              workflow: eventContext.workflow,
+              stepId: step.id,
+              content: `[Tool Result] ${(part as any).toolName}: ${JSON.stringify((part as any).result)}`,
+              source: 'reasoning',
+            });
+          }
         }
       }
 

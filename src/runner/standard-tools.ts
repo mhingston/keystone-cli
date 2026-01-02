@@ -39,7 +39,7 @@ export const STANDARD_TOOLS: AgentTool[] = [
       id: 'std_read_file_lines',
       type: 'script',
       run: `
-        (function() {
+        return (function() {
           const fs = require('node:fs');
           const path = require('node:path');
           const filePath = args.path;
@@ -113,7 +113,7 @@ export const STANDARD_TOOLS: AgentTool[] = [
       id: 'std_list_files',
       type: 'script',
       run: `
-        (function() {
+        return (function() {
           const fs = require('node:fs');
           const path = require('node:path');
           const dir = args.path || '.';
@@ -166,7 +166,7 @@ export const STANDARD_TOOLS: AgentTool[] = [
       id: 'std_search_content',
       type: 'script',
       run: `
-        (async function() {
+        return (async function() {
           const fs = require('node:fs');
           const path = require('node:path');
           const { globSync } = require('glob');
@@ -358,7 +358,7 @@ export const STANDARD_TOOLS: AgentTool[] = [
       id: 'std_ast_grep_search',
       type: 'script',
       run: `
-        (function() {
+        return (function() {
           const fs = require('node:fs');
           const path = require('node:path');
           const { Lang, parse } = require('@ast-grep/napi');
@@ -442,7 +442,7 @@ export const STANDARD_TOOLS: AgentTool[] = [
       id: 'std_ast_grep_replace',
       type: 'script',
       run: `
-        (function() {
+        return (function() {
           const fs = require('node:fs');
           const path = require('node:path');
           const { Lang, parse } = require('@ast-grep/napi');
@@ -565,12 +565,12 @@ export function validateStandardToolSecurity(
       'ast_grep_replace',
     ].includes(toolName)
   ) {
-    const rawPath = args.path || args.dir || '.';
+    const rawPath = (args as any).path || (args as any).dir || '.';
     assertWithinCwd(rawPath);
 
     // For AST tools, validate all paths in the array
-    if (['ast_grep_search', 'ast_grep_replace'].includes(toolName) && Array.isArray(args.paths)) {
-      for (const p of args.paths) {
+    if (['ast_grep_search', 'ast_grep_replace'].includes(toolName) && Array.isArray((args as any).paths)) {
+      for (const p of (args as any).paths) {
         assertWithinCwd(p);
       }
     }
@@ -578,8 +578,8 @@ export function validateStandardToolSecurity(
 
   // 2. Check shell risk for run_command and guard working directory
   if (toolName === 'run_command') {
-    assertWithinCwd(args.dir, 'Directory');
-    if (!options.allowInsecure && detectShellInjectionRisk(args.command)) {
+    assertWithinCwd((args as any).dir, 'Directory');
+    if (!options.allowInsecure && detectShellInjectionRisk((args as any).command)) {
       throw new Error(
         `Security Error: Command contains risky shell characters. Use 'allowInsecure: true' on the llm step to execute this.`
       );
