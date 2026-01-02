@@ -157,7 +157,8 @@ export class DynamicProviderRegistry {
         let pkg: any;
         try {
           // Try local project first
-          pkg = await import(config.package);
+          const localPath = userRequire.resolve(config.package);
+          pkg = await import(localPath);
         } catch {
           try {
             const pkgPath = userRequire.resolve(config.package);

@@ -217,7 +217,13 @@ export class ExpressionEvaluator {
    */
   static evaluate(template: string, context: ExpressionContext): unknown {
     if (ExpressionEvaluator.strictMode && (template.includes('${{') || template.includes('}}'))) {
-      ExpressionEvaluator.validateTemplate(template);
+      try {
+        ExpressionEvaluator.validateTemplate(template);
+      } catch (error) {
+        console.error(`[ExpressionEvaluator] Template validation failed for: "${template}"`);
+        console.error(`[ExpressionEvaluator] Error: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
     }
 
     const hasExpr = ExpressionEvaluator.hasExpression(template);
@@ -328,7 +334,7 @@ export class ExpressionEvaluator {
           ) {
             throw new TypeError(
               'Security: Cannot evaluate object with custom toString() method. ' +
-                'Pass a string template instead.'
+              'Pass a string template instead.'
             );
           }
         }
@@ -378,6 +384,11 @@ export class ExpressionEvaluator {
       const nodeCounter = { count: 0 };
       return ExpressionEvaluator.evaluateNode(ast, context, 0, nodeCounter);
     } catch (error) {
+      console.error(`[ExpressionEvaluator] Failed to evaluate expression: "${expr}"`);
+      console.error(`[ExpressionEvaluator] Context keys: ${Object.keys(context).join(', ')}`);
+      if (context.inputs) console.error(`[ExpressionEvaluator] Inputs keys: ${Object.keys(context.inputs).join(', ')}`);
+      console.error(`[ExpressionEvaluator] Error: ${error instanceof Error ? error.message : String(error)}`);
+
       throw new Error(
         `Failed to evaluate expression "${expr}": ${error instanceof Error ? error.message : String(error)}`
       );

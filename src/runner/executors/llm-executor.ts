@@ -589,13 +589,28 @@ export async function executeLlmStep(
             required: ['question'],
           },
           async (args) => {
+            // Robustly handle missing question
+            let question = args.question;
+
+            // Fallbacks for common hallucinations
+            if (!question) {
+              question = args.text || args.message || args.query || args.prompt;
+            }
+
+            if (!question) {
+              logger.warn(`  ⚠️  Tool 'ask' called without a question. Args: ${safeJsonStringify(args)}`);
+              // Fallback: Suspend with a placeholder instead of erroring to the model, 
+              // which often leads to "..." responses and JSON parse failures.
+              question = "(The agent failed to formulate a specific question. Please provide any relevant guidance or press Enter to proceed.)";
+            }
+
             if (process.stdin.isTTY) {
-              logger.log(`\n🤔 Question from ${activeAgent.name}: ${args.question}`);
+              logger.log(`\n🤔 Question from ${activeAgent.name}: ${question}`);
               const result = await executeStepFn(
                 {
                   id: `${step.id}-clarify`,
                   type: 'human',
-                  message: args.question,
+                  message: question,
                   inputType: 'text',
                 } as Step,
                 context
@@ -603,7 +618,7 @@ export async function executeLlmStep(
               return String(result.output);
             }
             requiresSuspend = true;
-            suspendData = { question: args.question }; // Will abort loop
+            suspendData = { question: question }; // Will abort loop
             return 'Suspended for user input';
           }
         );
@@ -718,6 +733,7 @@ export async function executeLlmStep(
           logger.error(
             '  ⚠️  Failed to parse output as JSON. Retrying not implemented in simple refactor.'
           );
+          logger.warn(`  Response content (first 500 chars): ${fullText.substring(0, 500)}...`);
         }
       }
 
