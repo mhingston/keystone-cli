@@ -1,4 +1,5 @@
 import type { Workflow, WorkflowInput } from '../../parser/schema.ts';
+import { Redactor } from '../../utils/redactor.ts';
 import { validateJsonSchema } from '../../utils/schema-validator.ts';
 import { SecretManager } from './secret-manager.ts';
 
@@ -6,7 +7,7 @@ import { SecretManager } from './secret-manager.ts';
  * Service for validating workflow inputs and applying defaults.
  */
 export class WorkflowValidator {
-  public static readonly REDACTED_PLACEHOLDER = '[REDACTED]';
+  public static readonly REDACTED_PLACEHOLDER = Redactor.REDACTED_PLACEHOLDER;
 
   constructor(
     private workflow: Workflow,

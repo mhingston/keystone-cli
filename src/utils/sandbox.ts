@@ -109,6 +109,12 @@ export class SafeSandbox {
     options: SandboxOptions = {}
   ): Promise<unknown> {
     // Show warning once per process
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'Security Error: Insecure VM fallback is disabled in production environment. Use process isolation.'
+      );
+    }
+
     if (!SafeSandbox.warned) {
       SafeSandbox.logger.warn(
         '\n⚠️  SECURITY WARNING: Using Bun/Node.js built-in VM for script execution.\n' +

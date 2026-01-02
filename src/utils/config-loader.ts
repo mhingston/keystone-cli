@@ -20,6 +20,9 @@ export class ConfigLoader {
     const output = { ...target };
     if (source && typeof source === 'object' && !Array.isArray(source)) {
       for (const key of Object.keys(source)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          continue;
+        }
         if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
           if (!(key in target)) {
             Object.assign(output, { [key]: source[key] });
@@ -30,6 +33,7 @@ export class ConfigLoader {
             );
           }
         } else {
+          // Arrays and primitives are replaced, not merged. This is intentional for configuration lists.
           Object.assign(output, { [key]: source[key] });
         }
       }

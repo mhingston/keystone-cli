@@ -24,6 +24,7 @@ import type { ExpressionContext } from '../expression/evaluator';
 import * as agentParser from '../parser/agent-parser';
 import type { Agent, LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
+import * as llmAdapter from './llm-adapter';
 import type { StepResult } from './step-executor';
 
 // Note: mock.module() for llm-adapter is now handled by the preload file
@@ -43,6 +44,7 @@ interface MockToolCall {
 describe('llm-executor with tools and MCP', () => {
   let resolveAgentPathSpy: ReturnType<typeof spyOn>;
   let parseAgentSpy: ReturnType<typeof spyOn>;
+  let getModelSpy: ReturnType<typeof spyOn>;
 
   const createMockMcpClient = (
     options: {
@@ -71,7 +73,7 @@ describe('llm-executor with tools and MCP', () => {
   };
 
   beforeAll(async () => {
-    mockGetModel.mockResolvedValue(createUnifiedMockModel());
+    getModelSpy = spyOn(llmAdapter, 'getModel').mockResolvedValue(createUnifiedMockModel() as any);
 
     // Set up config
     ConfigLoader.setConfig({
@@ -122,6 +124,7 @@ describe('llm-executor with tools and MCP', () => {
   afterEach(() => {
     resolveAgentPathSpy?.mockRestore();
     parseAgentSpy?.mockRestore();
+    getModelSpy?.mockClear();
   });
 
   afterAll(() => {

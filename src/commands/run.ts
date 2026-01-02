@@ -24,6 +24,23 @@ export function registerRunCommand(program: Command): void {
     .option('--resume', 'Resume the last run of this workflow if it failed or was paused')
     .option('--explain', 'Show detailed error context with suggestions on failure')
     .action(async (workflowPathArg, options) => {
+      // Security Warning
+      if (!options.events) {
+        console.warn(
+          '\x1b[33m%s\x1b[0m',
+          '⚠️  SECURITY WARNING: This tool executes code from the current directory.'
+        );
+        console.warn(
+          '\x1b[33m%s\x1b[0m',
+          '   - Local provider scripts in ./providers/ are loaded and executed.'
+        );
+        console.warn(
+          '\x1b[33m%s\x1b[0m',
+          '   - Ensure you trust the code in this directory before running.'
+        );
+        console.warn('');
+      }
+
       const inputs = parseInputs(options.input);
       let resolvedPath: string | undefined;
 

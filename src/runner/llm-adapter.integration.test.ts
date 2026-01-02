@@ -54,10 +54,13 @@ describe('LLM Adapter (AI SDK)', () => {
         model_mappings: {},
       } as any);
 
-      // With shared setupLlmMocks, we expect 'mock' provider
+      // Mock the provider to return a callable function that returns a mock model
+      const mockProvider = (modelId: string) => mockLanguageModel;
+      spyOn(DynamicProviderRegistry, 'getProvider').mockResolvedValue(() => mockProvider);
+
       const model = (await getModel('model-name')) as any;
-      expect(model.modelId).toBe('mock-model');
-      expect(model.provider).toBe('mock');
+      expect(model.modelId).toBe('test-model');
+      expect(model.provider).toBe('test-provider');
     });
 
     it('should handle auth token retrieval for standard providers', async () => {
@@ -73,11 +76,13 @@ describe('LLM Adapter (AI SDK)', () => {
         model_mappings: {},
       } as any);
 
+      // Mock the provider to return a callable function
+      const mockProvider = (modelId: string) => mockLanguageModel;
+      spyOn(DynamicProviderRegistry, 'getProvider').mockResolvedValue(() => mockProvider);
       spyOn(ConfigLoader, 'getSecret').mockReturnValue('fake-token');
 
       const model = (await getModel('gpt-4')) as any;
-      // With global mock, we mostly check it didn't throw and loaded the 'mock' provider
-      expect(model.provider).toBe('mock');
+      expect(model.provider).toBe('test-provider');
       expect(ConfigLoader.getSecret).toHaveBeenCalledWith('OPENAI_API_KEY');
     });
   });

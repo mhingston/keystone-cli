@@ -15,6 +15,8 @@ const mockDb = {
   completeStep: async () => {},
   getStepIterations: async () => [],
   batchCreateSteps: async () => {},
+  batchUpdateSteps: async () => {},
+  countStepIterations: async () => 0,
 } as unknown as WorkflowDb;
 
 const logger = new ConsoleLogger();

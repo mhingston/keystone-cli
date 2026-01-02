@@ -35,6 +35,8 @@ export async function executeSubWorkflow(
     parentDepth: number;
     parentOptions: any;
     abortSignal?: AbortSignal;
+    stepExecutionId?: string;
+    parentDb?: any; // WorkflowDb
   }
 ): Promise<StepResult> {
   if (options.abortSignal?.aborted) {
@@ -57,12 +59,26 @@ export async function executeSubWorkflow(
     ...options.parentOptions,
     inputs,
     dbPath: options.parentDbPath,
+    db: options.parentDb, // Reuse existing DB connection
     logger: options.parentLogger,
     mcpManager: options.parentMcpManager,
     workflowDir: subWorkflowDir,
     depth: options.parentDepth + 1,
     signal: options.abortSignal,
   });
+
+  // Track sub-workflow run ID in parent step metadata for rollback safety
+  if (options.stepExecutionId && options.parentDb) {
+    try {
+      await options.parentDb.updateStepMetadata(options.stepExecutionId, {
+        __subRunId: subRunner.runId,
+      });
+    } catch (error) {
+      options.parentLogger.warn(
+        `Failed to store sub-workflow run ID in metadata: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 
   try {
     const output = await subRunner.run();

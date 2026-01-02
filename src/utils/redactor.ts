@@ -16,6 +16,7 @@ export interface RedactorOptions {
 }
 
 export class Redactor {
+  public static readonly REDACTED_PLACEHOLDER = '***REDACTED***';
   private patterns: RegExp[] = [];
   private combinedPattern: RegExp | null = null;
   public readonly maxSecretLength: number;
@@ -115,6 +116,8 @@ export class Redactor {
 
     // Build regex patterns
     // Optimization: Group secrets into a single combined regex where possible
+    // ReDoS Safety: We escape all special characters, so the regex consists purely of literal strings (alternations).
+    // This avoids backtracking issues common in ReDoS attacks.
     const parts: string[] = [];
 
     for (const secret of uniqueSecrets) {
@@ -134,6 +137,8 @@ export class Redactor {
     }
 
     if (parts.length > 0) {
+      // Note: If thousands of secrets are present, this regex compilation might be slow,
+      // but it remains safe from catastrophic backtracking due to being a simple alternation of literals.
       this.combinedPattern = new RegExp(parts.join('|'), 'g');
     }
 
@@ -163,7 +168,7 @@ export class Redactor {
       return strText;
     }
 
-    return strText.replace(this.combinedPattern, '***REDACTED***');
+    return strText.replace(this.combinedPattern, Redactor.REDACTED_PLACEHOLDER);
   }
 
   /**
@@ -178,25 +183,50 @@ export class Redactor {
    * This is the recommended method for redacting complex data structures like
    * step outputs before storage, as it preserves JSON serializability.
    */
-  redactValue(value: unknown): unknown {
+  redactValue(value: unknown, visited = new WeakSet<object>()): unknown {
     if (typeof value === 'string') {
       return this.redact(value);
     }
 
-    if (Array.isArray(value)) {
-      return value.map((item) => this.redactValue(item));
+    if (value === null || typeof value !== 'object') {
+      return value;
     }
 
-    if (value !== null && typeof value === 'object') {
+    // Handle circular references
+    if (visited.has(value)) {
+      return '[Circular]';
+    }
+    visited.add(value);
+
+    try {
+      if (Array.isArray(value)) {
+        return value.map((item) => this.redactValue(item, visited));
+      }
+
       const redacted: Record<string, unknown> = {};
       for (const [key, val] of Object.entries(value)) {
-        redacted[key] = this.redactValue(val);
+        redacted[key] = this.redactValue(val, visited);
       }
       return redacted;
+    } finally {
+      // Optional: remove from visited if we want to allow the same object
+      // in different branches of the tree (DAG), but strictly strictly strictly
+      // to prevent infinite recursion, keeping it in visited is safer and faster.
+      // However, JSON.stringify behavior is to only block ancestors.
+      // For deep recursion protection, consistent with JSON.stringify's cycle detection,
+      // we should arguably NOT remove it if we want to blocking *any* recurrence,
+      // but to match JSON.stringify "circular" error, strictly it's ancestors.
+      // However, for a Redactor, reusing the same object instance in multiple places is fine.
+      // The issue is strictly CYCLES.
+      // So we should remove it from visited on exit to support DAGs?
+      // Actually, JSON.stringify throws on cycles. We want to return "[Circular]".
+      // Let's stick to safe cycle detection which requires tracking the current stack.
+      // BUT, `visited` is passed down. If we don't remove it, we block non-circular DAGs (diamond problem).
+      // e.g. A -> B, A -> C, B -> D, C -> D. D is visited twice.
+      // So we SHOULD remove it.
+      // wait, WeakSet doesn't have .delete? Yes it does.
+      visited.delete(value);
     }
-
-    // Primitives (numbers, booleans, null, undefined) pass through unchanged
-    return value;
   }
 }
 

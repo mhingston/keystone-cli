@@ -25,6 +25,7 @@ import type { ExpressionContext } from '../expression/evaluator';
 import * as agentParser from '../parser/agent-parser';
 import type { Agent, LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
+import * as llmAdapter from './llm-adapter';
 import type { StepResult } from './step-executor';
 
 // Note: mock.module() is now handled by the preload file
@@ -40,6 +41,7 @@ describe('Standard Tools Integration', () => {
   const testDir = join(process.cwd(), '.e2e-tmp', 'standard-tools-test');
   let resolveAgentPathSpy: ReturnType<typeof spyOn>;
   let parseAgentSpy: ReturnType<typeof spyOn>;
+  let getModelSpy: ReturnType<typeof spyOn>;
 
   beforeAll(async () => {
     // Setup config before importing the executor
@@ -53,6 +55,9 @@ describe('Standard Tools Integration', () => {
       },
       model_mappings: {},
     } as any);
+
+    // Spy on getModel to return mock model
+    getModelSpy = spyOn(llmAdapter, 'getModel').mockResolvedValue(createUnifiedMockModel() as any);
 
     // Ensure the mock model is set up
     setupLlmMocks();
@@ -88,6 +93,7 @@ describe('Standard Tools Integration', () => {
   afterEach(() => {
     resolveAgentPathSpy?.mockRestore();
     parseAgentSpy?.mockRestore();
+    getModelSpy?.mockClear();
     resetLlmMocks();
   });
 

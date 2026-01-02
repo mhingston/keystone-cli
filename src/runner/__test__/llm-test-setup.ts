@@ -114,7 +114,6 @@ export function createUnifiedMockModel() {
             toolCallId: tc.toolCallId,
             toolName: tc.toolName,
             args: tc.args,
-            input: JSON.stringify(tc.args), // Add required input field
           });
         }
       }
@@ -178,8 +177,9 @@ export function createUnifiedMockModel() {
           if (response.message.content) {
             controller.enqueue({
               type: 'text-delta',
-              delta: response.message.content,
-              text: response.message.content,
+              index: 0,
+              textDelta: response.message.content,
+              delta: { text: response.message.content }, // legacy compatibility
             });
           }
 
@@ -191,12 +191,9 @@ export function createUnifiedMockModel() {
               typeof tc.function.arguments === 'string'
                 ? JSON.parse(tc.function.arguments)
                 : tc.function.arguments,
+            // Add these for v1/compatibility if needed by some internal AI SDK checks
             id: tc.id,
             name: tc.function.name,
-            input:
-              typeof tc.function.arguments === 'string'
-                ? tc.function.arguments
-                : JSON.stringify(tc.function.arguments),
           }));
 
           if (toolCalls?.length) {
@@ -251,6 +248,10 @@ export function setupLlmMocks() {
     },
     model_mappings: {
       'claude-*': 'anthropic',
+    },
+    engines: {
+      allowlist: {},
+      denylist: [],
     },
   } as any);
 

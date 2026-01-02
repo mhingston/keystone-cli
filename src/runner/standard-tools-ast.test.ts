@@ -142,7 +142,8 @@ describe('AST-Grep Tools', () => {
       };
 
       expect(() => {
-        vm.runInNewContext(script, sandbox);
+        // Wrap in async IIFE to support top-level return
+        vm.runInNewContext(`(async () => { ${script} })();`, sandbox);
       }).not.toThrow();
     });
   });
@@ -189,7 +190,8 @@ describe('AST-Grep Tools', () => {
       };
 
       expect(() => {
-        vm.runInNewContext(script, sandbox);
+        // Wrap in async IIFE to support top-level return
+        vm.runInNewContext(`(async () => { ${script} })();`, sandbox);
       }).not.toThrow();
     });
   });

@@ -1,6 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
 import { MemoryDb } from './memory-db';
+import { setupSqlite } from './sqlite-setup';
+
+// Initialize SQLite with custom library for extensions
+setupSqlite();
 
 const TEST_DB = '.keystone/test-memory.db';
 

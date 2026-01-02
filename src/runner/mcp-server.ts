@@ -248,14 +248,22 @@ export class MCPServer {
             const path = WorkflowRegistry.resolvePath(workflow_name);
             const workflow = WorkflowParser.loadWorkflow(path);
 
-            // Use a custom logger that captures logs for the MCP response
+            // Use a fixed-size ring buffer for logs to prevent memory leaks
+            const MAX_LOG_LINES = 1000;
             const logs: string[] = [];
+            const addLog = (msg: string) => {
+              if (logs.length >= MAX_LOG_LINES) {
+                logs.shift(); // Remove oldest
+              }
+              logs.push(msg);
+            };
+
             const logger = {
-              log: (msg: string) => logs.push(msg),
-              error: (msg: string) => logs.push(`ERROR: ${msg}`),
-              warn: (msg: string) => logs.push(`WARN: ${msg}`),
-              info: (msg: string) => logs.push(`INFO: ${msg}`),
-              debug: (msg: string) => logs.push(`DEBUG: ${msg}`),
+              log: (msg: string) => addLog(msg),
+              error: (msg: string) => addLog(`ERROR: ${msg}`),
+              warn: (msg: string) => addLog(`WARN: ${msg}`),
+              info: (msg: string) => addLog(`INFO: ${msg}`),
+              debug: (msg: string) => addLog(`DEBUG: ${msg}`),
             };
 
             const runner = this.runnerFactory(workflow, {
@@ -545,37 +553,58 @@ export class MCPServer {
             const runId = runner.getRunId();
 
             // Start the workflow asynchronously
-            runner.run().then(
-              async (outputs) => {
-                // Update DB with success on completion
-                await this.db.updateRunStatus(runId, 'success', outputs);
-              },
-              async (error) => {
-                // Update DB with failure
-                if (error instanceof WorkflowSuspendedError) {
-                  await this.db.updateRunStatus(runId, 'paused');
-                  this.sendNotification('notifications/keystone.human_input', {
-                    run_id: runId,
-                    workflow: workflow_name,
-                    status: 'paused',
-                    message: error.message,
-                    step_id: error.stepId,
-                    input_type: error.inputType,
-                    instructions:
-                      error.inputType === 'confirm'
-                        ? 'Use answer_human_input with input="confirm" to proceed.'
-                        : 'Use answer_human_input with the required text input.',
-                  });
-                } else {
-                  await this.db.updateRunStatus(
-                    runId,
-                    'failed',
-                    undefined,
-                    error instanceof Error ? error.message : String(error)
-                  );
+            // Start the workflow asynchronously
+            runner
+              .run()
+              .then(
+                async (outputs) => {
+                  try {
+                    // Update DB with success on completion
+                    await this.db.updateRunStatus(runId, 'success', outputs);
+                  } catch (e) {
+                    this.logger.error(
+                      `[McpServer] Failed to update success status for run ${runId}: ${e}`
+                    );
+                  }
+                },
+                async (error) => {
+                  try {
+                    // Update DB with failure
+                    if (error instanceof WorkflowSuspendedError) {
+                      await this.db.updateRunStatus(runId, 'paused');
+                      this.sendNotification('notifications/keystone.human_input', {
+                        run_id: runId,
+                        workflow: workflow_name,
+                        status: 'paused',
+                        message: error.message,
+                        step_id: error.stepId,
+                        input_type: error.inputType,
+                        instructions:
+                          error.inputType === 'confirm'
+                            ? 'Use answer_human_input with input="confirm" to proceed.'
+                            : 'Use answer_human_input with the required text input.',
+                      });
+                    } else {
+                      await this.db.updateRunStatus(
+                        runId,
+                        'failed',
+                        undefined,
+                        error instanceof Error ? error.message : String(error)
+                      );
+                    }
+                  } catch (e) {
+                    this.logger.error(
+                      `[McpServer] Failed to update failure status for run ${runId}: ${e}`
+                    );
+                  }
                 }
-              }
-            );
+              )
+              .catch((e) => {
+                // Catch any other errors in the promise chain construction
+                this.logger.error(
+                  `[McpServer] Unexpected error in async workflow execution for run ${runId}: ${e}`
+                );
+              });
 
             return {
               jsonrpc: '2.0',

@@ -107,9 +107,23 @@ const Dashboard = () => {
   }, [db]);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 2000);
-    return () => clearInterval(interval);
+    let timer: Timer;
+    let cancelled = false;
+
+    const loop = async () => {
+      if (cancelled) return;
+      await fetchData();
+      if (!cancelled) {
+        timer = setTimeout(loop, 2000);
+      }
+    };
+
+    void loop();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [fetchData]);
 
   useInput((input) => {

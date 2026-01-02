@@ -17,79 +17,79 @@ describe('ContextInjector', () => {
   });
 
   describe('findProjectRoot', () => {
-    it('should find project root with .git directory', () => {
+    it('should find project root with .git directory', async () => {
       fs.mkdirSync(path.join(tempDir, '.git'));
       const subDir = path.join(tempDir, 'src', 'components');
       fs.mkdirSync(subDir, { recursive: true });
 
-      const root = ContextInjector.findProjectRoot(subDir);
+      const root = await ContextInjector.findProjectRoot(subDir);
       expect(root).toBe(tempDir);
     });
 
-    it('should find project root with package.json', () => {
+    it('should find project root with package.json', async () => {
       fs.writeFileSync(path.join(tempDir, 'package.json'), '{}');
       const subDir = path.join(tempDir, 'lib');
       fs.mkdirSync(subDir, { recursive: true });
 
-      const root = ContextInjector.findProjectRoot(subDir);
+      const root = await ContextInjector.findProjectRoot(subDir);
       expect(root).toBe(tempDir);
     });
 
-    it('should return start path if no marker found', () => {
+    it('should return start path if no marker found', async () => {
       const subDir = path.join(tempDir, 'nomarker');
       fs.mkdirSync(subDir, { recursive: true });
 
-      const root = ContextInjector.findProjectRoot(subDir);
+      const root = await ContextInjector.findProjectRoot(subDir);
       expect(root).toBe(subDir);
     });
   });
 
   describe('scanDirectoryContext', () => {
-    it('should find README.md in parent directory', () => {
+    it('should find README.md in parent directory', async () => {
       fs.writeFileSync(path.join(tempDir, 'README.md'), '# Test Project');
       const subDir = path.join(tempDir, 'src');
       fs.mkdirSync(subDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, '.git')); // Mark project root
 
-      const context = ContextInjector.scanDirectoryContext(subDir, 3);
+      const context = await ContextInjector.scanDirectoryContext(subDir, 3);
       expect(context.readme).toBe('# Test Project');
     });
 
-    it('should find AGENTS.md in parent directory', () => {
+    it('should find AGENTS.md in parent directory', async () => {
       fs.writeFileSync(path.join(tempDir, 'AGENTS.md'), '# Agent Guidelines');
       const subDir = path.join(tempDir, 'src');
       fs.mkdirSync(subDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, '.git'));
 
-      const context = ContextInjector.scanDirectoryContext(subDir, 3);
+      const context = await ContextInjector.scanDirectoryContext(subDir, 3);
       expect(context.agentsMd).toBe('# Agent Guidelines');
     });
 
-    it('should prefer closer files over distant ones', () => {
+    it('should prefer closer files over distant ones', async () => {
       fs.writeFileSync(path.join(tempDir, 'README.md'), '# Root README');
       const subDir = path.join(tempDir, 'src');
       fs.mkdirSync(subDir, { recursive: true });
       fs.writeFileSync(path.join(subDir, 'README.md'), '# Src README');
       fs.mkdirSync(path.join(tempDir, '.git'));
 
-      const context = ContextInjector.scanDirectoryContext(subDir, 3);
+      const context = await ContextInjector.scanDirectoryContext(subDir, 3);
       expect(context.readme).toBe('# Src README');
     });
 
-    it('should respect depth limit', () => {
+    it('should respect depth limit', async () => {
       fs.mkdirSync(path.join(tempDir, '.git'));
       fs.writeFileSync(path.join(tempDir, 'README.md'), '# Root README');
       const deepDir = path.join(tempDir, 'a', 'b', 'c', 'd');
       fs.mkdirSync(deepDir, { recursive: true });
 
       // With depth 2, shouldn't find the README that's 4 levels up
-      const context = ContextInjector.scanDirectoryContext(deepDir, 2);
+      const context = await ContextInjector.scanDirectoryContext(deepDir, 2);
       expect(context.readme).toBeUndefined();
     });
   });
 
   describe('scanRules', () => {
-    it('should find cursor rules', () => {
+    it('should find cursor rules', async () => {
       fs.mkdirSync(path.join(tempDir, '.git'));
       fs.mkdirSync(path.join(tempDir, '.cursor', 'rules'), { recursive: true });
       fs.writeFileSync(
@@ -97,22 +97,22 @@ describe('ContextInjector', () => {
         'Always use TypeScript'
       );
 
-      const rules = ContextInjector.scanRules([path.join(tempDir, 'src', 'test.ts')]);
+      const rules = await ContextInjector.scanRules([path.join(tempDir, 'src', 'test.ts')]);
       expect(rules).toContain('Always use TypeScript');
     });
 
-    it('should find claude rules', () => {
+    it('should find claude rules', async () => {
       fs.mkdirSync(path.join(tempDir, '.git'));
       fs.mkdirSync(path.join(tempDir, '.claude', 'rules'), { recursive: true });
       fs.writeFileSync(path.join(tempDir, '.claude', 'rules', 'style.md'), 'Use 2 spaces');
 
-      const rules = ContextInjector.scanRules([path.join(tempDir, 'src', 'test.ts')]);
+      const rules = await ContextInjector.scanRules([path.join(tempDir, 'src', 'test.ts')]);
       expect(rules).toContain('Use 2 spaces');
     });
 
-    it('should return empty array if no rules directory', () => {
+    it('should return empty array if no rules directory', async () => {
       fs.mkdirSync(path.join(tempDir, '.git'));
-      const rules = ContextInjector.scanRules([path.join(tempDir, 'src', 'test.ts')]);
+      const rules = await ContextInjector.scanRules([path.join(tempDir, 'src', 'test.ts')]);
       expect(rules).toEqual([]);
     });
   });
@@ -152,8 +152,8 @@ describe('ContextInjector', () => {
   });
 
   describe('getContext', () => {
-    it('should return empty context when disabled', () => {
-      const context = ContextInjector.getContext(tempDir, [], {
+    it('should return empty context when disabled', async () => {
+      const context = await ContextInjector.getContext(tempDir, [], {
         enabled: false,
         search_depth: 3,
         sources: ['readme', 'agents_md', 'cursor_rules'],
@@ -161,12 +161,12 @@ describe('ContextInjector', () => {
       expect(context).toEqual({});
     });
 
-    it('should only return requested sources', () => {
+    it('should only return requested sources', async () => {
       fs.mkdirSync(path.join(tempDir, '.git'));
       fs.writeFileSync(path.join(tempDir, 'README.md'), '# Test');
       fs.writeFileSync(path.join(tempDir, 'AGENTS.md'), '# Agents');
 
-      const context = ContextInjector.getContext(tempDir, [], {
+      const context = await ContextInjector.getContext(tempDir, [], {
         enabled: true,
         search_depth: 3,
         sources: ['readme'],
@@ -175,7 +175,7 @@ describe('ContextInjector', () => {
       expect(context.agentsMd).toBeUndefined();
     });
 
-    it('should use cache on repeated calls', () => {
+    it('should use cache on repeated calls', async () => {
       fs.mkdirSync(path.join(tempDir, '.git'));
       fs.writeFileSync(path.join(tempDir, 'README.md'), '# Original');
 
@@ -186,14 +186,14 @@ describe('ContextInjector', () => {
       };
 
       // First call
-      const context1 = ContextInjector.getContext(tempDir, [], config);
+      const context1 = await ContextInjector.getContext(tempDir, [], config);
       expect(context1.readme).toBe('# Original');
 
       // Modify file
       fs.writeFileSync(path.join(tempDir, 'README.md'), '# Modified');
 
       // Second call should return cached value
-      const context2 = ContextInjector.getContext(tempDir, [], config);
+      const context2 = await ContextInjector.getContext(tempDir, [], config);
       expect(context2.readme).toBe('# Original');
     });
   });

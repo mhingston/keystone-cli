@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { WorkflowDb } from '../../db/workflow-db.ts';
+import type { StepBatchUpdate, WorkflowDb } from '../../db/workflow-db.ts';
 import { type ExpressionContext, ExpressionEvaluator } from '../../expression/evaluator.ts';
 import type { Step } from '../../parser/schema.ts';
 import { StepStatus, type StepStatusType, WorkflowStatus } from '../../types/status.ts';
-import { LIMITS } from '../../utils/constants.ts';
 import { ConfigLoader } from '../../utils/config-loader.ts';
+import { LIMITS } from '../../utils/constants.ts';
 import type { Logger } from '../../utils/logger.ts';
 import type { ResourcePoolManager } from '../resource-pool.ts';
 import type { ForeachStepContext, StepContext } from '../workflow-state.ts';
@@ -13,7 +13,9 @@ import { WorkflowSuspendedError } from './types.ts';
 export type ExecuteStepCallback = (
   step: Step,
   context: ExpressionContext,
-  stepExecId: string
+  stepExecId: string,
+  idempotencyContext?: any,
+  options?: { skipStatusUpdates?: boolean }
 ) => Promise<StepContext>;
 
 export class ForeachExecutor {
@@ -25,7 +27,27 @@ export class ForeachExecutor {
     private executeStepFn: ExecuteStepCallback,
     private abortSignal?: AbortSignal,
     private resourcePool?: ResourcePoolManager
-  ) { }
+  ) {}
+
+  private writeQueue: StepBatchUpdate[] = [];
+  private flushPromise: Promise<void> = Promise.resolve();
+
+  private async flushWriteQueue() {
+    if (this.writeQueue.length === 0) return;
+    const updates = this.writeQueue.splice(0); // Take all
+
+    // Chain flush operations to ensure sequential execution
+    this.flushPromise = this.flushPromise.then(async () => {
+      try {
+        await this.db.batchUpdateSteps(updates);
+      } catch (e) {
+        this.logger.error(`Failed to flush batch updates for foreach executor: ${e}`);
+        // If critical persistence fails, we should probably stop?
+        // Or retry? batchUpdateSteps uses withRetry.
+      }
+    });
+    await this.flushPromise;
+  }
 
   /**
    * Aggregate outputs from multiple iterations of a foreach step
@@ -99,7 +121,7 @@ export class ForeachExecutor {
     if (items.length > LIMITS.MAX_FOREACH_ITERATIONS) {
       throw new Error(
         `Foreach step "${step.id}" exceeds maximum iteration limit of ${LIMITS.MAX_FOREACH_ITERATIONS}. ` +
-        `Got ${items.length} items. Consider batching or reducing the dataset.`
+          `Got ${items.length} items. Consider batching or reducing the dataset.`
       );
     }
 
@@ -167,8 +189,14 @@ export class ForeachExecutor {
       const existingIterations = new Map<number, any>();
       if (shouldCheckDb) {
         try {
-          // Use getStepIterations(runId, stepId) for optimized fetch
-          const iterations = await this.db.getStepIterations(runId, step.id);
+          // Check count first to decide if we should load outputs
+          const count = await this.db.countStepIterations(runId, step.id);
+          const isLarge = count > 500; // Same threshold as LARGE_DATASET_THRESHOLD
+
+          // optimized fetch
+          const iterations = await this.db.getStepIterations(runId, step.id, {
+            includeOutput: !isLarge,
+          });
           for (const s of iterations) {
             if (typeof s.iteration_index === 'number') {
               existingIterations.set(s.iteration_index, s);
@@ -226,6 +254,15 @@ export class ForeachExecutor {
             } as StepContext;
             continue;
           }
+          if (existingExec) {
+            // It exists but is not successful (e.g. failed/running/pending).
+            // We need to register its ID so we can retry/resume it if needed.
+            // If the policy is to Retry, we might reuse the ID or validly continue.
+            // For now, let's reuse the ID ensuring iterationIds has it.
+            if (existingExec.id) {
+              iterationIds.set(i, existingExec.id);
+            }
+          }
         }
 
         // Needs execution
@@ -239,7 +276,15 @@ export class ForeachExecutor {
         await this.db.batchCreateSteps(toCreate);
       }
 
+      // Start the flusher loop
+      const flushInterval = setInterval(() => {
+        this.flushWriteQueue();
+      }, 100);
+
       // Worker pool implementation
+      const LARGE_DATASET_THRESHOLD = 500;
+      const isLargeDataset = items.length > LARGE_DATASET_THRESHOLD;
+
       let currentIndex = 0;
       let aborted = false;
       const workers = new Array(Math.min(concurrencyLimit, items.length))
@@ -296,21 +341,81 @@ export class ForeachExecutor {
 
                 this.logger.debug(`  ⤷ [${i + 1}/${items.length}] Processing iteration...`);
 
-                // Execute step
-                itemResults[i] = await this.executeStepFn(step, itemContext, stepExecId);
+                // Queue START event
+                this.writeQueue.push({
+                  type: 'start',
+                  id: stepExecId,
+                  data: { status: StepStatus.RUNNING, startedAt: new Date().toISOString() },
+                });
+
+                // Execute step with skipStatusUpdates
+                const result = await this.executeStepFn(step, itemContext, stepExecId, undefined, {
+                  skipStatusUpdates: true,
+                });
+
+                // Memory Optimization: If large dataset, don't store the full output in memory if possible.
+                if (isLargeDataset) {
+                  // Keep a lightweight record
+                  itemResults[i] = {
+                    status: result.status,
+                    output: {
+                      _truncated: true,
+                      _warning: 'Output dropped for memory optimization',
+                    },
+                    outputs: {},
+                    error: result.error,
+                  };
+                  if (result.usage) itemResults[i].usage = result.usage;
+
+                  // Explicitly clear the large result object to help GC
+                  if (result.output) {
+                    result.output = null;
+                  }
+                } else {
+                  itemResults[i] = result;
+                }
+
+                // Queue COMPLETE event
+                this.writeQueue.push({
+                  type: 'complete',
+                  id: stepExecId,
+                  data: {
+                    status: result.status,
+                    output: result.output,
+                    error: result.error,
+                    usage: result.usage,
+                    completedAt: new Date().toISOString(),
+                  },
+                });
 
                 // Track result size to prevent memory exhaustion
-                if (itemResults[i]?.output !== undefined) {
+                if (!isLargeDataset && itemResults[i]?.output !== undefined) {
                   try {
-                    estimatedResultsBytes += JSON.stringify(itemResults[i].output).length;
+                    const output = itemResults[i].output;
+                    // Approximate size of this item only, to avoid O(n^2) behavior
+                    let itemSize = 0;
+                    if (typeof output === 'string') {
+                      itemSize = output.length;
+                    } else if (output === null) {
+                      itemSize = 4;
+                    } else if (typeof output === 'object') {
+                      // We use a simple heuristic for object size here.
+                      // If it's already a very tight limit, we could use JSON.stringify(output).length
+                      // but even that could be slow for many large objects.
+                      // For now, let's use a very safe heuristic or a quick JSON.stringify.
+                      itemSize = JSON.stringify(output).length;
+                    } else {
+                      itemSize = String(output).length;
+                    }
+
+                    estimatedResultsBytes += itemSize;
                   } catch {
-                    // If serialization fails, estimate based on type
-                    estimatedResultsBytes += 1024;
+                    estimatedResultsBytes += 1024; // Fallback estimate
                   }
                   if (estimatedResultsBytes > LIMITS.MAX_FOREACH_RESULTS_BYTES) {
                     throw new Error(
                       `Foreach step "${step.id}" accumulated results exceed maximum size of ` +
-                      `${LIMITS.MAX_FOREACH_RESULTS_BYTES} bytes. Consider reducing output size or batching.`
+                        `${LIMITS.MAX_FOREACH_RESULTS_BYTES} bytes. Consider reducing output size or batching.`
                     );
                   }
                 }
@@ -319,13 +424,27 @@ export class ForeachExecutor {
                   itemResults[i].status === StepStatus.FAILED ||
                   itemResults[i].status === StepStatus.SUSPENDED
                 ) {
-                  aborted = true;
+                  if (step.failFast !== false) {
+                    aborted = true;
+                  }
                 }
               } finally {
                 release?.();
               }
             } catch (error) {
               if (error instanceof WorkflowSuspendedError) {
+                // If suspended, we need to mark the item as suspended in DB so resumption works
+                this.writeQueue.push({
+                  type: 'complete',
+                  id: stepExecId,
+                  data: {
+                    status: StepStatus.SUSPENDED,
+                    error: error.message,
+                    completedAt: new Date().toISOString(),
+                  },
+                });
+                await this.flushWriteQueue();
+
                 itemResults[i] = {
                   status: StepStatus.SUSPENDED,
                   output: null,
@@ -335,13 +454,32 @@ export class ForeachExecutor {
                 aborted = true;
                 return;
               }
-              aborted = true;
+              // For other errors, queue failure
+              this.writeQueue.push({
+                type: 'complete',
+                id: stepExecId,
+                data: {
+                  status: StepStatus.FAILED,
+                  error: error instanceof Error ? error.message : String(error),
+                  completedAt: new Date().toISOString(),
+                },
+              });
+
+              if (step.failFast !== false) {
+                aborted = true;
+              }
               throw error;
             }
           }
         });
 
-      const workerResults = await Promise.allSettled(workers);
+      let workerResults: PromiseSettledResult<any>[];
+      try {
+        workerResults = await Promise.allSettled(workers);
+      } finally {
+        clearInterval(flushInterval);
+        await this.flushWriteQueue();
+      }
 
       // Check if any worker rejected (this would be due to an unexpected throw)
       const firstError = workerResults.find((r) => r.status === 'rejected') as
@@ -355,7 +493,17 @@ export class ForeachExecutor {
 
       // Aggregate results
       const outputs = itemResults.map((r) => r?.output);
-      const allSuccess = itemResults.every((r) => r?.status === StepStatus.SUCCESS);
+
+      // If large dataset, warn that outputs are truncated in memory
+      if (isLargeDataset) {
+        this.logger.warn(
+          '  ⚠️  Optimized memory usage for large foreach loop. Aggregated outputs in context will be empty.'
+        );
+      }
+
+      const allSuccess = itemResults.every(
+        (r) => r?.status === StepStatus.SUCCESS || r?.status === StepStatus.SKIPPED
+      );
       const anyFailed = itemResults.some((r) => r?.status === StepStatus.FAILED);
       const anySuspended = itemResults.some((r) => r?.status === StepStatus.SUSPENDED);
 
@@ -373,7 +521,8 @@ export class ForeachExecutor {
       );
 
       // Map child properties
-      const mappedOutputs = ForeachExecutor.aggregateOutputs(outputs);
+      // Optimization: Skip aggregation if large dataset to avoid OOM
+      const mappedOutputs = isLargeDataset ? {} : ForeachExecutor.aggregateOutputs(outputs);
 
       // Determine final status
       let finalStatus: (typeof StepStatus)[keyof typeof StepStatus] = StepStatus.FAILED;

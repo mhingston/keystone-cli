@@ -275,7 +275,7 @@ describe('WorkflowRunner', () => {
         {
           id: 's1',
           type: 'shell',
-          run: 'echo "hello"',
+          run: 'echo hello',
           needs: [],
           outputSchema: {
             type: 'object',
@@ -577,7 +577,7 @@ describe('WorkflowRunner', () => {
     const cached = await db.getStepCache(cacheKey);
     expect(cached).not.toBeNull();
     expect(cached?.output).not.toContain(secret);
-    expect(JSON.parse(cached?.output).stdout).toContain('***REDACTED***');
+    expect(JSON.parse(cached?.output || '{}').stdout).toContain('***REDACTED***');
     db.close();
 
     if (existsSync(memoizeDbPath)) rmSync(memoizeDbPath);
@@ -657,7 +657,7 @@ describe('WorkflowRunner', () => {
     const workflow: Workflow = {
       name: 'resume-wf',
       steps: [
-        { id: 's1', type: 'shell', run: 'echo "one"', needs: [] },
+        { id: 's1', type: 'shell', run: 'echo one', needs: [] },
         { id: 's2', type: 'shell', run: 'exit 1', needs: ['s1'] },
       ],
     } as unknown as Workflow;
@@ -677,8 +677,8 @@ describe('WorkflowRunner', () => {
     const fixedWorkflow: Workflow = {
       name: 'resume-wf',
       steps: [
-        { id: 's1', type: 'shell', run: 'echo "one"', needs: [] },
-        { id: 's2', type: 'shell', run: 'echo "two"', needs: ['s1'] },
+        { id: 's1', type: 'shell', run: 'echo one', needs: [] },
+        { id: 's2', type: 'shell', run: 'echo two', needs: ['s1'] },
       ],
       outputs: {
         out: '${{ steps.s1.output.stdout.trim() }}-${{ steps.s2.output.stdout.trim() }}',
@@ -756,7 +756,15 @@ describe('WorkflowRunner', () => {
   it('should redact secrets from outputs', async () => {
     const workflow: Workflow = {
       name: 'redaction-wf',
-      steps: [{ id: 's1', type: 'shell', run: 'echo "Secret is my-super-secret"', needs: [] }],
+      steps: [
+        {
+          id: 's1',
+          type: 'shell',
+          run: 'echo "Secret is my-super-secret"',
+          allowInsecure: true,
+          needs: [],
+        },
+      ],
       outputs: {
         out: '${{ steps.s1.output.stdout.trim() }}',
       },
@@ -779,7 +787,7 @@ describe('WorkflowRunner', () => {
       inputs: {
         token: { type: 'string', secret: true },
       },
-      steps: [{ id: 's1', type: 'shell', run: 'echo "ok"', needs: [] }],
+      steps: [{ id: 's1', type: 'shell', run: 'echo ok', needs: [] }],
     } as unknown as Workflow;
 
     ConfigLoader.setConfig({
@@ -793,6 +801,8 @@ describe('WorkflowRunner', () => {
       engines: { allowlist: {}, denylist: [] },
       concurrency: { default: 10, pools: { llm: 2, shell: 5, http: 10, engine: 2 } },
       expression: { strict: false },
+      embedding_dimension: 1536,
+      logging: { suppress_security_warning: false, suppress_ai_sdk_warnings: false },
     });
 
     const runner = new WorkflowRunner(workflow, {
@@ -881,7 +891,8 @@ describe('WorkflowRunner', () => {
   });
 
   it('should handle foreach suspension and resume correctly', async () => {
-    const resumeDbPath = 'test-foreach-resume.db';
+    const resumeDbPath = `test-foreach-resume-${randomUUID()}.db`;
+    if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
 
     const workflow: Workflow = {
@@ -965,7 +976,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should reuse persisted foreach items on resume even if inputs change', async () => {
-    const resumeDbPath = 'test-foreach-resume-items.db';
+    const resumeDbPath = `test-foreach-resume-items-${randomUUID()}.db`;
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
 
     const workflow: Workflow = {
@@ -1023,7 +1034,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should resume a workflow marked as running (crashed process)', async () => {
-    const resumeDbPath = 'test-running-resume.db';
+    const resumeDbPath = `test-running-resume-${randomUUID()}.db`;
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
 
     const workflow: Workflow = {
@@ -1105,7 +1116,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should allow cancellation via abortSignal', async () => {
-    const cancelDbPath = 'test-cancel.db';
+    const cancelDbPath = `test-cancel-${randomUUID()}.db`;
     if (existsSync(cancelDbPath)) rmSync(cancelDbPath);
 
     const workflow: Workflow = {
@@ -1130,7 +1141,7 @@ describe('WorkflowRunner', () => {
   });
 
   it('should resume from canceled state', async () => {
-    const resumeDbPath = 'test-cancel-resume.db';
+    const resumeDbPath = `test-cancel-resume-${randomUUID()}.db`;
     if (existsSync(resumeDbPath)) rmSync(resumeDbPath);
 
     const workflow: Workflow = {

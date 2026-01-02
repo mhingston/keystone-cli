@@ -140,6 +140,7 @@ export const BaseStepSchema = z.object({
   outputRetries: z.number().int().min(0).optional(), // Max retries for output validation failures
   repairStrategy: z.enum(['reask', 'repair', 'hybrid']).optional(), // Strategy for output repair
   compensate: z.lazy(() => StepSchema).optional(), // Compensation step to run on rollback
+  failFast: z.boolean().optional(), // Stop iteration on first failure (default true)
 });
 
 // ===== Step Type Schemas =====

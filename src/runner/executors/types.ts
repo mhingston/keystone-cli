@@ -46,7 +46,8 @@ export interface StepExecutorOptions {
   executeWorkflowFn?: (
     step: WorkflowStep,
     context: ExpressionContext,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    stepExecutionId?: string
   ) => Promise<StepResult>;
   mcpManager?: MCPManager;
   db?: WorkflowDb;
@@ -62,6 +63,7 @@ export interface StepExecutorOptions {
   debug?: boolean;
   allowInsecure?: boolean;
   emitEvent?: (event: WorkflowEvent) => void;
+  depth?: number;
 
   executeStep?: (step: Step, context: ExpressionContext) => Promise<StepResult>; // To avoid circular dependency
   executeLlmStep?: typeof executeLlmStep;

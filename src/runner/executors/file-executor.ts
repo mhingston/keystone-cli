@@ -113,6 +113,73 @@ export function parseUnifiedDiff(patch: string): UnifiedDiff {
 }
 
 export function applyUnifiedDiff(content: string, patch: string, targetPath: string): string {
+  // Try using system `patch` command first as it's more robust
+  try {
+    const { spawnSync } = require('node:child_process');
+
+    // Check if patch is available (quick check)
+    // We assume standard unix `patch` or compatible.
+    // writing content to temp file and patch to temp file?
+    // actually, we can pipe to stdin.
+    // echo content | patch -o output
+    // But patch usually works on files.
+
+    // Since we are operating on in-memory strings (content), using `patch` binary requires tmp files.
+    // This might be slow for many small files.
+    // BUT the robustness is worth it.
+
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+
+    // Create temp dir
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keystone-patch-'));
+    const tmpSrc = path.join(tmpDir, 'source');
+    const tmpPatch = path.join(tmpDir, 'changes.patch');
+
+    try {
+      fs.writeFileSync(tmpSrc, content);
+      fs.writeFileSync(tmpPatch, patch);
+
+      // Run patch: patch -p1 -i changes.patch -o output (if headers have paths)
+      // Or just patch tmpSrc < changes.patch?
+      // Unified diffs usually expect paths.
+      // If we force it...
+      // `patch` utility is tricky with paths.
+      // LLM generated diffs might have /dev/null or a/b paths.
+
+      // Let's try `git apply` if inside a git repo?
+      // No, we might not be in a git repo.
+
+      // Let's stick to the JS Custom Parser BUT make it more lenient/robust as per user request?
+      // User said: "rely on the system's patch or git apply"
+
+      // Let's try `patch -u -l --fuzz=2 -i patchfile srcfile -o outfile`
+      const result = spawnSync(
+        'patch',
+        ['-u', '-l', '--fuzz=2', '-i', tmpPatch, tmpSrc, '-o', path.join(tmpDir, 'result')],
+        {
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        }
+      );
+
+      if (result.status === 0 && fs.existsSync(path.join(tmpDir, 'result'))) {
+        return fs.readFileSync(path.join(tmpDir, 'result'), 'utf-8');
+      }
+    } catch (e) {
+      // ignore
+    } finally {
+      // cleanup
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {}
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // Fallback to JS implementation
   const diff = parseUnifiedDiff(patch);
   assertDiffMatchesTarget(diff.newFile || diff.originalFile, targetPath);
 

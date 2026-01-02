@@ -38,6 +38,7 @@ export interface StepExecution {
   completed_at: string | null;
   retry_count: number;
   usage: string | null; // JSON
+  metadata: string | null; // JSON
 }
 
 export interface IdempotencyRecord {
@@ -84,6 +85,19 @@ export interface ThoughtEvent {
   created_at: string;
 }
 
+export interface StepBatchUpdate {
+  type: 'start' | 'complete';
+  id: string;
+  data: {
+    status?: StepStatusType;
+    output?: unknown;
+    error?: string;
+    usage?: unknown;
+    startedAt?: string;
+    completedAt?: string;
+  };
+}
+
 /**
  * Base error class for database operations
  */
@@ -117,10 +131,13 @@ export class WorkflowDb {
   private createStepStmt!: Statement;
   private startStepStmt!: Statement;
   private completeStepStmt!: Statement;
+  private updateStepMetadataStmt!: Statement;
   private incrementRetryStmt!: Statement;
   private getStepByIterationStmt!: Statement;
   private getMainStepStmt!: Statement;
   private getStepIterationsStmt!: Statement;
+  private getStepIterationsMetadataStmt!: Statement;
+  private countStepIterationsStmt!: Statement;
   private getStepsByRunStmt!: Statement;
   private getSuccessfulRunsStmt!: Statement;
   private getLastRunStmt!: Statement;
@@ -159,6 +176,7 @@ export class WorkflowDb {
   private clearTimersByRunStmt!: Statement;
   private clearAllTimersStmt!: Statement;
   private clearAllStepCacheStmt!: Statement;
+  private getSuspendedStepsForEventStmt!: Statement;
   private isClosed = false;
 
   constructor(public readonly dbPath = PathResolver.resolveDbPath()) {
@@ -206,8 +224,8 @@ export class WorkflowDb {
       AND status IN ('success', 'failed', 'canceled')
     `);
     this.createStepStmt = this.db.prepare(`
-      INSERT INTO step_executions (id, run_id, step_id, iteration_index, status, retry_count)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO step_executions (id, run_id, step_id, iteration_index, status, retry_count, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     this.startStepStmt = this.db.prepare(`
       UPDATE step_executions
@@ -217,6 +235,11 @@ export class WorkflowDb {
     this.completeStepStmt = this.db.prepare(`
       UPDATE step_executions
       SET status = ?, output = ?, error = ?, completed_at = ?, usage = ?
+      WHERE id = ?
+    `);
+    this.updateStepMetadataStmt = this.db.prepare(`
+      UPDATE step_executions
+      SET metadata = ?
       WHERE id = ?
     `);
     this.incrementRetryStmt = this.db.prepare(`
@@ -240,6 +263,16 @@ export class WorkflowDb {
       SELECT * FROM step_executions
       WHERE run_id = ? AND step_id = ? AND iteration_index IS NOT NULL
       ORDER BY iteration_index ASC
+    `);
+    this.getStepIterationsMetadataStmt = this.db.prepare(`
+      SELECT id, run_id, step_id, status, error, usage, started_at, completed_at, iteration_index, CASE WHEN output IS NOT NULL THEN '{"truncated":true}' ELSE NULL END as output
+      FROM step_executions
+      WHERE run_id = ? AND step_id = ? AND iteration_index IS NOT NULL
+      ORDER BY iteration_index ASC
+    `);
+    this.countStepIterationsStmt = this.db.prepare(`
+      SELECT count(*) as count FROM step_executions
+      WHERE run_id = ? AND step_id = ? AND iteration_index IS NOT NULL
     `);
     this.getStepsByRunStmt = this.db.prepare(`
       SELECT * FROM step_executions
@@ -405,6 +438,14 @@ export class WorkflowDb {
     this.clearTimersByRunStmt = this.db.prepare('DELETE FROM durable_timers WHERE run_id = ?');
     this.clearAllTimersStmt = this.db.prepare('DELETE FROM durable_timers');
     this.clearAllStepCacheStmt = this.db.prepare('DELETE FROM step_cache');
+    // PERFORMANCE NOTE: This uses a LIKE query on the 'output' column, which is not indexed for text search.
+    // If the number of suspended steps grows very large, this will become a performance bottleneck.
+    // Consider adding a dedicated 'wait_event' column if this becomes a scalability issue.
+    this.getSuspendedStepsForEventStmt = this.db.prepare(`
+      SELECT run_id FROM step_executions
+      WHERE status = 'suspended'
+      AND output LIKE ?
+    `);
   }
 
   /**
@@ -420,13 +461,57 @@ export class WorkflowDb {
    * Batch create multiple step executions in a single transaction.
    */
   public async batchCreateSteps(
-    steps: Array<{ id: string; runId: string; stepId: string; iterationIndex: number | null }>
+    steps: Array<{
+      id: string;
+      runId: string;
+      stepId: string;
+      iterationIndex: number | null;
+      metadata?: Record<string, unknown>;
+    }>
   ): Promise<void> {
     if (steps.length === 0) return;
     await this.withRetry(() => {
       this.db.transaction(() => {
         for (const s of steps) {
-          this.createStepStmt.run(s.id, s.runId, s.stepId, s.iterationIndex, 'pending', 0);
+          this.createStepStmt.run(
+            s.id,
+            s.runId,
+            s.stepId,
+            s.iterationIndex,
+            'pending',
+            0,
+            s.metadata ? JSON.stringify(s.metadata) : null
+          );
+        }
+      })();
+    });
+  }
+
+  /**
+   * Batch update step status (start or complete) in a single transaction.
+   * This reduces database contention for high-concurrency scenarios.
+   */
+  public async batchUpdateSteps(updates: StepBatchUpdate[]): Promise<void> {
+    if (updates.length === 0) return;
+    await this.withRetry(() => {
+      this.db.transaction(() => {
+        for (const update of updates) {
+          if (update.type === 'start') {
+            this.startStepStmt.run(
+              update.data.status || 'running',
+              update.data.startedAt || new Date().toISOString(),
+              update.id
+            );
+          } else if (update.type === 'complete') {
+            this.completeStepStmt.run(
+              update.data.status || 'success',
+              update.data.output ? JSON.stringify(update.data.output) : null,
+              update.data.error || null,
+              update.data.completedAt || new Date().toISOString(),
+              update.data.usage ? JSON.stringify(update.data.usage) : null,
+              update.id
+            );
+          }
         }
       })();
     });
@@ -620,6 +705,28 @@ export class WorkflowDb {
         PRAGMA user_version = 6;
       `);
     }
+
+    // Version 7: Add composite index for step retrieval optimization
+    if (version < 7) {
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_steps_run_ordered ON step_executions(run_id, started_at, iteration_index);
+        PRAGMA user_version = 7;
+      `);
+    }
+
+    // Version 8: Add metadata column to step_executions
+    if (version < 8) {
+      const hasMetadata = this.db
+        .query(
+          "SELECT count(*) as count FROM pragma_table_info('step_executions') WHERE name='metadata'"
+        )
+        .get() as { count: number };
+
+      if (hasMetadata.count === 0) {
+        this.db.exec('ALTER TABLE step_executions ADD COLUMN metadata TEXT;');
+      }
+      this.db.exec('PRAGMA user_version = 8;');
+    }
   }
 
   private initSchema(): void {
@@ -656,6 +763,7 @@ export class WorkflowDb {
       CREATE INDEX IF NOT EXISTS idx_steps_run ON step_executions(run_id);
       CREATE INDEX IF NOT EXISTS idx_steps_status ON step_executions(status);
       CREATE INDEX IF NOT EXISTS idx_steps_iteration ON step_executions(run_id, step_id, iteration_index);
+      CREATE INDEX IF NOT EXISTS idx_steps_run_ordered ON step_executions(run_id, started_at, iteration_index);
 
       CREATE TABLE IF NOT EXISTS idempotency_records (
         idempotency_key TEXT PRIMARY KEY,
@@ -791,10 +899,32 @@ export class WorkflowDb {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - days);
       const cutoffIso = cutoffDate.toISOString();
+      let totalDeleted = 0;
+      const BATCH_SIZE = 1000;
 
-      const result = this.pruneRunsStmt.run(cutoffIso);
+      // Prepare ad-hoc statement for batched deletion
+      // We use IN (SELECT ... LIMIT) because strict DELETE LIMIT is not standard SQL
+      const stmt = this.db.prepare(`
+        DELETE FROM workflow_runs 
+        WHERE id IN (
+          SELECT id FROM workflow_runs 
+          WHERE started_at < ? 
+          AND status IN ('success', 'failed', 'canceled')
+          LIMIT ?
+        )
+      `);
 
-      return result.changes;
+      try {
+        while (true) {
+          const result = stmt.run(cutoffIso, BATCH_SIZE);
+          if (result.changes === 0) break;
+          totalDeleted += result.changes;
+        }
+      } finally {
+        stmt.finalize();
+      }
+
+      return totalDeleted;
     });
   }
 
@@ -810,16 +940,31 @@ export class WorkflowDb {
     id: string,
     runId: string,
     stepId: string,
-    iterationIndex: number | null = null
+    iterationIndex: number | null = null,
+    metadata?: Record<string, unknown>
   ): Promise<void> {
     await this.withRetry(() => {
-      this.createStepStmt.run(id, runId, stepId, iterationIndex, 'pending', 0);
+      this.createStepStmt.run(
+        id,
+        runId,
+        stepId,
+        iterationIndex,
+        'pending',
+        0,
+        metadata ? JSON.stringify(metadata) : null
+      );
     });
   }
 
   async startStep(id: string): Promise<void> {
     await this.withRetry(() => {
       this.startStepStmt.run('running', new Date().toISOString(), id);
+    });
+  }
+
+  async updateStepMetadata(id: string, metadata: Record<string, unknown>): Promise<void> {
+    await this.withRetry(() => {
+      this.updateStepMetadataStmt.run(JSON.stringify(metadata), id);
     });
   }
 
@@ -874,9 +1019,26 @@ export class WorkflowDb {
   /**
    * Get all iterations for a step
    */
-  public async getStepIterations(runId: string, stepId: string): Promise<StepExecution[]> {
+  public async getStepIterations(
+    runId: string,
+    stepId: string,
+    options?: { includeOutput?: boolean }
+  ): Promise<StepExecution[]> {
     return this.withRetry(() => {
+      if (options?.includeOutput === false) {
+        return this.getStepIterationsMetadataStmt.all(runId, stepId) as StepExecution[];
+      }
       return this.getStepIterationsStmt.all(runId, stepId) as StepExecution[];
+    });
+  }
+
+  /**
+   * Count iterations for a step
+   */
+  public async countStepIterations(runId: string, stepId: string): Promise<number> {
+    return this.withRetry(() => {
+      const result = this.countStepIterationsStmt.get(runId, stepId) as { count: number };
+      return result?.count || 0;
     });
   }
 
@@ -1484,6 +1646,16 @@ export class WorkflowDb {
         return this.listThoughtEventsByRunStmt.all(runId, limit) as ThoughtEvent[];
       }
       return this.listThoughtEventsStmt.all(limit) as ThoughtEvent[];
+    });
+  }
+
+  async getSuspendedStepsForEvent(eventName: string): Promise<string[]> {
+    return this.withRetry(() => {
+      // Look for runs suspended with { "event": eventName } in output
+      // We use LIKE for a simple containment check since output is JSON
+      const pattern = `%"event":"${eventName}"%`;
+      const results = this.getSuspendedStepsForEventStmt.all(pattern) as { run_id: string }[];
+      return results.map((r) => r.run_id);
     });
   }
 }

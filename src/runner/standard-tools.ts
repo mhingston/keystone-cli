@@ -569,7 +569,10 @@ export function validateStandardToolSecurity(
     assertWithinCwd(rawPath);
 
     // For AST tools, validate all paths in the array
-    if (['ast_grep_search', 'ast_grep_replace'].includes(toolName) && Array.isArray((args as any).paths)) {
+    if (
+      ['ast_grep_search', 'ast_grep_replace'].includes(toolName) &&
+      Array.isArray((args as any).paths)
+    ) {
       for (const p of (args as any).paths) {
         assertWithinCwd(p);
       }

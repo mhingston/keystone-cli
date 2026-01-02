@@ -130,7 +130,7 @@ export async function executeStep(
         if (!executeWorkflowFn) {
           throw new Error('Workflow executor not provided');
         }
-        result = await executeWorkflowFn(step, context, abortSignal);
+        result = await executeWorkflowFn(step, context, abortSignal, options.stepExecutionId);
         break;
       case 'script':
         result = await executeScriptStep(step, context, logger, {
@@ -183,9 +183,9 @@ export async function executeStep(
             runId,
             artifactRoot,
             executeLlmStep: injectedExecuteLlmStep || executeLlmStep,
-            emitEvent: options.emitEvent,
             workflowName: options.workflowName,
             db: options.db,
+            depth: options.depth,
           }
         );
         break;

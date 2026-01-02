@@ -208,7 +208,7 @@ function convertToExecutableStep(
 export async function executeDynamicStep(
   step: DynamicStep,
   context: ExpressionContext,
-  executeStepFn: (step: Step, context: ExpressionContext) => Promise<StepResult>,
+  executeStepFn: (step: Step, context: ExpressionContext, depth?: number) => Promise<StepResult>,
   logger: Logger,
   options: StepExecutorOptions & {
     stateManager?: DynamicStateManager;
@@ -216,9 +216,18 @@ export async function executeDynamicStep(
     saveState?: (stepId: string, state: DynamicStepState) => Promise<void>;
     executeLlmStep?: typeof executeLlmStep;
     executeHumanStep?: typeof executeHumanStep;
+    depth?: number;
   }
 ): Promise<StepResult> {
   const { runId, db, abortSignal } = options;
+  const depth = options.depth || 0;
+
+  // Prevent infinite recursion in dynamic steps
+  // 10 is matching WorkflowRunner.MAX_RECURSION_DEPTH
+  // We should ideally import this constant, but for now we hardcode or add to LIMITS
+  if (depth > 10) {
+    throw new Error('Maximum workflow recursion depth (10) exceeded in dynamic step.');
+  }
   const stateManager = options.stateManager || (db ? new DynamicStateManager(db) : null);
 
   const { state, dbState } = await initializeState(step, runId, stateManager, options.loadState);
@@ -242,7 +251,7 @@ export async function executeDynamicStep(
           stateManager,
           executeStepFn,
           logger,
-          options
+          { ...options, depth }
         );
       }
 
@@ -259,7 +268,7 @@ export async function executeDynamicStep(
           stateManager,
           executeStepFn,
           logger,
-          options
+          { ...options, depth }
         );
       }
     }
@@ -329,12 +338,13 @@ async function handlePlanningPhase(
   state: DynamicStepState,
   dbState: DynamicStepState | null,
   stateManager: DynamicStateManager | null,
-  executeStepFn: (step: Step, context: ExpressionContext) => Promise<StepResult>,
+  executeStepFn: (step: Step, context: ExpressionContext, depth?: number) => Promise<StepResult>,
   logger: Logger,
   options: StepExecutorOptions & {
     stateManager?: DynamicStateManager;
     saveState?: (stepId: string, state: DynamicStepState) => Promise<void>;
     executeLlmStep?: typeof executeLlmStep;
+    depth?: number;
   }
 ) {
   const { runId, emitEvent, workflowName, abortSignal, mcpManager, workflowDir } = options;
@@ -480,14 +490,15 @@ async function handleExecutionPhase(
   state: DynamicStepState,
   dbState: DynamicStepState | null,
   stateManager: DynamicStateManager | null,
-  executeStepFn: (step: Step, context: ExpressionContext) => Promise<StepResult>,
+  executeStepFn: (step: Step, context: ExpressionContext, depth?: number) => Promise<StepResult>,
   logger: Logger,
   options: StepExecutorOptions & {
     stateManager?: DynamicStateManager;
     saveState?: (stepId: string, state: DynamicStepState) => Promise<void>;
+    depth?: number;
   }
 ) {
-  const { abortSignal, runId, workflowName, emitEvent, saveState } = options;
+  const { abortSignal, runId, workflowName, emitEvent, saveState, depth = 0 } = options;
 
   // Detect circular dependencies and validate plan
   topologicalSort(state.generatedPlan.steps);
@@ -551,94 +562,107 @@ async function handleExecutionPhase(
       break;
     }
 
+    // Track running promises to avoid busy wait
+    const executionPromises = new Set<Promise<void>>();
+
+    // Helper to wrap execution with cleanup
+    const executeWrapper = async (genStep: GeneratedStep, i: number) => {
+      try {
+        logger.log(
+          `  ⚡ [${i + 1}/${state.generatedPlan.steps.length}] Executing step: ${genStep.name}`
+        );
+
+        const executableStep = convertToExecutableStep(genStep, step.id, step.allowInsecure);
+        const stepContext = {
+          ...dynamicContext,
+          steps: {
+            ...(dynamicContext.steps || {}),
+            ...Object.fromEntries(
+              Array.from(resultsMap.entries()).map(([id, res]) => [
+                `${step.id}_${id}`,
+                { output: res.output },
+              ])
+            ),
+          },
+        } as ExpressionContext;
+
+        if (emitEvent && runId && workflowName) {
+          emitEvent({
+            type: 'step.start',
+            timestamp: new Date().toISOString(),
+            runId,
+            workflow: workflowName,
+            stepId: executableStep.id,
+            stepType: executableStep.type,
+            phase: 'main',
+            stepIndex: i + 1,
+            totalSteps: state.generatedPlan.steps.length,
+          });
+        }
+
+        const res = await executeStepFn(executableStep, stepContext, depth + 1);
+        resultsMap.set(genStep.id, res);
+        state.stepResults.set(genStep.id, res);
+
+        if (stateManager && dbState && dbState.id) {
+          await stateManager.completeStep(dbState.id, genStep.id, res);
+          await stateManager.updateProgress(dbState.id, completed.size + failed.size + 1);
+        } else if (saveState) {
+          await saveState(step.id, state);
+        }
+
+        if (emitEvent && runId && workflowName) {
+          emitEvent({
+            type: 'step.end',
+            timestamp: new Date().toISOString(),
+            runId,
+            workflow: workflowName,
+            stepId: executableStep.id,
+            stepType: executableStep.type,
+            phase: 'main',
+            status: res.status as any,
+            stepIndex: i + 1,
+            totalSteps: state.generatedPlan.steps.length,
+          });
+        }
+
+        if (res.status === 'success') {
+          completed.add(genStep.id);
+        } else {
+          failed.add(genStep.id);
+          if (!(genStep.allowStepFailure ?? step.allowStepFailure ?? false)) {
+            state.status = 'failed';
+            state.error = `Step "${genStep.name}" failed: ${res.error}`;
+          }
+        }
+      } catch (err) {
+        const failRes: StepResult = { status: 'failed', error: String(err), output: {} };
+        resultsMap.set(genStep.id, failRes);
+        state.stepResults.set(genStep.id, failRes);
+        failed.add(genStep.id);
+        state.status = 'failed';
+        state.error = `Step "${genStep.name}" crashed: ${err}`;
+      } finally {
+        running.delete(genStep.id);
+      }
+    };
+
     if (ready.length > 0 && running.size < maxConcurrency) {
       const toStart = ready.slice(0, maxConcurrency - running.size);
       for (const genStep of toStart) {
         running.add(genStep.id);
-        (async () => {
-          try {
-            const i = state.generatedPlan.steps.indexOf(genStep);
-            logger.log(
-              `  ⚡ [${i + 1}/${state.generatedPlan.steps.length}] Executing step: ${genStep.name}`
-            );
-
-            const executableStep = convertToExecutableStep(genStep, step.id, step.allowInsecure);
-            const stepContext = {
-              ...dynamicContext,
-              steps: {
-                ...(dynamicContext.steps || {}),
-                ...Object.fromEntries(
-                  Array.from(resultsMap.entries()).map(([id, res]) => [
-                    `${step.id}_${id}`,
-                    { output: res.output },
-                  ])
-                ),
-              },
-            } as ExpressionContext;
-
-            if (emitEvent && runId && workflowName) {
-              emitEvent({
-                type: 'step.start',
-                timestamp: new Date().toISOString(),
-                runId,
-                workflow: workflowName,
-                stepId: executableStep.id,
-                stepType: executableStep.type,
-                phase: 'main',
-                stepIndex: i + 1,
-                totalSteps: state.generatedPlan.steps.length,
-              });
-            }
-
-            const res = await executeStepFn(executableStep, stepContext);
-            resultsMap.set(genStep.id, res);
-            state.stepResults.set(genStep.id, res);
-
-            if (stateManager && dbState && dbState.id) {
-              await stateManager.completeStep(dbState.id, genStep.id, res);
-              await stateManager.updateProgress(dbState.id, completed.size + failed.size + 1);
-            } else if (saveState) {
-              await saveState(step.id, state);
-            }
-
-            if (emitEvent && runId && workflowName) {
-              emitEvent({
-                type: 'step.end',
-                timestamp: new Date().toISOString(),
-                runId,
-                workflow: workflowName,
-                stepId: executableStep.id,
-                stepType: executableStep.type,
-                phase: 'main',
-                status: res.status as any,
-                stepIndex: i + 1,
-                totalSteps: state.generatedPlan.steps.length,
-              });
-            }
-
-            if (res.status === 'success') {
-              completed.add(genStep.id);
-            } else {
-              failed.add(genStep.id);
-              if (!(genStep.allowStepFailure ?? step.allowStepFailure ?? false)) {
-                state.status = 'failed';
-                state.error = `Step "${genStep.name}" failed: ${res.error}`;
-              }
-            }
-          } catch (err) {
-            const failRes: StepResult = { status: 'failed', error: String(err), output: {} };
-            resultsMap.set(genStep.id, failRes);
-            state.stepResults.set(genStep.id, failRes);
-            failed.add(genStep.id);
-            state.status = 'failed';
-            state.error = `Step "${genStep.name}" crashed: ${err}`;
-          } finally {
-            running.delete(genStep.id);
-          }
-        })();
+        const i = state.generatedPlan.steps.indexOf(genStep);
+        const promise = executeWrapper(genStep, i).then(() => {
+          executionPromises.delete(promise);
+        });
+        executionPromises.add(promise);
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Wait for at least one task to complete before re-evaluating loop
+    if (executionPromises.size > 0) {
+      await Promise.race(executionPromises);
+    }
   }
 
   const allSatisfied = Array.from(resultsMap.entries()).every(

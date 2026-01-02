@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import * as path from 'node:path';
 import { join } from 'node:path';
 import { bundleAssets } from './assets.macro.ts' with { type: 'macro' };
 
@@ -129,30 +130,34 @@ export class ResourceLoader {
     return false;
   }
 
-  private static getProjectRelativePath(path: string): string | null {
+  /**
+   * Returns the manifest of embedded assets.
+   */
+  static getEmbeddedAssets(): Record<string, string> {
+    return { ...EMBEDDED_ASSETS };
+  }
+
+  private static getProjectRelativePath(targetPath: string): string | null {
     const cwd = process.cwd();
     const keystoneDir = join(cwd, '.keystone');
 
-    if (path.startsWith(keystoneDir)) {
-      return path.slice(keystoneDir.length + 1);
-    }
+    // Use path.resolve to handle potential .. and normalization
+    const absTarget = join(cwd, targetPath); // assume relative to cwd if not absolute, checking resolve
+    // Actually, join/resolve logic:
+    // If targetPath is absolute, resolve returns it. If relative, joins with cwd.
+    const resolvedTarget = path.resolve(targetPath);
+    const resolvedKeystone = path.resolve(keystoneDir);
 
-    // If it's already relative and starts with .keystone
-    if (path.startsWith('.keystone/')) {
-      return path.slice(10);
-    }
+    // Check if target is inside keystone dir
+    // We use relative() to check containment
+    const rel = path.relative(resolvedKeystone, resolvedTarget);
 
-    if (path === '.keystone') {
-      return '';
+    // If rel starts with '..', it is outside. If strictly inside, it won't start with ..
+    // Also internal paths shouldn't be absolute (on windows relative might return absolute if different drive)
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+      return rel;
     }
 
     return null;
-  }
-
-  /**
-   * Get all embedded assets for debugging/manifest
-   */
-  static getEmbeddedAssets(): Record<string, string> {
-    return EMBEDDED_ASSETS;
   }
 }

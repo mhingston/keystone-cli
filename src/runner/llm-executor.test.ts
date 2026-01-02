@@ -29,6 +29,7 @@ import type { ExpressionContext } from '../expression/evaluator';
 import * as agentParser from '../parser/agent-parser';
 import type { Agent, LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
+import * as llmAdapter from './llm-adapter';
 import type { StepResult } from './step-executor';
 
 // Note: mock.module() for llm-adapter is now handled by the preload file
@@ -66,6 +67,7 @@ describe('llm-executor', () => {
   let spawnSpy: ReturnType<typeof spyOn>;
   let resolveAgentPathSpy: ReturnType<typeof spyOn>;
   let parseAgentSpy: ReturnType<typeof spyOn>;
+  let getModelSpy: ReturnType<typeof spyOn>;
 
   // Default Mock Chat Logic
   const defaultMockChat = async (messages: LLMMessage[], _options: any) => {
@@ -184,7 +186,9 @@ describe('llm-executor', () => {
     ConfigLoader.clear();
     setupLlmMocks();
     resetLlmMocks();
-    mockGetModel.mockResolvedValue(createUnifiedMockModel());
+
+    // Spy on getModel to return our mock model directly
+    getModelSpy = spyOn(llmAdapter, 'getModel').mockResolvedValue(createUnifiedMockModel() as any);
 
     // Mock agent parser to avoid file dependencies
     resolveAgentPathSpy = spyOn(agentParser, 'resolveAgentPath').mockReturnValue('test-agent.md');
@@ -215,6 +219,7 @@ describe('llm-executor', () => {
   afterEach(() => {
     resolveAgentPathSpy?.mockRestore();
     parseAgentSpy?.mockRestore();
+    getModelSpy?.mockRestore();
   });
 
   afterAll(() => {
@@ -268,7 +273,7 @@ describe('llm-executor', () => {
     );
   });
 
-  it('should return raw output logic if schema schema validation fails (no retry implemented)', async () => {
+  it('should throw error if schema validation fails and JSON cannot be extracted', async () => {
     setupMockModel(defaultMockChat as any);
     const step: LlmStep = {
       id: 'l1',
@@ -282,13 +287,13 @@ describe('llm-executor', () => {
 
     // Case 1: Model returns text that is NOT valid JSON
     setupMockModel(async () => ({ message: { role: 'assistant', content: 'Not JSON' } }));
-    const result = await executeLlmStep(step, { inputs: {}, steps: {} }, async () => ({
-      status: 'success',
-      output: 'ok',
-    }));
 
-    // current simple refactor doesn't implement retry, just returns text or throws
-    expect(result.output).toBe('Not JSON');
+    await expect(
+      executeLlmStep(step, { inputs: {}, steps: {} }, async () => ({
+        status: 'success',
+        output: 'ok',
+      }))
+    ).rejects.toThrow('Failed to extract valid JSON');
   });
 
   it('should handle tool not found', async () => {

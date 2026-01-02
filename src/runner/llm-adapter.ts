@@ -72,23 +72,30 @@ export type { LanguageModel, EmbeddingModel } from 'ai';
 
 const userRequire = createRequire(join(process.cwd(), 'package.json'));
 
-// Lazy-loaded global require to avoid blocking import time
+// Lazy-loaded global require
 let globalRequire: NodeRequire | undefined;
-let globalRequireResolved = false;
+let globalRequirePromise: Promise<NodeRequire | undefined> | null = null;
 
-function getGlobalRequire(): NodeRequire | undefined {
-  if (globalRequireResolved) {
+async function getGlobalRequire(): Promise<NodeRequire | undefined> {
+  if (globalRequire) return globalRequire;
+  if (globalRequirePromise) return globalRequirePromise;
+
+  globalRequirePromise = (async () => {
+    try {
+      const { exec } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execAsync = promisify(exec);
+
+      const { stdout } = await execAsync('npm root -g', { encoding: 'utf-8', timeout: 5000 });
+      const globalRoot = stdout.trim();
+      globalRequire = createRequire(join(globalRoot, 'package.json'));
+    } catch {
+      // Global npm root not found or command failed
+    }
     return globalRequire;
-  }
-  globalRequireResolved = true;
-  try {
-    const globalRoot = execSync('npm root -g', { encoding: 'utf-8' }).trim();
-    globalRequire = createRequire(join(globalRoot, 'package.json'));
-  } catch {
-    // Global npm root not found - this is expected in some environments (e.g., containers, CI)
-    // Global package resolution will be disabled silently
-  }
-  return globalRequire;
+  })();
+
+  return globalRequirePromise;
 }
 
 // Compatibility types for Keystone
@@ -165,7 +172,7 @@ export class DynamicProviderRegistry {
             pkg = await import(pkgPath);
           } catch {
             // Try global if local resolution fails
-            const globalReq = getGlobalRequire();
+            const globalReq = await getGlobalRequire();
             if (globalReq) {
               try {
                 const globalPkgPath = globalReq.resolve(config.package);
@@ -219,8 +226,22 @@ export class DynamicProviderRegistry {
           return pkg.default;
         }
 
+        // Check for standard generic export names
+        if (typeof pkg.createProvider === 'function') {
+          DynamicProviderRegistry.loadedProviders.set(providerName, pkg.createProvider);
+          return pkg.createProvider;
+        }
+        if (typeof pkg.provider === 'function') {
+          DynamicProviderRegistry.loadedProviders.set(providerName, pkg.provider);
+          return pkg.provider;
+        }
+
         const firstFn = Object.values(pkg).find((v) => typeof v === 'function');
         if (firstFn) {
+          // Warn about loose resolution only if we really had to fall back this far
+          new ConsoleLogger().warn(
+            `[Keystone] Warning: Provider '${providerName}' resolution fell back to the first exported function found in '${config.package}'. This may be unstable.`
+          );
           DynamicProviderRegistry.loadedProviders.set(providerName, firstFn as any);
           return firstFn as any;
         }

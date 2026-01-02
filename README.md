@@ -428,6 +428,9 @@ expression:
   strict: true
 ```
 
+> [!NOTE]
+> When `strict: false` (default), evaluation errors in outputs will be reported as warnings and the value will be set to `null` to allow the workflow to potentially continue.
+
 ---
 
 ## <a id="step-types">🏗️ Step Types</a>
@@ -605,6 +608,9 @@ All steps support common features:
 - `outputRetries`: Max retries for output validation failures.
 - `repairStrategy`: Strategy for output repair (`reask`, `repair`, `hybrid`).
 
+> [!TIP]
+> **Performance Optimization**: For `foreach` steps with very large datasets, Keystone may automatically skip output aggregation to prevent memory issues. Use file-based storage or external databases if you need to process tens of thousands of items.
+
 Workflows also support a top-level `concurrency` field to limit how many steps can run in parallel across the entire workflow. This must resolve to a positive integer (number or expression).
 
 ### Engine Steps
@@ -678,6 +684,8 @@ Allow the LLM to switch to a specialist agent mid-step by defining `allowedHando
   prompt: "Route the task, then answer."
   allowedHandoffs: [handoff-specialist]
 ```
+
+To prevent infinite loops, handoffs are limited to **20** occurrences per step by default.
 
 Agent prompts can use `${{ }}` expressions (evaluated against the workflow context) for dynamic system prompts.
 
@@ -1224,18 +1232,26 @@ Input keys passed via `-i key=val` must be alphanumeric/underscore and cannot be
 ## <a id="security">🛡️ Security</a>
 
 ### Shell Execution
-Keystone blocks shell commands that match common injection/destructive patterns (like `rm -rf /` or pipes to shells). To run them, set `allowInsecure: true` on the step. Prefer `${{ escape(...) }}` when interpolating user input.
+Keystone strictly enforces an allowlist of characters (`alphanumeric`, `whitespace`, and `_./:@,+=~-`) to prevent shell injection.
 
+- **Directory Traversal**: Commands containing `..` in a path are blocked by default for security.
+- **Denylist**: Commands like `rm`, `mkfs`, or `alias` are blocked via a configurable denylist in `config.yaml`, even if `allowInsecure: true` is set.
+- **Windows Support**: Keystone uses `cmd.exe /d /s /c` on Windows and `sh -c` on other platforms for consistent behavior.
+
+To run complex commands or bypass allowlist checks, set `allowInsecure: true` on the step. Prefer `${{ escape(...) }}` when interpolating user input.
+
+```yaml
 - id: deploy
   type: shell
   run: ./deploy.sh ${{ inputs.env }}
+  # Required if inputs.env might contain special characters or for complex scripts
   allowInsecure: true
 ```
 
 #### Troubleshooting Security Errors
-If you see a `Security Error: Evaluated command contains shell metacharacters`, it means your command contains characters like `\n`, `|`, or `&` that were not explicitly escaped or are not in the safe whitelist.
+If you see a `Security Error: Evaluated command contains shell metacharacters`, it means your command contains characters like `\n`, `|`, `&`, or quotes that are not in the strict allowlist.
 - **Fix 1**: Use `${{ escape(steps.id.output) }}` for any dynamic values.
-- **Fix 2**: Set `allowInsecure: true` if the command naturally uses special characters (like `echo "line1\nline2"`).
+- **Fix 2**: Set `allowInsecure: true` if the command naturally uses special characters.
 
 ### Expression Safety
 Expressions `${{ }}` are evaluated using a safe AST parser (`jsep`) which:
@@ -1289,8 +1305,14 @@ graph TD
     EX --> Wait[Wait Step]
     EX --> Join[Join Step]
     EX --> Blueprint[Blueprint Step]
+    EX --> Dynamic[Dynamic Executor]
+    EX --> Plan[Plan Executor]
 
-    LLM --> Adapter[LLM Adapter (AI SDK)]
+    subgraph "LLM Subsystem"
+        LLM --> ToolManager[Tool Manager]
+        LLM --> StreamHandler[Stream Handler]
+        ToolManager --> Adapter[LLM Adapter (AI SDK)]
+    end
     Adapter --> Providers[OpenAI, Anthropic, Gemini, Copilot, etc.]
     LLM --> MCPClient[MCP Client]
 ```
@@ -1298,10 +1320,13 @@ graph TD
 ## <a id="project-structure">📂 Project Structure</a>
 
 - `src/cli.ts`: CLI entry point.
+- `src/commands/`: Command implementations (run, ui, config, etc.).
 - `src/db/`: SQLite persistence layer.
 - `src/runner/`: The core execution engine, handles parallelization and retries.
 - `src/parser/`: Zod-powered validation for workflows and agents.
 - `src/expression/`: `${{ }}` expression evaluator.
+- `src/providers/`: Custom AI provider implementations.
+- `src/scripts/`: Build and utility scripts.
 - `src/templates/`: Bundled workflow and agent templates.
 - `src/ui/`: Ink-powered TUI dashboard.
 - `src/utils/`: Shared utilities (auth, redaction, config loading).

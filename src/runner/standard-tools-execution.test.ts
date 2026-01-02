@@ -54,12 +54,25 @@ describe('Standard Tools Execution Verification', () => {
               }),
             };
           }
+          if (mod === 'node:worker_threads') {
+            return {
+              Worker: class MockWorker {
+                on() {}
+                terminate() {}
+              },
+              parentPort: null,
+              workerData: null,
+            };
+          }
           return {};
         },
       };
 
       expect(() => {
-        vm.runInNewContext(script, sandbox);
+        // Wrap the script in an async IIFE to match ProcessSandbox behavior
+        // ProcessSandbox wraps scripts: const __result = await (async () => { ${code} })();
+        const wrappedScript = `(async () => { ${script} })()`;
+        vm.runInNewContext(wrappedScript, sandbox);
       }).not.toThrow();
     });
   }

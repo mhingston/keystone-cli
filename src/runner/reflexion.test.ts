@@ -7,9 +7,10 @@ import {
   setupLlmMocks,
 } from './__test__/llm-test-setup';
 
-import { beforeAll, beforeEach, describe, expect, jest, mock, test } from 'bun:test';
+import { beforeAll, beforeEach, describe, expect, jest, mock, spyOn, test } from 'bun:test';
 import type { Step, Workflow } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
+import * as llmAdapter from './llm-adapter';
 
 // Note: mock.module() for llm-adapter is now handled by the preload file
 // We should NOT mock 'ai' globally as it breaks other tests using the real ai SDK.
@@ -19,6 +20,8 @@ import { ConfigLoader } from '../utils/config-loader';
 let WorkflowRunner: any;
 
 describe('WorkflowRunner Reflexion', () => {
+  let getModelSpy: ReturnType<typeof spyOn>;
+
   beforeAll(async () => {
     // Set up config
     ConfigLoader.setConfig({
@@ -34,7 +37,7 @@ describe('WorkflowRunner Reflexion', () => {
       expression: { strict: false },
     } as any);
 
-    mockGetModel.mockResolvedValue(createUnifiedMockModel());
+    getModelSpy = spyOn(llmAdapter, 'getModel').mockResolvedValue(createUnifiedMockModel() as any);
     setupLlmMocks();
 
     setCurrentChatFn(async () => ({
@@ -50,8 +53,8 @@ describe('WorkflowRunner Reflexion', () => {
     ConfigLoader.clear();
     jest.restoreAllMocks();
     setupLlmMocks();
-    setupLlmMocks();
     resetLlmMocks();
+    getModelSpy = spyOn(llmAdapter, 'getModel').mockResolvedValue(createUnifiedMockModel() as any);
     setCurrentChatFn(async () => ({
       message: { role: 'assistant', content: JSON.stringify({ run: 'echo "fixed"' }) },
     }));

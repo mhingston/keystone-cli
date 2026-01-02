@@ -66,19 +66,24 @@ export class ProcessSandbox {
     const timeout = options.timeout ?? TIMEOUTS.DEFAULT_SCRIPT_TIMEOUT_MS;
     const tempDir = join(tmpdir(), `keystone-sandbox-${randomUUID()}`);
 
+    // Security Check: Prevent dynamic import usage
+    if (/\bimport\s*\(/.test(code)) {
+      throw new Error('Security Error: Dynamic imports are not allowed in sandboxed scripts.');
+    }
+
     try {
       // Create temp directory with restrictive permissions (0o700 = owner only)
       await mkdir(tempDir, { recursive: true, mode: FILE_MODES.SECURE_DIR });
 
       // Write the runner script
-      const runnerScript = ProcessSandbox.createRunnerScript(code, context, !!options.useWorker);
+      const runnerScript = ProcessSandbox.createRunnerScript(code, !!options.useWorker);
       const scriptPath = join(tempDir, 'script.js');
       await writeFile(scriptPath, runnerScript, 'utf-8');
 
       // Execute in subprocess or worker
       const result = options.useWorker
-        ? await ProcessSandbox.runInWorker(scriptPath, timeout, options)
-        : await ProcessSandbox.runInSubprocess(scriptPath, timeout, options);
+        ? await ProcessSandbox.runInWorker(scriptPath, timeout, options, context)
+        : await ProcessSandbox.runInSubprocess(scriptPath, timeout, options, context);
 
       if (options.signal?.aborted) {
         throw new Error('Script execution aborted');
@@ -106,153 +111,126 @@ export class ProcessSandbox {
   /**
    * Create the runner script that will be executed in the subprocess or worker.
    */
-  private static createRunnerScript(
-    code: string,
-    context: Record<string, unknown>,
-    isWorker: boolean
-  ): string {
-    // Check for prototype pollution attempts before serialization
-    const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
-    const checkForDangerousKeys = (
-      obj: unknown,
-      path = '',
-      visited = new WeakSet<object>()
-    ): void => {
-      if (obj === null || typeof obj !== 'object') return;
-
-      // Prevent infinite loops with circular references
-      if (visited.has(obj)) return;
-      visited.add(obj);
-
-      // Handle arrays - check each element
-      if (Array.isArray(obj)) {
-        obj.forEach((item, idx) => checkForDangerousKeys(item, `${path}[${idx}]`, visited));
-        return;
-      }
-
-      // Use getOwnPropertyNames to catch non-enumerable properties too
-      for (const key of Object.getOwnPropertyNames(obj)) {
-        if (dangerousKeys.includes(key)) {
-          throw new Error(
-            `Security Error: Context contains forbidden key "${key}"${path ? ` at path "${path}"` : ''}. This may indicate a prototype pollution attack.`
-          );
-        }
-        checkForDangerousKeys(
-          (obj as Record<string, unknown>)[key],
-          path ? `${path}.${key}` : key,
-          visited
-        );
-      }
-    };
-    checkForDangerousKeys(context);
-
-    // Sanitize context and handle circular references
-    const safeStringify = (obj: unknown) => {
-      const seen = new WeakSet();
-      return JSON.stringify(obj, (key, value) => {
-        if (typeof value === 'object' && value !== null) {
-          if (seen.has(value)) return '[Circular]';
-          seen.add(value);
-        }
-        return value;
-      });
-    };
-
-    // We still want to parse/stringify to strip non-serializable values and ensure clean state
-    // but now we handle cycles safely
-    const contextJson = safeStringify(context);
-
+  private static createRunnerScript(code: string, isWorker: boolean): string {
     return `
-// Minimal sandbox environment
-// Context is sanitized through JSON parse/stringify to prevent prototype pollution
-const context = ${contextJson};
-
-// Use explicit flag passed from host
-const isWorker = ${isWorker};
-
-// Capture essential functions before deleting dangerous globals
-const __write = !isWorker ? process.stdout.write.bind(process.stdout) : null;
-const __post = isWorker ? self.postMessage.bind(self) : null;
-
-// Remove dangerous globals to prevent sandbox escape
-const dangerousGlobals = [
-  'process',
-  'require',
-  'module',
-  'exports',
-  '__dirname',
-  '__filename',
-  'Bun',
-  'fetch',
-  'crypto',
-  'Worker',
-  'navigator',
-  'performance',
-  'alert',
-  'confirm',
-  'prompt',
-  'addEventListener',
-  'dispatchEvent',
-  'removeEventListener',
-  'onmessage',
-  'onerror',
-  'ErrorEvent',
-];
-
-for (const g of dangerousGlobals) {
-  try {
-    delete globalThis[g];
-  } catch (e) {
-    // Ignore errors for non-deletable properties
-  }
-}
-
-// Make context variables available
-Object.assign(globalThis, context);
-
-// Custom console that prefixes logs for the runner to intercept
-const __keystone_console = {
-  log: (...args) => {
-    if (isWorker) {
-      __post({ type: 'log', message: args.join(' ') });
-    } else {
-      __write('__SANDBOX_LOG__:' + args.join(' ') + '\\n');
-    }
-  },
-  error: (...args) => {
-    if (isWorker) {
-      __post({ type: 'log', message: 'ERROR: ' + args.join(' ') });
-    } else {
-      __write('__SANDBOX_LOG__:ERROR: ' + args.join(' ') + '\\n');
-    }
-  },
-  warn: (...args) => {
-    if (isWorker) {
-      __post({ type: 'log', message: 'WARN: ' + args.join(' ') });
-    } else {
-      __write('__SANDBOX_LOG__:WARN: ' + args.join(' ') + '\\n');
-    }
-  },
-  info: (...args) => {
-    if (isWorker) {
-      __post({ type: 'log', message: 'INFO: ' + args.join(' ') });
-    } else {
-      __write('__SANDBOX_LOG__:INFO: ' + args.join(' ') + '\\n');
-    }
-  },
-  debug: (...args) => {
-    if (isWorker) {
-      __post({ type: 'log', message: 'DEBUG: ' + args.join(' ') });
-    } else {
-      __write('__SANDBOX_LOG__:DEBUG: ' + args.join(' ') + '\\n');
-    }
-  }
-};
-
-// Replace global console
-globalThis.console = __keystone_console;
-
 (async () => {
+  const isWorker = ${isWorker};
+  let context = {};
+
+  if (isWorker) {
+    await new Promise((resolve) => {
+      const handler = (e) => {
+        if (e.data && e.data.type === 'context') {
+          context = e.data.context;
+          self.removeEventListener('message', handler);
+          resolve();
+        }
+      };
+      self.addEventListener('message', handler);
+    });
+  } else {
+    const fs = require('node:fs');
+    try {
+      const contextData = fs.readFileSync(0, 'utf-8');
+      context = JSON.parse(contextData);
+    } catch (e) {
+      throw new Error('Failed to load sandbox context from stdin: ' + e.message);
+    }
+  }
+
+  // Security: Prevent prototype pollution check on loaded context
+  const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
+  const checkKeys = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    for (const key of Object.getOwnPropertyNames(obj)) {
+      if (dangerousKeys.includes(key)) throw new Error('Security Error: Forbidden key in context: ' + key);
+      checkKeys(obj[key]);
+    }
+  };
+  checkKeys(context);
+
+  // Capture essential functions before deleting dangerous globals
+  const __write = !isWorker ? process.stdout.write.bind(process.stdout) : null;
+  const __post = isWorker ? self.postMessage.bind(self) : null;
+
+  // Custom console that prefixes logs for the runner to intercept
+  const __keystone_console = {
+    log: (...args) => {
+      if (isWorker) {
+        __post({ type: 'log', message: args.join(' ') });
+      } else {
+        __write('__SANDBOX_LOG__:' + args.join(' ') + '\\n');
+      }
+    },
+    error: (...args) => {
+      if (isWorker) {
+        __post({ type: 'log', message: 'ERROR: ' + args.join(' ') });
+      } else {
+        __write('__SANDBOX_LOG__:ERROR: ' + args.join(' ') + '\\n');
+      }
+    },
+    warn: (...args) => {
+      if (isWorker) {
+        __post({ type: 'log', message: 'WARN: ' + args.join(' ') });
+      } else {
+        __write('__SANDBOX_LOG__:WARN: ' + args.join(' ') + '\\n');
+      }
+    },
+    info: (...args) => {
+      if (isWorker) {
+        __post({ type: 'log', message: 'INFO: ' + args.join(' ') });
+      } else {
+        __write('__SANDBOX_LOG__:INFO: ' + args.join(' ') + '\\n');
+      }
+    },
+    debug: (...args) => {
+      if (isWorker) {
+        __post({ type: 'log', message: 'DEBUG: ' + args.join(' ') });
+      } else {
+        __write('__SANDBOX_LOG__:DEBUG: ' + args.join(' ') + '\\n');
+      }
+    }
+  };
+
+  // Remove dangerous globals to prevent sandbox escape
+  const dangerousGlobals = [
+    'process',
+    'require',
+    'module',
+    'exports',
+    '__dirname',
+    '__filename',
+    'Bun',
+    'fetch',
+    'crypto',
+    'Worker',
+    'navigator',
+    'performance',
+    'alert',
+    'confirm',
+    'prompt',
+    'addEventListener',
+    'dispatchEvent',
+    'removeEventListener',
+    'onmessage',
+    'onerror',
+    'ErrorEvent',
+  ];
+
+  for (const g of dangerousGlobals) {
+    try {
+      delete globalThis[g];
+    } catch (e) {
+      // Ignore errors for non-deletable properties
+    }
+  }
+
+  // Make context variables available
+  Object.assign(globalThis, context);
+
+  // Replace global console
+  globalThis.console = __keystone_console;
+
   try {
     // Execute the user code (wrap in async to support await)
     const __result = await (async () => {
@@ -282,11 +260,14 @@ globalThis.console = __keystone_console;
   private static runInWorker(
     scriptPath: string,
     timeout: number,
-    options: ProcessSandboxOptions
+    options: ProcessSandboxOptions,
+    context: Record<string, unknown>
   ): Promise<ProcessSandboxResult> {
     return new Promise((resolve) => {
       let timedOut = false;
       const worker = new Worker(scriptPath);
+
+      worker.postMessage({ type: 'context', context });
 
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
@@ -339,7 +320,8 @@ globalThis.console = __keystone_console;
   private static runInSubprocess(
     scriptPath: string,
     timeout: number,
-    options: ProcessSandboxOptions
+    options: ProcessSandboxOptions,
+    context: Record<string, unknown>
   ): Promise<ProcessSandboxResult> {
     return new Promise((resolve) => {
       let stdout = '';
@@ -352,15 +334,17 @@ globalThis.console = __keystone_console;
       let args = ['run', scriptPath];
 
       if (useMemoryLimit) {
-        if (isWindows) {
-          options.logger?.warn?.(
-            'ProcessSandbox: memoryLimit is not supported on Windows; running without a limit.'
-          );
-        } else {
+        if (process.platform === 'linux') {
           const limitKb = Math.max(1, Math.floor((options.memoryLimit as number) / 1024));
           const escapedPath = scriptPath.replace(/'/g, "'\\''");
           command = 'sh';
           args = ['-c', `ulimit -v ${limitKb}; exec bun run '${escapedPath}'`];
+        } else {
+          // On macOS/Windows, ulimit -v is often ignored or causes crashes with V8/JSC
+          // due to high virtual memory reservation. We log a warning but proceed without hard limit.
+          options.logger?.warn?.(
+            `ProcessSandbox: memoryLimit is not effectively enforced on ${process.platform}. Security Warning: Scripts may consume excessive memory.`
+          );
         }
       }
 
@@ -375,6 +359,12 @@ globalThis.console = __keystone_console;
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+
+      // Write context to stdin
+      if (child.stdin) {
+        child.stdin.write(JSON.stringify(context));
+        child.stdin.end();
+      }
 
       // Set up timeout
       const timeoutHandle = setTimeout(() => {

@@ -13,6 +13,9 @@ export const MCP_PROTOCOL_VERSION = MCP.PROTOCOL_VERSION;
 // Maximum buffer size for incoming messages (10MB) to prevent memory exhaustion
 const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 
+// Track if we have already warned about SSRF limitations to avoid log spam
+let hasWarnedSSRF = false;
+
 /**
  * Efficient line splitting without regex to prevent ReDoS attacks.
  * Handles \r\n, \r, and \n line endings.
@@ -99,7 +102,7 @@ function isPrivateIpAddress(address: string): boolean {
 
 export async function validateRemoteUrl(
   url: string,
-  options: { allowInsecure?: boolean } = {}
+  options: { allowInsecure?: boolean; logger?: Logger } = {}
 ): Promise<void> {
   let parsed: URL;
   try {
@@ -114,6 +117,11 @@ export async function validateRemoteUrl(
   }
 
   // Require HTTPS in production
+  // SECURITY WARNING: This check is susceptible to TOCTOU (Time-of-Check to Time-of-Use)
+  // DNS rebinding attacks. A malicious domain could resolve to a public IP during this check
+  // and then switch to a private IP (e.g. 127.0.0.1) when the connection is actually made.
+  // Full protection requires resolving the IP once and using that IP for the connection,
+  // or using a proxy that enforces these rules.
   if (parsed.protocol !== 'https:') {
     throw new Error(
       `SSRF Protection: URL must use HTTPS. Got: ${parsed.protocol}. Set allowInsecure option to true if you trust this server.`
@@ -154,12 +162,28 @@ export async function validateRemoteUrl(
   // Resolve DNS to prevent hostnames that map to private IPs (DNS rebinding checks)
   // WARNING: This check is vulnerable to Time-of-Check Time-of-Use (TOCTOU) DNS Rebinding attacks.
   // A malicious DNS server could return a public IP here, then switch to a private IP for the actual fetch.
-  // In a nodejs environment using standard fetch/native DNS, this is hard to fully prevent without
+  // In a nodejs/bun environment using standard fetch/native DNS, this is hard to fully prevent without
   // a custom agent that pins the IP or low-level socket inspection.
+  // Users requiring high security should run this in an isolated network environment (container/VM).
   // For now, this check provides "defense in depth" against accidental internal access.
+  // CRITICAL SECURITY NOTE: In high-security environments, do NOT rely solely on this check.
+  // Use network-level isolation (e.g. firewalls, service meshes, or egress proxies) to strictly block
+  // internal traffic from the Keystone process.
+  //
+  // Recommendation: Use 'allowInsecure: true' only in trusted environments.
   if (!isIP(hostname)) {
     try {
+      // WARNING: This check is vulnerable to DNS Rebinding (TOCTOU)
+      if (options.logger?.warn && !hasWarnedSSRF) {
+        options.logger.warn(
+          '  ⚠️  Security Note: Remote URL validation provides defense-in-depth but does not fully prevent DNS rebinding attacks.\n' +
+            '      For high-security environments, ensure network-level isolation (e.g. firewalls).'
+        );
+        hasWarnedSSRF = true;
+      }
+
       const resolved = await lookup(hostname, { all: true });
+
       for (const record of resolved) {
         if (isPrivateIpAddress(record.address)) {
           throw new Error(
@@ -168,6 +192,16 @@ export async function validateRemoteUrl(
         }
       }
     } catch (error) {
+      if (error instanceof Error && error.message.startsWith('SSRF Protection')) {
+        throw error;
+      }
+
+      if (options.logger?.warn) {
+        options.logger.warn(
+          `[Security Warning] validateRemoteUrl check for ${hostname} failed/bypassed: ${error}`
+        );
+      }
+
       throw new Error(
         `SSRF Protection: Failed to resolve hostname "${hostname}": ${
           error instanceof Error ? error.message : String(error)

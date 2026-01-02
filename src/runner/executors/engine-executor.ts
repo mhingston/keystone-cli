@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import yaml from 'js-yaml';
 import type { ExpressionContext } from '../../expression/evaluator';
 import { ExpressionEvaluator } from '../../expression/evaluator';
@@ -52,44 +53,7 @@ class LRUCache<K, V> {
 }
 
 const VERSION_CACHE = new LRUCache<string, string>(LIMITS.VERSION_CACHE_MAX_SIZE);
-const TRUNCATED_SUFFIX = '... [truncated output]';
-
-function createOutputLimiter(maxBytes: number) {
-  let bytes = 0;
-  let text = '';
-  let truncated = false;
-
-  const append = (chunk: Buffer | string) => {
-    if (truncated || maxBytes <= 0) {
-      truncated = true;
-      return;
-    }
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    const remaining = maxBytes - bytes;
-    if (remaining <= 0) {
-      truncated = true;
-      return;
-    }
-    if (buffer.length <= remaining) {
-      text += buffer.toString();
-      bytes += buffer.length;
-      return;
-    }
-    text += buffer.subarray(0, remaining).toString();
-    bytes = maxBytes;
-    truncated = true;
-  };
-
-  const finalize = () => (truncated ? `${text}${TRUNCATED_SUFFIX}` : text);
-
-  return {
-    append,
-    finalize,
-    get truncated() {
-      return truncated;
-    },
-  };
-}
+import { createOutputLimiter } from '../../utils/stream-utils';
 
 export interface EngineExecutionResult {
   stdout: string;
@@ -163,11 +127,17 @@ async function runCommand(
     if (child.stdout) {
       child.stdout.on('data', (chunk: Buffer) => {
         stdoutLimiter.append(chunk);
+        if (stdoutLimiter.truncated) {
+          child.kill();
+        }
       });
     }
     if (child.stderr) {
       child.stderr.on('data', (chunk: Buffer) => {
         stderrLimiter.append(chunk);
+        if (stderrLimiter.truncated) {
+          child.kill();
+        }
       });
     }
 
@@ -208,7 +178,8 @@ async function checkEngineVersion(
   cwd: string,
   abortSignal?: AbortSignal
 ): Promise<string> {
-  const cacheKey = `${command}::${versionArgs.join(' ')}`;
+  const pathEnv = env.PATH || env.Path || env.path || '';
+  const cacheKey = `${command}::${versionArgs.join(' ')}::${cwd}::${pathEnv}`;
   const cached = VERSION_CACHE.get(cacheKey);
   if (cached) return cached;
 

@@ -10,20 +10,23 @@ import {
 
 import { ConfigLoader } from '../utils/config-loader';
 
-import { beforeEach, describe, expect, jest, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, jest, mock, spyOn, test } from 'bun:test';
 import type { Step, Workflow } from '../parser/schema';
+import * as llmAdapter from './llm-adapter';
 
 // Note: mock.module() for llm-adapter is now handled by the preload file
 // We should NOT mock 'ai' globally as it breaks other tests using the real ai SDK.
 // Instead, we use a mock model that the real ai SDK calls.
 
 describe('WorkflowRunner Recovery Security', () => {
+  let getModelSpy: ReturnType<typeof spyOn>;
+
   beforeEach(() => {
     jest.restoreAllMocks();
     ConfigLoader.clear();
     setupLlmMocks();
     resetLlmMocks();
-    mockGetModel.mockResolvedValue(createUnifiedMockModel());
+    getModelSpy = spyOn(llmAdapter, 'getModel').mockResolvedValue(createUnifiedMockModel() as any);
   });
 
   test('should NOT allow reflexion to overwrite critical step properties', async () => {

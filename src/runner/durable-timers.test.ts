@@ -7,7 +7,7 @@ import { WorkflowSuspendedError, WorkflowWaitingError } from './step-executor';
 import { WorkflowRunner } from './workflow-runner';
 
 describe('Durable Timers Integration', () => {
-  const dbPath = 'test-timers.db';
+  const dbPath = `test-timers-${randomUUID()}.db`;
   let db: WorkflowDb;
 
   beforeAll(() => {

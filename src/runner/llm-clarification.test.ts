@@ -14,6 +14,7 @@ import * as agentParser from '../parser/agent-parser';
 import type { Config } from '../parser/config-schema';
 import type { Agent, LlmStep, Step } from '../parser/schema';
 import { ConfigLoader } from '../utils/config-loader';
+import * as llmAdapter from './llm-adapter';
 import type { LLMMessage } from './llm-adapter';
 import type { StepResult } from './step-executor';
 
@@ -28,10 +29,11 @@ let currentChatFn: (messages: any[], options?: any) => Promise<MockLLMResponse>;
 describe('LLM Clarification', () => {
   let resolveAgentPathSpy: ReturnType<typeof spyOn>;
   let parseAgentSpy: ReturnType<typeof spyOn>;
+  let getModelSpy: ReturnType<typeof spyOn>;
 
   beforeAll(async () => {
     setupLlmMocks();
-    mockGetModel.mockResolvedValue(createUnifiedMockModel());
+    getModelSpy = spyOn(llmAdapter, 'getModel').mockResolvedValue(createUnifiedMockModel() as any);
     const module = await import('./executors/llm-executor.ts');
     executeLlmStep = module.executeLlmStep;
   });
@@ -64,6 +66,7 @@ describe('LLM Clarification', () => {
     ConfigLoader.clear();
     resolveAgentPathSpy.mockRestore();
     parseAgentSpy.mockRestore();
+    getModelSpy?.mockClear();
     resetLlmMocks();
   });
 

@@ -175,17 +175,20 @@ export class DynamicStateManager {
     const db = this.getDatabase();
     const now = new Date().toISOString();
 
-    // Load current state to get replanCount
-    const current = db
-      .prepare('SELECT replan_count FROM dynamic_workflow_state WHERE id = ?')
-      .get(stateId) as { replan_count: number };
-    const replanCount = current?.replan_count || 0;
-
-    db.prepare(`
+    // Use atomic SQL update to increment replan_count and set new plan
+    const result = db
+      .prepare(`
       UPDATE dynamic_workflow_state
-      SET generated_plan = ?, status = ?, updated_at = ?, replan_count = ?
+      SET generated_plan = ?, status = ?, updated_at = ?, replan_count = replan_count + 1
       WHERE id = ?
-    `).run(JSON.stringify(plan), status, now, replanCount, stateId);
+      RETURNING replan_count
+    `)
+      .get(JSON.stringify(plan), status, now, stateId) as { replan_count: number } | undefined;
+
+    if (!result) {
+      throw new Error(`Failed to update dynamic state: ${stateId}`);
+    }
+    const replanCount = result.replan_count;
 
     // Delete previous execution records IF this is a re-plan (optional, but cleaner)
     if (replanCount > 0) {

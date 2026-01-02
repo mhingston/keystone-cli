@@ -43,45 +43,52 @@ export async function executeMemoryStep(
 
   const memoryDb = memoryDbFromOptions || new MemoryDb('.keystone/memory.db', dimension);
 
-  // Helper to get embedding using AI SDK
-  const getEmbedding = async (text: string): Promise<number[]> => {
-    const model = await getEmbeddingModel(modelName);
-    const result = await embed({
-      model,
-      value: text,
-      abortSignal,
-    });
-    return result.embedding;
-  };
+  try {
+    // Helper to get embedding using AI SDK
+    const getEmbedding = async (text: string): Promise<number[]> => {
+      const model = await getEmbeddingModel(modelName);
+      const result = await embed({
+        model,
+        value: text,
+        abortSignal,
+      });
+      return result.embedding;
+    };
 
-  switch (step.op) {
-    case 'store': {
-      const text = ExpressionEvaluator.evaluateString(step.text || '', context);
-      if (!text) throw new Error('Text is required for memory store operation');
+    switch (step.op) {
+      case 'store': {
+        const text = ExpressionEvaluator.evaluateString(step.text || '', context);
+        if (!text) throw new Error('Text is required for memory store operation');
 
-      const embedding = await getEmbedding(text);
-      const metadata = step.metadata || {};
-      const id = await memoryDb.store(text, embedding, metadata as Record<string, unknown>);
+        const embedding = await getEmbedding(text);
+        const metadata = step.metadata || {};
+        const id = await memoryDb.store(text, embedding, metadata as Record<string, unknown>);
 
-      return {
-        output: { id, status: 'stored' },
-        status: 'success',
-      };
+        return {
+          output: { id, status: 'stored' },
+          status: 'success',
+        };
+      }
+      case 'search': {
+        const query = ExpressionEvaluator.evaluateString(step.query || '', context);
+        if (!query) throw new Error('Query is required for memory search operation');
+
+        const embedding = await getEmbedding(query);
+        const limit = step.limit || 5;
+        const results = await memoryDb.search(embedding, limit);
+
+        return {
+          output: results,
+          status: 'success',
+        };
+      }
+      default:
+        throw new Error(`Unknown memory operation: ${(step as any).op}`);
     }
-    case 'search': {
-      const query = ExpressionEvaluator.evaluateString(step.query || '', context);
-      if (!query) throw new Error('Query is required for memory search operation');
-
-      const embedding = await getEmbedding(query);
-      const limit = step.limit || 5;
-      const results = await memoryDb.search(embedding, limit);
-
-      return {
-        output: results,
-        status: 'success',
-      };
+  } finally {
+    // Only close if we created it ourselves
+    if (!memoryDbFromOptions) {
+      memoryDb.close();
     }
-    default:
-      throw new Error(`Unknown memory operation: ${(step as any).op}`);
   }
 }

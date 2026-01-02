@@ -67,32 +67,69 @@ export class MemoryDb {
   private static connectionCache = new Map<string, { db: Database; refCount: number }>();
   private tableName: string;
 
+  /**
+   * Acquire a MemoryDb instance. This handles reference counting automatically.
+   */
+  static acquire(dbPath = '.keystone/memory.db', embeddingDimension = 384): MemoryDb {
+    const cached = MemoryDb.connectionCache.get(dbPath);
+    if (cached) {
+      cached.refCount++;
+      // We return a new instance but it shares the underlying DB connection
+      return new MemoryDb(dbPath, embeddingDimension, cached.db);
+    }
+
+    // Create new connection
+    const instance = new MemoryDb(dbPath, embeddingDimension);
+    MemoryDb.connectionCache.set(dbPath, { db: instance.db, refCount: 1 });
+    return instance;
+  }
+
   constructor(
     public readonly dbPath = '.keystone/memory.db',
-    private readonly embeddingDimension = 384
+    private readonly embeddingDimension = 384,
+    existingDb?: Database
   ) {
     // Ensure SQLite is set up with custom library on macOS (idempotent)
     setupSqlite();
 
     this.tableName = `vec_memory_${embeddingDimension}`;
-    const cached = MemoryDb.connectionCache.get(dbPath);
+
+    if (existingDb) {
+      this.db = existingDb;
+    } else {
+      // Check cache again in case direct constructor usage overlaps with cache
+      const cached = MemoryDb.connectionCache.get(dbPath);
+      if (cached) {
+        // This path shouldn't typically be hit if users use acquire(), but for safety:
+        cached.refCount++;
+        this.db = cached.db;
+      } else {
+        const dir = dirname(dbPath);
+        if (!existsSync(dir)) {
+          mkdirSync(dir, { recursive: true });
+        }
+        this.db = new Database(dbPath, { create: true });
+
+        // Load sqlite-vec extension
+        const extensionPath = resolveSqliteVecPath();
+        this.db.loadExtension(extensionPath);
+
+        this.initSchema();
+
+        // Seed cache
+        MemoryDb.connectionCache.set(dbPath, { db: this.db, refCount: 1 });
+      }
+    }
+  }
+
+  /**
+   * Manually increment reference count.
+   * Useful when passing an instance to another component that should also own it.
+   */
+  retain(): void {
+    const cached = MemoryDb.connectionCache.get(this.dbPath);
     if (cached) {
       cached.refCount++;
-      this.db = cached.db;
-    } else {
-      const dir = dirname(dbPath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-      this.db = new Database(dbPath, { create: true });
-
-      // Load sqlite-vec extension
-      const extensionPath = resolveSqliteVecPath();
-      this.db.loadExtension(extensionPath);
-
-      this.initSchema();
-
-      MemoryDb.connectionCache.set(dbPath, { db: this.db, refCount: 1 });
     }
   }
 
@@ -219,6 +256,14 @@ export class MemoryDb {
     }));
   }
 
+  /**
+   * Release the connection. Decrements ref count and closes DB if 0.
+   * Alias for close() for backward compatibility.
+   */
+  release(): void {
+    this.close();
+  }
+
   close(): void {
     const cached = MemoryDb.connectionCache.get(this.dbPath);
     if (cached) {
@@ -228,8 +273,12 @@ export class MemoryDb {
         MemoryDb.connectionCache.delete(this.dbPath);
       }
     } else {
-      // Fallback if not in cache for some reason
-      this.db.close();
+      // Fallback if not in cache for some reason or already closed
+      try {
+        this.db.close();
+      } catch {
+        // ignore
+      }
     }
   }
 }

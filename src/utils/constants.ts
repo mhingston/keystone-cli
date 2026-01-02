@@ -91,12 +91,16 @@ export const LIMITS = {
 export const FILE_MODES = {
   /** Owner-only permissions for sensitive temp directories */
   SECURE_DIR: 0o700,
+  /** Owner-only read/write for sensitive files (600) */
+  SECURE_FILE: 0o600,
 } as const;
 
 /** Default iteration counts */
 export const ITERATIONS = {
   /** Default max iterations for LLM ReAct loop */
   DEFAULT_LLM_MAX_ITERATIONS: 10,
+  /** Maximum number of agent handoffs allowed to prevent infinite loops */
+  MAX_AGENT_HANDOFFS: 20,
 } as const;
 
 /** LLM-related constants for conversation management */

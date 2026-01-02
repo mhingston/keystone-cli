@@ -25,5 +25,14 @@ export function registerEventCommand(program: Command): void {
       }
       await db.storeEvent(name, data);
       console.log(`✓ Event '${name}' triggered.`);
+
+      // Check for workflows waiting for this event
+      const suspendedRunIds = await db.getSuspendedStepsForEvent(name);
+      if (suspendedRunIds.length > 0) {
+        console.log(`\nFound ${suspendedRunIds.length} workflow(s) waiting for this event:`);
+        for (const runId of suspendedRunIds) {
+          console.log(`  - Run ${runId}: Resume with \`keystone resume ${runId}\``);
+        }
+      }
     });
 }

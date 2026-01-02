@@ -26,6 +26,7 @@
 import type { ExpressionContext } from '../../expression/evaluator.ts';
 import { ExpressionEvaluator } from '../../expression/evaluator.ts';
 import type { ShellStep } from '../../parser/schema.ts';
+import { ConfigLoader } from '../../utils/config-loader.ts';
 import { LIMITS } from '../../utils/constants.ts';
 import { filterSensitiveEnv } from '../../utils/env-filter.ts';
 import { ConsoleLogger, type Logger } from '../../utils/logger.ts';
@@ -146,6 +147,15 @@ function formatShellResult(result: ShellResult, logger: Logger): StepResult {
  */
 export function escapeShellArg(arg: unknown): string {
   const value = arg === null || arg === undefined ? '' : String(arg);
+
+  // Windows escaping (cmd.exe)
+  if (process.platform === 'win32') {
+    // Replace " with "" and wrap in double quotes
+    // This is the standard way to escape arguments for CRT-based programs in cmd
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  // POSIX escaping (sh)
   // Replace single quotes with '\'' (end quote, escaped quote, start quote)
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
@@ -158,7 +168,7 @@ export interface ShellResult {
   stderrTruncated?: boolean;
 }
 
-const TRUNCATED_SUFFIX = '... [truncated output]';
+import { TRUNCATED_SUFFIX, createOutputLimiter } from '../../utils/stream-utils.ts';
 
 async function readStreamWithLimit(
   stream: ReadableStream<Uint8Array> | null | undefined,
@@ -173,65 +183,40 @@ async function readStreamWithLimit(
   }
 
   const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let text = '';
-  let bytesRead = 0;
+  const limiter = createOutputLimiter(maxBytes);
 
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
     if (!value) continue;
 
-    if (bytesRead + value.byteLength > maxBytes) {
-      const allowed = maxBytes - bytesRead;
-      if (allowed > 0) {
-        text += decoder.decode(value.slice(0, allowed), { stream: true });
-      }
-      text += decoder.decode();
+    limiter.append(Buffer.from(value));
+
+    if (limiter.truncated) {
       try {
         await reader.cancel();
       } catch {}
-      return { text: `${text}${TRUNCATED_SUFFIX}`, truncated: true };
+      break;
     }
-
-    bytesRead += value.byteLength;
-    text += decoder.decode(value, { stream: true });
   }
 
-  text += decoder.decode();
-  return { text, truncated: false };
+  return { text: limiter.finalize(), truncated: limiter.truncated };
 }
 
 // Whitelist of allowed characters for secure shell command execution
-// Allows: Alphanumeric, space, and common safe punctuation (_ . / : @ , + - = ' " ! ~)
-// Blocks: Newlines (\n, \r), Pipes, redirects, subshells, variables ($), etc.
-const SAFE_SHELL_CHARS = /^[a-zA-Z0-9 _./:@,+=~'"!-]+$/;
+// Allows: Alphanumeric, space, and common safe punctuation (_ . / : @ , + - =)
+// Blocks: Quotes, Newlines, Pipes, redirects, subshells, variables, backslashes, etc.
+const SAFE_SHELL_CHARS = /^[a-zA-Z0-9 _./:@,+=~"'-]+$/;
 
 export function detectShellInjectionRisk(rawCommand: string): boolean {
-  // We scan the command to handle single quotes correctly.
-  // Characters inside single quotes are considered escaped/literal and safe from shell injection.
-  let inSingleQuote = false;
+  // We can safely ignore anything inside single quotes because our escape()
+  // function (which is the recommended way to interpolate) uses single quotes
+  // and correctly escapes nested single quotes as '\''.
+  // This regex matches '...' including correctly escaped internal single quotes.
+  const quotedRegex = /'([^']|'\\'')*'/g;
+  const stripped = rawCommand.replace(quotedRegex, "'QUOTED_STR'");
 
-  for (let i = 0; i < rawCommand.length; i++) {
-    const char = rawCommand[i];
-
-    if (char === "'") {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-
-    // Outside single quotes, we enforce the strict whitelist
-    if (!inSingleQuote) {
-      if (!SAFE_SHELL_CHARS.test(char)) {
-        return true;
-      }
-    }
-    // Inside single quotes, everything is treated as a literal string by the shell,
-    // so we don't need to block special characters.
-  }
-
-  // If we ended with an unclosed single quote, it's a syntax risk
-  return inSingleQuote;
+  return !SAFE_SHELL_CHARS.test(stripped);
 }
 
 /**
@@ -256,10 +241,56 @@ export async function executeShell(
   if (!step.allowInsecure) {
     if (detectShellInjectionRisk(command)) {
       throw new Error(
-        `Security Error: Command execution blocked.\nCommand: "${command.substring(0, 100)}${
+        `Security Error: Command execution blocked to prevent potential shell injection.\nCommand: "${command.substring(0, 100)}${
           command.length > 100 ? '...' : ''
-        }"\nReason: Contains characters not in the strict whitelist (alphanumeric, whitespace, and _./:@,+=~-).\nThis protects against shell injection attacks.\nFix: either simplify your command or set 'allowInsecure: true' in your step definition if you trust the input.`
+        }"\nReason: Contains characters not in the strict whitelist (alphanumeric, whitespace, and _./:@,+=~-).\nThis protects against chaining malicious commands (e.g. '; rm -rf /'). It does NOT evaluate if the command itself is destructive.\nFix: either simplify your command or set 'allowInsecure: true' in your step definition if you trust the input.`
       );
+    }
+
+    // Additional Check: Prevent Directory Traversal in Binary Path
+    // Even if it passes the whitelist, we don't want to allow 'cat ../../../etc/passwd'
+    // or executing '../../../../bin/malice'.
+    // We check for '..' characters which might indicate directory traversal.
+    if (command.includes('..') && (command.includes('/') || command.includes('\\'))) {
+      throw new Error(
+        `Security Error: Command blocked due to potential directory traversal ('..').\nCommand: "${command.substring(0, 100)}"\nTo allow relative paths outside the current directory, set 'allowInsecure: true'.`
+      );
+    }
+  }
+
+  // Security Check: Enforce Denylist (e.g. rm, mkfs, etc.)
+  // We check this even if allowInsecure is true, because these are explicitly banned by policy.
+  const config = ConfigLoader.load();
+  if (config.engines?.denylist && config.engines.denylist.length > 0) {
+    // Robust parsing to get the command binary
+    // This handles:
+    // 1. Chained commands (e.g. "echo foo; rm -rf /")
+    // 2. Pre-command modifiers (e.g. "watch rm") - though difficult to do perfectly without a full shell parser,
+    //    we can check for common dangerous patterns or just strictly check tokens.
+    //
+    // Strategy: Tokenize by shell delimiters (;, |, &, &&, ||, ``, $()) and check the first word of each segment.
+
+    // Split by command separators
+    const segments = command.split(/[;|&]|\$\(|\`|\r?\n/);
+
+    for (const segment of segments) {
+      if (!segment.trim()) continue;
+
+      // Get the first token of the segment
+      const tokens = segment.trim().split(/\s+/);
+      let bin = tokens[0];
+
+      // Handle path prefixes (e.g. /bin/rm -> rm)
+      if (bin.includes('/')) {
+        const parts = bin.split(/[/\\]/);
+        bin = parts[parts.length - 1];
+      }
+
+      if (config.engines.denylist.includes(bin)) {
+        throw new Error(
+          `Security Error: Command "${bin}" is in the denylist and cannot be executed.`
+        );
+      }
     }
   }
 
@@ -300,10 +331,14 @@ export async function executeShell(
     let stderrTruncated = false;
     const maxOutputBytes = LIMITS.MAX_PROCESS_OUTPUT_BYTES;
 
-    // Use 'sh -c' for everything to ensure consistent argument parsing
+    // Use 'sh -c' (POSIX) or 'cmd.exe /d /s /c' (Windows)
     // Security is guaranteed by the strict whitelist check above for allowInsecure: false
     // which prevents injection of metacharacters, quotes, escapes, etc.
-    const proc = Bun.spawn(['sh', '-c', command], {
+    const isWindows = process.platform === 'win32';
+    const shellCommand = isWindows ? 'cmd.exe' : 'sh';
+    const shellArgs = isWindows ? ['/d', '/s', '/c'] : ['-c'];
+
+    const proc = Bun.spawn([shellCommand, ...shellArgs, command], {
       cwd: cwd || process.cwd(),
       env: mergedEnv,
       stdout: 'pipe',
@@ -323,9 +358,15 @@ export async function executeShell(
     const stdoutPromise = readStreamWithLimit(proc.stdout, maxOutputBytes);
     const stderrPromise = readStreamWithLimit(proc.stderr, maxOutputBytes);
 
-    // Wait for exit
-    exitCode = await proc.exited;
-    const [stdoutResult, stderrResult] = await Promise.all([stdoutPromise, stderrPromise]);
+    // Wait for exit and streams simultaneously to prevent deadlocks
+    // (If the pipe fills up, the process blocks on write. If we await exit first, we never drain the pipe -> Deadlock)
+    const [exitResult, stdoutResult, stderrResult] = await Promise.all([
+      proc.exited,
+      stdoutPromise,
+      stderrPromise,
+    ]);
+
+    exitCode = exitResult;
 
     stdoutString = stdoutResult.text;
     stderrString = stderrResult.text;
@@ -406,8 +447,11 @@ export async function executeShellArgs(
     const stdoutPromise = readStreamWithLimit(proc.stdout, maxOutputBytes);
     const stderrPromise = readStreamWithLimit(proc.stderr, maxOutputBytes);
 
-    const exitCode = await proc.exited;
-    const [stdoutResult, stderrResult] = await Promise.all([stdoutPromise, stderrPromise]);
+    const [exitCode, stdoutResult, stderrResult] = await Promise.all([
+      proc.exited,
+      stdoutPromise,
+      stderrPromise,
+    ]);
 
     if (abortSignal) {
       abortSignal.removeEventListener('abort', abortHandler);

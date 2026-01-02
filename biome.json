@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": ["node_modules", "dist", ".keystone/state.db*"]
+    "ignore": ["node_modules", "dist", ".keystone/state.db*", "providers-fix"]
   },
   "formatter": {
     "enabled": true,
