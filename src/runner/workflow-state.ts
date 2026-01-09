@@ -295,18 +295,23 @@ export class WorkflowState {
             );
           }
           const mappedOutputs = isLargeDataset ? {} : ForeachExecutor.aggregateOutputs(outputs);
+
+          // If the DB says the parent is RUNNING/PENDING but we have all items successfully completed,
+          // trust the derived status to prevent re-execution.
+          let finalStatus = mainExec.status as StepStatusType;
+          if (
+            allSuccess &&
+            hasAllItems &&
+            finalStatus !== StepStatus.SUCCESS &&
+            finalStatus !== StepStatus.SKIPPED
+          ) {
+            finalStatus = StepStatus.SUCCESS;
+          }
+
           this.stepContexts.set(stepId, {
             output: isLargeDataset ? [] : outputs,
             outputs: mappedOutputs,
-            status: mainExec.status as StepStatusType, // Trust the main status mostly? Or recompute?
-            // If main status says STARTED but we have all items success, maybe we should trust our recomputation?
-            // The original code sets status based on items.
-            // But if mainExec exists and has a status, that's authoritative for the "Parent".
-            // HOWEVER, if we are resuming, we might want to check if it matches reality.
-            // Let's stick to original logic:
-            // if (allSuccess && hasAllItems) status = SUCCESS...
-            // But wait, if main status is FAILED, using FAILED is correct.
-            // Let's mostly use the derived status for consistency in "incomplete" resumes.
+            status: finalStatus,
             items,
             foreachItems: persistedItems,
           } as ForeachStepContext);
