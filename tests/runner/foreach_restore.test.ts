@@ -1,4 +1,3 @@
-
 import { afterAll, describe, expect, it } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
@@ -40,11 +39,11 @@ describe('WorkflowState Foreach Restoration', () => {
 
     // Create the item executions as SUCCESS
     for (let i = 0; i < items.length; i++) {
-        const itemStepExecId = randomUUID();
-        // Correctly pass iteration index to createStep
-        await db.createStep(itemStepExecId, runId, stepId, i);
-        // We must include output so hydration works and items array is populated
-        await db.completeStep(itemStepExecId, StepStatus.SUCCESS, { result: items[i] });
+      const itemStepExecId = randomUUID();
+      // Correctly pass iteration index to createStep
+      await db.createStep(itemStepExecId, runId, stepId, i);
+      // We must include output so hydration works and items array is populated
+      await db.completeStep(itemStepExecId, StepStatus.SUCCESS, { result: items[i] });
     }
 
     // 2. Define workflow
@@ -52,28 +51,28 @@ describe('WorkflowState Foreach Restoration', () => {
       name: 'test-workflow',
       steps: [
         {
-            id: stepId,
-            type: 'shell',
-            run: 'echo ${{ item }}',
-            foreach: '${{ [1, 2, 3] }}',
-            needs: []
+          id: stepId,
+          type: 'shell',
+          run: 'echo ${{ item }}',
+          foreach: '${{ [1, 2, 3] }}',
+          needs: [],
         },
         {
-            id: 'next_step',
-            type: 'shell',
-            run: 'echo "done"',
-            needs: [stepId]
-        }
+          id: 'next_step',
+          type: 'shell',
+          run: 'echo "done"',
+          needs: [stepId],
+        },
       ],
       outputs: {
-        final: '${{ steps.next_step.output.stdout.trim() }}'
-      }
+        final: '${{ steps.next_step.output.stdout.trim() }}',
+      },
     } as unknown as Workflow;
 
     // 3. Restore via WorkflowRunner
     const runner = new WorkflowRunner(workflow, {
-        dbPath,
-        resumeRunId: runId,
+      dbPath,
+      resumeRunId: runId,
     });
 
     // 4. Run - it should skip the foreach step (because it detects it as SUCCESS) and run next-step
