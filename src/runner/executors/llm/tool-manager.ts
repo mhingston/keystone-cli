@@ -73,24 +73,6 @@ export class ToolManager {
 
     // 2. Step Tools & Standard Tools
     const standardToolsRecord = STANDARD_TOOLS as any; // Handle index signature issue
-    const extraTools = [
-      ...(step.tools || []),
-      ...(step.useStandardTools ? Object.values(standardToolsRecord) : []),
-    ];
-
-    // Logic to merge standard tools correctly:
-    // If useStandardTools is true, we want all standard tools.
-    // But the loop above iterates over step.tools (definitions) + values?
-    // In original code: const extraTools = [...(step.tools || []), ...(step.useStandardTools ? STANDARD_TOOLS : [])];
-    // Wait, STANDARD_TOOLS is an object, not array.
-    // Original code issue: `step.useStandardTools ? STANDARD_TOOLS : []` -> if STANDARD_TOOLS is object, iterate?
-    // In original code: `for (const tool of extraTools)`
-    // If STANDARD_TOOLS is object, it is NOT iterable.
-    // The original code probably relied on `STANDARD_TOOLS` being iterable or `Object.values` was intended?
-    // Actually, `STANDARD_TOOLS` import in `llm-executor` might be different?
-    // No, strictly it probably failed if `useStandardTools` was true unless `STANDARD_TOOLS` is array-like.
-    // Let's assume `STANDARD_TOOLS` is a Record.
-    // I will iterate properly.
 
     const toolsToRegister: any[] = [...(step.tools || [])];
     if (step.useStandardTools === true) {
