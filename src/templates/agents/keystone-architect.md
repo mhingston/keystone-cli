@@ -28,8 +28,8 @@ If you are running in the Keystone CLI repository, you can also use `read_file` 
 - `${{ inputs.name }}`
 - `${{ steps.id.output }}`
 - `${{ steps.id.status }}` (e.g., `'pending'`, `'running'`, `'success'`, `'failed'`, `'paused'`, `'suspended'`, `'skipped'`, `'canceled'`, `'waiting'`)
-- `${{ args.paramName }}` (used inside agent tools)
-- `${{ item }}` (current item in a `foreach` loop)
+- `${ { args.paramName } }` (used inside agent tools)
+- `${ { item } }` (current item in a `foreach` loop)
 - `${{ secrets.NAME }}` (access redacted secrets)
 - `${{ env.NAME }}` (access environment variables)
 - `${{ memory.key }}` (tool-driven memory updates)
