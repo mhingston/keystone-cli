@@ -13,9 +13,7 @@ A local-first, declarative, agentic workflow orchestrator built on **Bun**.
 
 Keystone allows you to define complex automation workflows using a simple YAML syntax, with first-class support for LLM agents, state persistence, and parallel execution.
 
-<div align="center">
-  [![Watch the video](https://img.youtube.com/vi/El1nwSo0h1Y/0.jpg)](https://www.youtube.com/watch?v=El1nwSo0h1Y)
-</div>
+[![Watch the video](https://img.youtube.com/vi/El1nwSo0h1Y/0.jpg)](https://www.youtube.com/watch?v=El1nwSo0h1Y)
 
 ---
 
