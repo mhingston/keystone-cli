@@ -31,6 +31,13 @@ steps:
       ${{ item }}
 
       Produce the full file content for the given path. Ensure it aligns with the architectural constraints and dependencies defined in the blueprint.
+      
+      IMPORTANT: If generating a workflow file (.yaml in workflows/):
+      - MUST include a top-level `$schema` field: $schema: https://raw.githubusercontent.com/mhingston/keystone-cli/main/schemas/workflow.json
+      - MUST include a top-level `name` field (string, required)
+      - MUST include a `steps` array with at least one step
+      - Each step MUST have `id` and `type` fields
+      
       Return only JSON with fields: path, content.
     outputSchema:
       type: object

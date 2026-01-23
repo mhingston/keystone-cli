@@ -37,10 +37,85 @@ steps:
     outputMapping:
       files: files
 
+  - id: validate_workflows
+    type: shell
+    needs: [generate]
+    foreach: ${{ steps.generate.outputs.files.filter(f => f.path.endsWith('.yaml') && f.path.includes('workflows')) }}
+    run: |
+      echo "${{ item.content }}" | npx tsx src/cli.ts validate --stdin --type workflow
+    allowFailure: true
+    transform: |
+      {
+        path: item.path,
+        content: item.content,
+        valid: result.exitCode === 0,
+        error: result.exitCode !== 0 ? result.stderr : null
+      }
+
+  - id: repair_workflows
+    type: llm
+    needs: [validate_workflows]
+    foreach: ${{ steps.validate_workflows.output.filter(f => !f.valid) }}
+    agent: software-engineer
+    prompt: |
+      A generated workflow file failed schema validation. Please fix it.
+
+      File path: ${{ item.path }}
+      
+      Validation error:
+      ${{ item.error }}
+
+      Current content:
+      ```yaml
+      ${{ item.content }}
+      ```
+
+      The workflow schema requires:
+      1. A top-level `name` field (string, required)
+      2. A top-level `$schema` field pointing to: https://raw.githubusercontent.com/mhingston/keystone-cli/main/schemas/workflow.json
+      3. A `steps` array with at least one step
+      4. Each step must have `id` and `type` fields
+
+      Please return the corrected YAML content that conforms to the schema. Return ONLY the fixed YAML content, nothing else.
+    outputSchema:
+      type: object
+      properties:
+        content:
+          type: string
+          description: The fixed YAML content
+      required: [content]
+
+  - id: merge_files
+    type: shell
+    needs: [validate_workflows, repair_workflows]
+    run: |
+      const generated = ${{ JSON.stringify(steps.generate.outputs.files) }};
+      const validated = ${{ JSON.stringify(steps.validate_workflows.output) }};
+      const repaired = ${{ JSON.stringify(steps.repair_workflows.output) }};
+      
+      const repairedMap = new Map();
+      if (Array.isArray(repaired)) {
+        repaired.forEach((r, idx) => {
+          const validatedItem = validated[idx];
+          if (validatedItem) {
+            repairedMap.set(validatedItem.path, r.content);
+          }
+        });
+      }
+      
+      const final = generated.map(file => {
+        if (repairedMap.has(file.path)) {
+          return { ...file, content: repairedMap.get(file.path) };
+        }
+        return file;
+      });
+      
+      return { files: final };
+
   - id: write_files
     type: file
-    needs: [generate]
-    foreach: ${{ steps.generate.outputs.files }}
+    needs: [merge_files]
+    foreach: ${{ steps.merge_files.output.files }}
     op: write
     path: ${{ item.path }}
     content: ${{ item.content }}
