@@ -269,6 +269,12 @@ export async function executeDynamicStep(
 
     return buildFinalResult(state);
   } catch (error) {
+    // Re-throw suspension/waiting errors so the workflow can properly suspend
+    if (error instanceof Error) {
+      if (error.name === 'WorkflowSuspendedError' || error.name === 'WorkflowWaitingError') {
+        throw error;
+      }
+    }
     return await handleExecutionError(step, state, dbState, stateManager, options.saveState, error);
   }
 }

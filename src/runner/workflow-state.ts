@@ -324,8 +324,17 @@ export class WorkflowState {
           try {
             output = JSON.parse(exec.output);
           } catch (e) {
-            /* ignore */
+            this.logger.warn(
+              `Failed to parse output for step "${stepId}": ${e instanceof Error ? e.message : String(e)}`
+            );
+            // If parsing fails, try using the raw output
+            output = exec.output;
           }
+        } else if (exec.status === 'success') {
+          // If step succeeded but has no output, log a warning
+          this.logger.warn(
+            `Step "${stepId}" completed with status "${exec.status}" but has no output. This may cause issues for dependent steps.`
+          );
         }
 
         this.stepContexts.set(stepId, {
