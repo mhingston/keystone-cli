@@ -97,11 +97,11 @@ Prompt`;
     });
 
     it('should parse the real keystone-architect.md template', () => {
-        const filePath = join(process.cwd(), 'src/templates/agents/keystone-architect.md');
-        const agent = parseAgent(filePath);
-        expect(agent.name).toBe('keystone-architect');
-        // Ensure the problematic expression is escaped/spaced
-        expect(agent.systemPrompt).toContain('${ { args.paramName } }');
+      const filePath = join(process.cwd(), 'src/templates/agents/keystone-architect.md');
+      const agent = parseAgent(filePath);
+      expect(agent.name).toBe('keystone-architect');
+      // Ensure the problematic expression is escaped/spaced
+      expect(agent.systemPrompt).toContain('${ { args.paramName } }');
     });
   });
 
