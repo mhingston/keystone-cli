@@ -76,7 +76,7 @@ steps:
       3. A `steps` array with at least one step
       4. Each step must have `id` and `type` fields
 
-      Please return the corrected YAML content that conforms to the schema. Return ONLY the fixed YAML content, nothing else.
+      Return a JSON object with a single "content" field containing the corrected YAML as a string.
     outputSchema:
       type: object
       properties:
