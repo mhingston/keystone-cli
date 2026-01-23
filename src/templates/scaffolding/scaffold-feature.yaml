@@ -42,14 +42,14 @@ steps:
     needs: [generate]
     foreach: ${{ steps.generate.outputs.files.filter(f => f.path.endsWith('.yaml') && f.path.includes('workflows')) }}
     run: |
-      echo "${{ item.content }}" | npx tsx src/cli.ts validate --stdin --type workflow
+      echo "${{ item.content }}" | bun run src/cli.ts validate --stdin --type workflow
     allowFailure: true
     transform: |
       {
         path: item.path,
         content: item.content,
-        valid: result.exitCode === 0,
-        error: result.exitCode !== 0 ? result.stderr : null
+        valid: exitCode === 0,
+        error: exitCode !== 0 ? stderr : null
       }
 
   - id: repair_workflows
@@ -88,10 +88,15 @@ steps:
   - id: merge_files
     type: shell
     needs: [validate_workflows, repair_workflows]
+    env:
+      GENERATED: ${{ JSON.stringify(steps.generate.outputs.files) }}
+      VALIDATED: ${{ JSON.stringify(steps.validate_workflows.output) }}
+      REPAIRED: ${{ JSON.stringify(steps.repair_workflows.output) }}
     run: |
-      const generated = ${{ JSON.stringify(steps.generate.outputs.files) }};
-      const validated = ${{ JSON.stringify(steps.validate_workflows.output) }};
-      const repaired = ${{ JSON.stringify(steps.repair_workflows.output) }};
+      bun -e '
+      const generated = JSON.parse(process.env.GENERATED || "[]");
+      const validated = JSON.parse(process.env.VALIDATED || "[]");
+      const repaired = JSON.parse(process.env.REPAIRED || "[]");
       
       const repairedMap = new Map();
       if (Array.isArray(repaired)) {
@@ -110,7 +115,10 @@ steps:
         return file;
       });
       
-      return { files: final };
+      console.log(JSON.stringify({ files: final }));
+      '
+    transform: |
+      JSON.parse(stdout)
 
   - id: write_files
     type: file
