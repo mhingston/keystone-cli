@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import * as child_process from 'node:child_process';
+import * as dns from 'node:dns/promises';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 import { MCPClient } from './mcp-client';
@@ -123,6 +124,19 @@ describe('MCPClient', () => {
   });
 
   describe('SSE Transport', () => {
+    let lookupSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      // Mock DNS lookup to return a public IP for api.example.com
+      lookupSpy = spyOn(dns, 'lookup').mockResolvedValue([
+        { address: '93.184.216.34', family: 4 }, // example.com's actual IP
+      ] as any);
+    });
+
+    afterEach(() => {
+      lookupSpy.mockRestore();
+    });
+
     it('should connect and receive endpoint', async () => {
       let controller: ReadableStreamDefaultController;
       const stream = new ReadableStream({

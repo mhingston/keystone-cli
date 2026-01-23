@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:te
 import * as child_process from 'node:child_process';
 import { MCPClient } from './mcp-client';
 
+import * as dns from 'node:dns/promises';
 import { Readable, Writable } from 'node:stream';
 
 describe('MCPClient Audit Fixes', () => {
@@ -78,6 +79,24 @@ describe('MCPClient Audit Fixes', () => {
 });
 
 describe('MCPClient SSRF Protection', () => {
+  let lookupSpy: ReturnType<typeof spyOn>;
+  let fetchSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    // Mock DNS lookup to return a public IP for api.example.com
+    lookupSpy = spyOn(dns, 'lookup').mockResolvedValue([
+      { address: '93.184.216.34', family: 4 }, // example.com's actual IP
+    ] as any);
+
+    // Mock fetch to prevent actual network calls
+    fetchSpy = spyOn(global, 'fetch').mockRejectedValue(new Error('Connection timeout'));
+  });
+
+  afterEach(() => {
+    lookupSpy.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
   it('should reject localhost URLs', async () => {
     // Localhost is rejected regardless of protocol
     await expect(MCPClient.createRemote('http://localhost:8080/sse')).rejects.toThrow(
